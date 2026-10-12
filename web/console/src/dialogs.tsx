@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { APIError } from "./api";
 import type {
@@ -148,6 +148,7 @@ export const AppEditor = ({
       : app.providers,
   );
   const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState<string>();
   const toggle = (id: ProviderID) =>
     setSelected((current) =>
@@ -157,6 +158,7 @@ export const AppEditor = ({
     );
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (submitting.current) return;
     setError(undefined);
     const redirectURIs = callbacks
       .split("\n")
@@ -182,6 +184,7 @@ export const AppEditor = ({
       setError("Each callback URL must be unique.");
       return;
     }
+    submitting.current = true;
     setPending(true);
     try {
       await onSave({
@@ -195,6 +198,7 @@ export const AppEditor = ({
         onUnauthorized(cause);
       else setError(describeError(cause));
     } finally {
+      submitting.current = false;
       setPending(false);
     }
   };
@@ -362,8 +366,11 @@ export const ConfirmDialog = ({
   onError: (cause: unknown) => void;
 }) => {
   const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
   const [error, setError] = useState<string>();
   const perform = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
     setPending(true);
     setError(undefined);
     try {
@@ -373,6 +380,7 @@ export const ConfirmDialog = ({
       if (cause instanceof APIError && cause.status === 401) onError(cause);
       else setError(describeError(cause));
     } finally {
+      submitting.current = false;
       setPending(false);
     }
   };

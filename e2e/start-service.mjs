@@ -18,7 +18,8 @@ const directory = mkdtempSync(resolve(".tmp/browser/server-"));
 const service = spawn(executable, ["serve"], {
   env: {
     ...process.env,
-    UNIAUTH_PUBLIC_URL: "http://127.0.0.1:18080",
+    // Browsers canonicalize decimal ports before sending an Origin header.
+    UNIAUTH_PUBLIC_URL: "http://127.0.0.1:018080",
     UNIAUTH_LISTEN_ADDR: "127.0.0.1:18080",
     UNIAUTH_DATABASE_PATH: resolve(directory, "uniauth.db"),
     UNIAUTH_ADMIN_PASSWORD_HASH: hashed.stdout.trim(),

@@ -1,10 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { APIError } from "./api";
 import { AppEditor, ConfirmDialog, CredentialDialog, Login } from "./dialogs";
 import type { Confirmation, Credential } from "./dialogs";
 
-const describeError = (error: unknown) =>
-  error instanceof Error ? error.message : "An unexpected error occurred.";
 import type {
   Application,
   AppInput,
@@ -21,6 +19,13 @@ import {
   ProviderMark,
   providerNames,
 } from "./ui";
+
+const describeError = (error: unknown) =>
+  error instanceof Error ? error.message : "An unexpected error occurred.";
+
+type AppPhase = "editing" | "confirming" | "updating" | "deleting";
+type AppOwner = { key: string | symbol; token: symbol };
+const newApplication = Symbol("new application");
 
 const date = (value: string) =>
   new Intl.DateTimeFormat("en", {
@@ -61,17 +66,183 @@ export const Console = ({
   const [secretsLoading, setSecretsLoading] = useState(false);
   const [secretsError, setSecretsError] = useState<string>();
   const [secretRevision, setSecretRevision] = useState(0);
+  const owners = useRef(
+    new Map<string | symbol, { token: symbol; phase: AppPhase }>(),
+  );
+  const [operations, setOperations] = useState(
+    new Map<string | symbol, AppPhase>(),
+  );
+  const snapshots = useRef<Application[]>([]);
+  const unsettled = useRef(new Set<string>());
+  const [unavailable, setUnavailable] = useState(new Set<string>());
+  const editorOwner = useRef<AppOwner | undefined>(undefined);
+  const deleteOwner = useRef<AppOwner | undefined>(undefined);
+  const logoutPending = useRef(false);
+  const configurationRevision = useRef(0);
+  const readGeneration = useRef(0);
   const current = apps.find((app) => app.id === selected);
 
+  const publishOperations = () =>
+    setOperations(
+      new Map([...owners.current].map(([key, owner]) => [key, owner.phase])),
+    );
+  // A synchronous owner also guards events dispatched before disabled controls render.
+  const acquire = (
+    key: string | symbol,
+    phase: AppPhase,
+  ): AppOwner | undefined => {
+    if (owners.current.has(key) || logoutPending.current) return undefined;
+    const token = Symbol("app operation");
+    owners.current.set(key, { token, phase });
+    configurationRevision.current += 1;
+    publishOperations();
+    return { key, token };
+  };
+  const transition = (owner: AppOwner, phase: AppPhase) => {
+    if (owners.current.get(owner.key)?.token !== owner.token)
+      throw new Error("Application operation ownership was lost.");
+    owners.current.set(owner.key, { token: owner.token, phase });
+    publishOperations();
+  };
+  const release = (owner: AppOwner) => {
+    if (owners.current.get(owner.key)?.token !== owner.token) return;
+    owners.current.delete(owner.key);
+    publishOperations();
+  };
+  const replaceApps = (next: Application[]) => {
+    snapshots.current = next;
+    setApps(next);
+  };
+  const reconcile = (app: Application) =>
+    replaceApps(
+      snapshots.current.map((existing) =>
+        existing.id === app.id ? app : existing,
+      ),
+    );
+  const setUnsettled = (id: string, value: boolean) => {
+    if (value) unsettled.current.add(id);
+    else unsettled.current.delete(id);
+    setUnavailable(new Set(unsettled.current));
+  };
+  const reloadApp = async (id: string) => {
+    const latest = (await api.listApps()).find((app) => app.id === id);
+    if (latest === undefined) {
+      replaceApps(snapshots.current.filter((app) => app.id !== id));
+      setSelected((selectedID) => (selectedID === id ? undefined : selectedID));
+    } else {
+      reconcile(latest);
+    }
+    setUnsettled(id, false);
+  };
+  const reconcileFailure = async (
+    id: string,
+    cause: unknown,
+  ): Promise<unknown> => {
+    if (cause instanceof APIError && cause.status === 401) return cause;
+    try {
+      await reloadApp(id);
+      return cause;
+    } catch (readError) {
+      setUnsettled(id, true);
+      if (readError instanceof APIError && readError.status === 401) {
+        readError.cause = cause;
+        return readError;
+      }
+      return new AggregateError(
+        [cause, readError],
+        `${describeError(cause)} Current application state could not be verified: ${describeError(readError)}`,
+      );
+    }
+  };
+  const refreshApp = async (app: Application) => {
+    const owner = acquire(app.id, "updating");
+    if (owner === undefined) return;
+    try {
+      await reloadApp(app.id);
+      setError(undefined);
+    } catch (cause) {
+      setUnsettled(app.id, true);
+      reportError(cause);
+    } finally {
+      release(owner);
+    }
+  };
+  const closeEditor = () => {
+    const owner = editorOwner.current;
+    if (
+      owner === undefined ||
+      owners.current.get(owner.key)?.phase !== "editing"
+    )
+      return;
+    release(owner);
+    editorOwner.current = undefined;
+    setEditor(undefined);
+  };
+  const closeConfirmation = () => {
+    const owner = deleteOwner.current;
+    if (owner !== undefined) {
+      if (owners.current.get(owner.key)?.phase === "deleting") return;
+      release(owner);
+      deleteOwner.current = undefined;
+    }
+    setConfirmation(undefined);
+  };
+  const openEditor = (app: Application | "new") => {
+    if (
+      editorOwner.current !== undefined ||
+      deleteOwner.current !== undefined ||
+      loading
+    )
+      return;
+    const snapshot =
+      app === "new"
+        ? "new"
+        : snapshots.current.find((item) => item.id === app.id);
+    if (
+      snapshot === undefined ||
+      (snapshot !== "new" && unsettled.current.has(snapshot.id))
+    )
+      return;
+    const owner = acquire(
+      snapshot === "new" ? newApplication : snapshot.id,
+      "editing",
+    );
+    if (owner === undefined) return;
+    editorOwner.current = owner;
+    setEditor(snapshot);
+  };
+  const navigate = (change: () => void) => {
+    if (editorOwner.current !== undefined || deleteOwner.current !== undefined)
+      return;
+    change();
+  };
+  const appStatus = (app: Application) => {
+    const phase = operations.get(app.id);
+    if (unavailable.has(app.id)) return "State unavailable";
+    return phase === "updating"
+      ? "Updating…"
+      : phase === "deleting"
+        ? "Deleting…"
+        : app.enabled
+          ? "Enabled"
+          : "Disabled";
+  };
   const reportError = (cause: unknown) => {
     setError(describeError(cause));
     if (cause instanceof APIError && cause.status === 401) {
       setSession("signed-out");
+      setLoaded(false);
+      if (editorOwner.current !== undefined) release(editorOwner.current);
+      if (deleteOwner.current !== undefined) release(deleteOwner.current);
+      editorOwner.current = undefined;
+      deleteOwner.current = undefined;
       setEditor(undefined);
       setConfirmation(undefined);
     }
   };
   const refresh = async () => {
+    const generation = ++readGeneration.current;
+    const revision = configurationRevision.current;
     setLoading(true);
     setError(undefined);
     try {
@@ -79,7 +250,14 @@ export const Console = ({
         api.listApps(),
         api.listProviders(),
       ]);
-      setApps(nextApps);
+      if (
+        generation !== readGeneration.current ||
+        revision !== configurationRevision.current
+      )
+        return;
+      replaceApps(nextApps);
+      unsettled.current.clear();
+      setUnavailable(new Set());
       setProviders(nextProviders);
       setLoaded(true);
       setSelected((id) =>
@@ -88,7 +266,7 @@ export const Console = ({
     } catch (cause) {
       reportError(cause);
     } finally {
-      setLoading(false);
+      if (generation === readGeneration.current) setLoading(false);
     }
   };
   useEffect(() => {
@@ -138,44 +316,65 @@ export const Console = ({
   }, [selected, session, secretRevision, api]);
 
   const saveApp = async (input: AppInput) => {
-    if (editor === undefined)
+    const owner = editorOwner.current;
+    if (editor === undefined || owner === undefined)
       throw new Error("No application is being edited.");
-    if (editor === "new") {
-      const created = await api.createApp(input);
-      setApps((existing) => [...existing, created.app]);
-      setSelected(created.app.id);
-      setCredential({
-        app: created.app,
-        secret: created.secret,
-        id: created.secret_id,
-      });
-    } else {
-      const updated = await api.updateApp(editor.id, input);
-      setApps((existing) =>
-        existing.map((app) => (app.id === updated.id ? updated : app)),
-      );
+    if (owners.current.get(owner.key)?.phase !== "editing")
+      throw new Error("Application changes are already being saved.");
+    transition(owner, "updating");
+    try {
+      if (editor === "new") {
+        const created = await api.createApp(input);
+        replaceApps([...snapshots.current, created.app]);
+        setSelected(created.app.id);
+        setCredential({
+          app: created.app,
+          secret: created.secret,
+          id: created.secret_id,
+        });
+      } else {
+        const updated = await api.updateApp(editor.id, input);
+        reconcile(updated);
+      }
+      release(owner);
+      editorOwner.current = undefined;
+      setEditor(undefined);
+      setError(undefined);
+    } catch (cause) {
+      const failure =
+        editor === "new" ? cause : await reconcileFailure(editor.id, cause);
+      transition(owner, "editing");
+      throw failure;
     }
-    setEditor(undefined);
-    setError(undefined);
   };
   const toggleApp = async (app: Application) => {
+    if (unsettled.current.has(app.id)) return;
+    const owner = acquire(app.id, "updating");
+    if (owner === undefined) return;
+    const snapshot = snapshots.current.find(
+      (existing) => existing.id === app.id,
+    );
+    if (snapshot === undefined) {
+      release(owner);
+      return;
+    }
     setPending(true);
     try {
       const updated = await api.updateApp(app.id, {
-        ...appInput(app),
-        enabled: !app.enabled,
+        ...appInput(snapshot),
+        enabled: !snapshot.enabled,
       });
-      setApps((existing) =>
-        existing.map((item) => (item.id === app.id ? updated : item)),
-      );
+      reconcile(updated);
       setError(undefined);
     } catch (cause) {
-      reportError(cause);
+      reportError(await reconcileFailure(app.id, cause));
     } finally {
+      release(owner);
       setPending(false);
     }
   };
   const issueSecret = async (app: Application) => {
+    if (owners.current.has(app.id)) return;
     setPending(true);
     try {
       const issued = await api.createSecret(app.id);
@@ -188,17 +387,35 @@ export const Console = ({
       setPending(false);
     }
   };
-  const deleteApp = (app: Application) =>
+  const deleteApp = (app: Application) => {
+    if (unsettled.current.has(app.id)) return;
+    if (deleteOwner.current !== undefined || editorOwner.current !== undefined)
+      return;
+    const owner = acquire(app.id, "confirming");
+    if (owner === undefined) return;
+    deleteOwner.current = owner;
     setConfirmation({
       title: "Delete application?",
       description: `This permanently deletes ${app.name} and its credentials. The product will no longer be able to start a login or retrieve an identity result.`,
       action: "Delete application",
       perform: async () => {
-        await api.deleteApp(app.id);
-        setApps((existing) => existing.filter((item) => item.id !== app.id));
-        setSelected(undefined);
+        if (owners.current.get(owner.key)?.phase !== "confirming")
+          throw new Error("Application deletion is already in progress.");
+        transition(owner, "deleting");
+        try {
+          await api.deleteApp(app.id);
+          replaceApps(snapshots.current.filter((item) => item.id !== app.id));
+          setSelected((id) => (id === app.id ? undefined : id));
+          release(owner);
+          deleteOwner.current = undefined;
+        } catch (cause) {
+          const failure = await reconcileFailure(app.id, cause);
+          transition(owner, "confirming");
+          throw failure;
+        }
       },
     });
+  };
   const revokeSecret = (app: Application, secret: Secret) =>
     setConfirmation({
       title: "Revoke this secret?",
@@ -211,11 +428,13 @@ export const Console = ({
       },
     });
   const signOut = async () => {
+    if (owners.current.size !== 0 || logoutPending.current) return;
+    logoutPending.current = true;
     setPending(true);
     try {
       await api.logout();
       setSession("signed-out");
-      setApps([]);
+      replaceApps([]);
       setProviders([]);
       setSelected(undefined);
       setLoaded(false);
@@ -224,6 +443,7 @@ export const Console = ({
     } catch (cause) {
       reportError(cause);
     } finally {
+      logoutPending.current = false;
       setPending(false);
     }
   };
@@ -253,24 +473,40 @@ export const Console = ({
           <aside className="sidebar">
             <Brand />
             <div className="sidebar-label">WORKSPACE</div>
-            <nav aria-label="Main navigation">
+            <nav
+              aria-label="Main navigation"
+              aria-busy={
+                editorOwner.current !== undefined ||
+                deleteOwner.current !== undefined
+              }
+            >
               <button
+                disabled={
+                  editor !== undefined || deleteOwner.current !== undefined
+                }
                 className={section === "apps" ? "nav-item active" : "nav-item"}
                 onClick={() => {
-                  setSection("apps");
-                  setSelected(undefined);
+                  navigate(() => {
+                    setSection("apps");
+                    setSelected(undefined);
+                  });
                 }}
               >
                 <Icon name="apps" />
                 Applications<span className="nav-count">{apps.length}</span>
               </button>
               <button
+                disabled={
+                  editor !== undefined || deleteOwner.current !== undefined
+                }
                 className={
                   section === "providers" ? "nav-item active" : "nav-item"
                 }
                 onClick={() => {
-                  setSection("providers");
-                  setSelected(undefined);
+                  navigate(() => {
+                    setSection("providers");
+                    setSelected(undefined);
+                  });
                 }}
               >
                 <Icon name="shield" />
@@ -291,7 +527,7 @@ export const Console = ({
                 <button
                   className="icon-button"
                   aria-label="Sign out"
-                  disabled={pending}
+                  disabled={pending || operations.size !== 0}
                   onClick={signOut}
                 >
                   <Icon name="logout" />
@@ -393,7 +629,10 @@ export const Console = ({
                 <>
                   <button
                     className="back-link"
-                    onClick={() => setSelected(undefined)}
+                    disabled={
+                      editor !== undefined || deleteOwner.current !== undefined
+                    }
+                    onClick={() => navigate(() => setSelected(undefined))}
                   >
                     ← All applications
                   </button>
@@ -403,9 +642,24 @@ export const Console = ({
                     description="Manage login configuration and product credentials."
                     actions={
                       <>
+                        {unavailable.has(current.id) && (
+                          <button
+                            className="button secondary"
+                            disabled={operations.has(current.id)}
+                            onClick={() => {
+                              void refreshApp(current);
+                            }}
+                          >
+                            Refresh application
+                          </button>
+                        )}
                         <button
                           className="button secondary"
-                          disabled={pending}
+                          disabled={
+                            pending ||
+                            operations.has(current.id) ||
+                            unavailable.has(current.id)
+                          }
                           onClick={() => {
                             void toggleApp(current);
                           }}
@@ -414,7 +668,12 @@ export const Console = ({
                         </button>
                         <button
                           className="button"
-                          onClick={() => setEditor(current)}
+                          disabled={
+                            operations.has(current.id) ||
+                            pending ||
+                            unavailable.has(current.id)
+                          }
+                          onClick={() => openEditor(current)}
                         >
                           Edit application
                         </button>
@@ -426,9 +685,9 @@ export const Console = ({
                       <div className="panel-heading">
                         <h2>Configuration</h2>
                         <span
-                          className={`badge ${current.enabled ? "success" : "muted"}`}
+                          className={`badge ${unavailable.has(current.id) || operations.get(current.id) === "updating" || operations.get(current.id) === "deleting" ? "muted" : current.enabled ? "success" : "muted"}`}
                         >
-                          {current.enabled ? "Enabled" : "Disabled"}
+                          {appStatus(current)}
                         </span>
                       </div>
                       <CopyValue label="App ID" value={current.id} />
@@ -615,7 +874,11 @@ export const Console = ({
                     </div>
                     <button
                       className="button danger-outline"
-                      disabled={pending}
+                      disabled={
+                        pending ||
+                        operations.has(current.id) ||
+                        unavailable.has(current.id)
+                      }
                       onClick={() => deleteApp(current)}
                     >
                       <Icon name="trash" size={16} />
@@ -632,7 +895,7 @@ export const Console = ({
                     actions={
                       <button
                         className="button"
-                        onClick={() => setEditor("new")}
+                        onClick={() => openEditor("new")}
                       >
                         <Icon name="plus" size={18} />
                         New application
@@ -691,7 +954,7 @@ export const Console = ({
                         </p>
                         <button
                           className="button"
-                          onClick={() => setEditor("new")}
+                          onClick={() => openEditor("new")}
                         >
                           <Icon name="plus" size={17} />
                           Create application
@@ -730,7 +993,9 @@ export const Console = ({
                                 <td>
                                   <button
                                     className="app-name"
-                                    onClick={() => setSelected(app.id)}
+                                    onClick={() =>
+                                      navigate(() => setSelected(app.id))
+                                    }
                                   >
                                     <span
                                       className={`app-avatar color-${app.name.length % 4}`}
@@ -757,10 +1022,10 @@ export const Console = ({
                                 </td>
                                 <td>
                                   <span
-                                    className={`badge ${app.enabled ? "success" : "muted"}`}
+                                    className={`badge ${unavailable.has(app.id) || operations.get(app.id) === "updating" || operations.get(app.id) === "deleting" ? "muted" : app.enabled ? "success" : "muted"}`}
                                   >
                                     <i />
-                                    {app.enabled ? "Enabled" : "Disabled"}
+                                    {appStatus(app)}
                                   </span>
                                 </td>
                                 <td className="date-cell">
@@ -770,7 +1035,9 @@ export const Console = ({
                                   <button
                                     className="icon-button"
                                     aria-label={`Manage ${app.name}`}
-                                    onClick={() => setSelected(app.id)}
+                                    onClick={() =>
+                                      navigate(() => setSelected(app.id))
+                                    }
                                   >
                                     <Icon name="arrow" size={18} />
                                   </button>
@@ -803,7 +1070,7 @@ export const Console = ({
         <AppEditor
           app={editor}
           providers={providers}
-          onClose={() => setEditor(undefined)}
+          onClose={closeEditor}
           onSave={saveApp}
           onUnauthorized={reportError}
         />
@@ -817,7 +1084,7 @@ export const Console = ({
       {confirmation !== undefined && session === "signed-in" && (
         <ConfirmDialog
           confirmation={confirmation}
-          onClose={() => setConfirmation(undefined)}
+          onClose={closeConfirmation}
           onError={reportError}
         />
       )}

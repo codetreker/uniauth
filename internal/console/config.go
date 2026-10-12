@@ -42,6 +42,10 @@ func New(store *apps.Store, availableProviders []string, cfg Config) (*Handler, 
 	if u.Scheme != "https" && !(u.Scheme == "http" && loopback && cfg.AllowLoopbackHTTP) {
 		return nil, errors.New("console public URL requires HTTPS or explicitly enabled loopback HTTP")
 	}
+	origin, err := configuredOrigin(u)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize console public URL origin: %w", err)
+	}
 	if err := validatePasswordHash(cfg.PasswordHash); err != nil {
 		return nil, err
 	}
@@ -89,7 +93,7 @@ func New(store *apps.Store, availableProviders []string, cfg Config) (*Handler, 
 		cookieName = "uniauth_admin"
 	}
 	return &Handler{
-		store: store, config: cfg, origin: u.Scheme + "://" + u.Host,
+		store: store, config: cfg, origin: origin,
 		cookieName: cookieName, secure: u.Scheme == "https", available: available,
 		sessions: make(map[[32]byte]adminSession), passwordSlots: make(chan struct{}, cfg.PasswordConcurrency),
 		loginTokens: loginBurst, lastLoginRefill: cfg.Now(),

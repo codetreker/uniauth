@@ -32,6 +32,25 @@ enabled `localhost` or loopback IP development addresses. The server listener
 uses HTTP; terminate TLS at a reverse proxy and configure the actual external
 origin. The service does not infer its public origin from forwarded headers.
 
+Console request-origin validation derives the browser-serialized origin from the
+configured URL. Domain names use IDNA ASCII conversion and lowercase; valid IPv6
+literals are serialized canonically. Ports are decimal without leading zeros;
+HTTPS `443` and HTTP `80` are omitted. Thus `https://AUTH.example:00443/` accepts
+browser requests with `Origin: https://auth.example`. Invalid configured domains,
+IPv6 literals, scoped IPv6 addresses, and ports outside 0–65535 fail Console
+initialization. This configuration normalization does not normalize incoming
+headers: Console mutations still require exactly one canonical Origin matching
+the expected string. Registered product callback matching remains exact.
+
+The Console reserves an App during configuration editing, enable/disable updates,
+and deletion. A failed non-authentication write retains ownership through a
+server-state reload; only that App is reconciled into the current UI snapshot.
+If the reload fails, `State unavailable` blocks new configuration actions until
+explicit Refresh succeeds. An existing draft or delete confirmation may Retry or
+Cancel under its retained owner, and a successful retry may conservatively leave
+the unavailable marker until Refresh. Session expiry returns to administrator
+login. These controls do not coordinate separate Console browsers or API clients.
+
 Protect runtime credentials and the database using deployment access controls.
 The database contains application definitions and SHA-256 digests of randomly
 generated 256-bit product Secrets. It contains no end-user records, provider

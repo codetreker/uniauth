@@ -149,10 +149,81 @@ test("administrator manages applications and one-time credentials against the se
   await expect(
     page.locator(".configuration").getByText("Microsoft", { exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Disable app", exact: true }).click();
+  const appURL = `http://127.0.0.1:18080/console/api/apps/${first.appID}`;
+  const committed = Promise.withResolvers<void>();
+  const releaseResponse = Promise.withResolvers<void>();
+  let updates = 0;
+  await page.route(appURL, async (route) => {
+    if (route.request().method() !== "PUT") {
+      await route.continue();
+      return;
+    }
+    updates += 1;
+    try {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      committed.resolve();
+      await releaseResponse.promise;
+      await route.fulfill({ response });
+    } catch (error) {
+      committed.reject(error);
+      throw error;
+    }
+  });
+  const disabledResponse = page.waitForResponse(
+    (response) =>
+      response.url() === appURL && response.request().method() === "PUT",
+  );
+  try {
+    await page
+      .getByRole("button", { name: "Disable app", exact: true })
+      .click();
+    await committed.promise;
+    const stored = await context.request.get(appURL);
+    expect(stored.ok()).toBe(true);
+    expect((await stored.json()).enabled).toBe(false);
+    await expect(
+      page.locator(".configuration").getByText("Updating…", { exact: true }),
+    ).toBeVisible();
+    const editButton = page.getByRole("button", {
+      name: "Edit application",
+      exact: true,
+    });
+    await expect(editButton).toBeDisabled();
+    await editButton.evaluate((button) =>
+      (button as HTMLButtonElement).click(),
+    );
+    await expect(edit).not.toBeVisible();
+    expect(updates).toBe(1);
+  } finally {
+    releaseResponse.resolve();
+  }
+  expect((await disabledResponse).ok()).toBe(true);
+  await page.unroute(appURL);
   await expect(
     page.locator(".configuration").getByText("Disabled", { exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Edit application", exact: true })
+    .click();
+  await expect(
+    edit.getByRole("checkbox", { name: /Enable application/ }),
+  ).not.toBeChecked();
+  await edit.getByLabel("Application name").fill("Serialized browser product");
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(edit).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "Serialized browser product",
+      exact: true,
+    }),
+  ).toBeVisible();
+  const edited = await context.request.get(appURL);
+  expect(edited.ok()).toBe(true);
+  expect(await edited.json()).toMatchObject({
+    name: "Serialized browser product",
+    enabled: false,
+  });
   await page.getByRole("button", { name: "Enable app", exact: true }).click();
   await expect(
     page.locator(".configuration").getByText("Enabled", { exact: true }),
@@ -184,7 +255,7 @@ test("administrator manages applications and one-time credentials against the se
   ).toBeVisible();
   await page
     .getByRole("button", {
-      name: "Manage Updated browser product",
+      name: "Manage Serialized browser product",
       exact: true,
     })
     .click();

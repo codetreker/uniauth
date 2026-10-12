@@ -26,7 +26,21 @@ identity fields, separate state and browser binding, expiry, failed and wrong-Ap
 claims, concurrent consumption, capacity, credentials, sessions, and lifecycle
 ordering. Controlled upstream fixtures provide token, signing-key, and profile
 responses, including invalid responses and faults. These tests preserve errors
-and observe externally visible effects.
+and observe externally visible effects. Console origin regressions cover browser
+serialization of configured uppercase and IDNA domains, IPv6 literals, and
+default or zero-padded ports through login and CRUD requests. Foreign, null,
+noncanonical, and multiple Origin values and invalid CSRF remain rejected.
+
+Frontend configuration regressions hold mutation responses open after the
+simulated backend commits. They verify that Edit, enable/disable, and deletion
+cannot overlap for one App, repeated submissions start one request, and a later
+editor uses the committed configuration. Failure cases hold ownership through server-state reconciliation and
+verify that only the affected App changes, preserving other accepted mutations.
+If reconciliation fails, new actions remain blocked under `State unavailable`;
+already-owned drafts or confirmations may Retry or Cancel. Successful owned
+retries may leave that marker until explicit Refresh. Assertions distinguish
+server commit, response delivery, and verified current state rather than treating
+a failed response as proof that no write occurred.
 
 Playwright uses one worker and no automatic retries. It starts a fresh local Go
 service with isolated SQLite data and the production Console, and a separate
@@ -37,8 +51,10 @@ browser installations prevent task tooling from leaving a permanent installation
 
 The [configuration reference](../../../../docs/reference/configuration.md) owns
 validation commands and limits. The
-[task receipt](../../../../docs/tasks/2026-10-12-authentication-gateway.md) owns
-observed outcomes and distinguishes fixture coverage from live provider checks.
+[initial implementation receipt](../../../../docs/tasks/2026-10-12-authentication-gateway.md)
+and [Console correction receipt](../../../../docs/tasks/2026-10-12-console-review-fixes.md)
+retain their respective observed outcomes and distinguish fixture coverage from
+live provider checks.
 
 ## Alternatives
 

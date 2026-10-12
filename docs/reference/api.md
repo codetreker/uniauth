@@ -155,9 +155,17 @@ are excluded from the identity package.
 ## Console API
 
 The embedded UI lives at `/console/`; `/` redirects there. API clients use
-`/console/api/` on the same origin. Every mutation requires an exact `Origin`
-matching `UNIAUTH_PUBLIC_URL`. Authenticated mutations also require
-`X-CSRF-Token` from login or the session endpoint. JSON bodies require
+`/console/api/` on the same origin. Every mutation requires exactly one `Origin`
+header equal to the browser-serialized origin derived from `UNIAUTH_PUBLIC_URL`.
+Configured domain names are converted to ASCII with IDNA and lowercased; valid
+IPv6 literals are serialized canonically; numeric ports lose leading zeros and
+default HTTPS `443` or HTTP `80` ports are omitted. For example,
+`https://AUTH.example:443/` expects `Origin: https://auth.example`.
+
+Only the configured origin is normalized. Incoming headers remain subject to
+exact string comparison: `null`, trailing slashes, different ports or hosts,
+multiple values, and noncanonical spellings are rejected. Authenticated mutations
+also require `X-CSRF-Token` from login or the session endpoint. JSON bodies require
 `application/json`, contain only supported fields, and are limited to 64 KiB.
 
 ### Administrator session
@@ -224,6 +232,24 @@ Invalid input returns `400 invalid_input`, unsupported content type returns
 methods return `405 method_not_allowed`, and storage failures return
 `500 internal_error`. Provider availability describes deployment configuration;
 an unavailable provider cannot start authentication even if listed on an App.
+
+The Console UI serializes configuration editing, enable/disable changes, and
+App deletion for the same App. Opening an editor or delete confirmation reserves
+that App; conflicting controls remain unavailable through completion or
+cancellation. A pending update shows `Updating…`, then adopts the returned App
+object before another action can start. Opening the next editor uses that latest
+snapshot, so saving a name after a completed disable retains the disabled state.
+Repeated submit attempts do not start a second mutation.
+
+After a non-authentication configuration failure, the UI retains ownership while
+reloading server configuration and merges only the affected App into its current
+snapshot. If the reload also fails, `State unavailable` blocks new configuration
+actions until an explicit Refresh succeeds. An already-open editor or delete
+confirmation still owns the App and permits Retry or Cancel. A successful owned
+retry may leave the unavailable marker until Refresh. Administrator session
+expiry returns to login.
+These controls protect one Console instance; API callers and separate browsers
+still send full App replacements without server-side version checks.
 
 Management mutations that pass Origin, administrator session, and CSRF checks
 receive `X-Operation-ID`. Their completion emits a `console management operation`

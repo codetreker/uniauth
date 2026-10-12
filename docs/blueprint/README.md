@@ -91,8 +91,29 @@ The Console authenticates a deployment-configured Argon2id password hash. A
 standalone CLI reads the password from stdin, hides terminal input, and outputs
 the PHC hash without password arguments. An eight-hour in-memory administrator
 session uses an HttpOnly, SameSite=Strict cookie, Secure under HTTPS. Mutations
-require exact Origin and CSRF validation. Login attempts and concurrent password
-verification are bounded. Restart invalidates these administrator sessions.
+require exact Origin and CSRF validation. The expected Console origin is derived
+from the configured URL using lowercase IDNA domain names, canonical IPv6
+literals, and normalized ports with default ports omitted. Incoming Origin
+headers are compared exactly without normalization, accepting normal browser
+serialization while rejecting noncanonical or foreign headers. Login attempts
+and concurrent password verification are bounded. Restart invalidates these
+administrator sessions.
+
+Console configuration editing, enable/disable changes, and deletion share one
+operation owner for each App. Ownership is acquired before asynchronous work or
+render updates, so overlapping controls cannot submit an older App snapshot.
+Opening an editor or delete confirmation reserves the App until completion or
+cancellation. Pending updates display `Updating…`; committed response data becomes
+the authoritative App configuration before later actions are allowed. A failed
+configuration write keeps its owner while the UI reloads server configuration
+and reconciles only the affected App. If that reload also fails, the App shows
+`State unavailable` and new configuration actions remain blocked until explicit
+Refresh succeeds. An already-open draft or delete confirmation retains its owner
+and permits Retry or Cancel; it does not require Refresh before its owned retry.
+An unavailable marker may remain after a successful owned retry until Refresh.
+Administrator session expiry instead returns to login. This serialization is
+local to the Console, not a server-side version or cross-browser concurrency
+guarantee.
 
 React, TypeScript, Vite, and pnpm build the Console. Production assets are embedded
 in the executable under `/console/`; Node.js is needed for building, not serving.
