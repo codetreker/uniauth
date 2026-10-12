@@ -1,0 +1,407 @@
+import { useId, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { APIError } from "./api";
+import type {
+  Application,
+  AppInput,
+  ConsoleAPI,
+  Provider,
+  ProviderID,
+} from "./api";
+import {
+  Brand,
+  CopyValue,
+  ErrorNotice,
+  Icon,
+  Modal,
+  ProviderMark,
+  providerNames,
+} from "./ui";
+
+export type Credential = { app: Application; secret: string; id: string };
+export type Confirmation = {
+  title: string;
+  description: string;
+  action: string;
+  perform: () => Promise<void>;
+};
+const describeError = (error: unknown) =>
+  error instanceof Error ? error.message : "An unexpected error occurred.";
+export const Login = ({
+  api,
+  onLogin,
+  error,
+  preview,
+}: {
+  api: ConsoleAPI;
+  onLogin: () => void;
+  error?: string;
+  preview: boolean;
+}) => {
+  const [password, setPassword] = useState("");
+  const [failure, setFailure] = useState<string>();
+  const [pending, setPending] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setPending(true);
+    setFailure(undefined);
+    try {
+      await api.login(password);
+      setPassword("");
+      onLogin();
+    } catch (cause) {
+      setFailure(describeError(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <main className="login-page">
+      <div className="login-brand">
+        <Brand />
+      </div>
+      <div className="login-layout">
+        <section className="login-intro">
+          <span className="eyebrow">AUTHENTICATION, CONNECTED</span>
+          <h1>
+            Every product.
+            <br />
+            One trusted gateway.
+          </h1>
+          <p>
+            A shared home for your applications and third-party sign-in. Your
+            products keep control of their users.
+          </p>
+          <div className="login-providers">
+            <ProviderMark provider="microsoft" />
+            <ProviderMark provider="google" />
+            <ProviderMark provider="github" />
+            <span>Microsoft · Google · GitHub</span>
+          </div>
+        </section>
+        <section className="login-card">
+          <span className="login-icon">
+            <Icon name="shield" size={26} />
+          </span>
+          <h2>Welcome to your Console</h2>
+          <p>Sign in to manage applications and credentials.</p>
+          {error !== undefined && <ErrorNotice message={error} />}
+          {failure !== undefined && <ErrorNotice message={failure} />}
+          <form onSubmit={submit}>
+            <label className="field">
+              Administrator password
+              <input
+                type="password"
+                name="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoFocus
+              />
+            </label>
+            <button
+              className="button full-width"
+              type="submit"
+              disabled={pending}
+            >
+              {pending ? "Signing in…" : "Sign in"}
+              <Icon name="arrow" size={16} />
+            </button>
+          </form>
+          <div className="login-help">
+            {preview
+              ? "Preview password: preview"
+              : "Use the administrator password configured for this deployment."}
+          </div>
+        </section>
+      </div>
+      <footer>UniAuth · A gateway for identity</footer>
+    </main>
+  );
+};
+
+export const AppEditor = ({
+  app,
+  providers,
+  onClose,
+  onSave,
+  onUnauthorized,
+}: {
+  app: Application | "new";
+  providers: Provider[];
+  onClose: () => void;
+  onSave: (input: AppInput) => Promise<void>;
+  onUnauthorized: (cause: unknown) => void;
+}) => {
+  const callbackHintID = useId();
+  const [name, setName] = useState(app === "new" ? "" : app.name);
+  const [callbacks, setCallbacks] = useState(
+    app === "new" ? "" : app.redirect_uris.join("\n"),
+  );
+  const [enabled, setEnabled] = useState(app === "new" ? true : app.enabled);
+  const [selected, setSelected] = useState<ProviderID[]>(
+    app === "new"
+      ? providers
+          .filter((provider) => provider.available)
+          .map((provider) => provider.id)
+      : app.providers,
+  );
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+  const [error, setError] = useState<string>();
+  const toggle = (id: ProviderID) =>
+    setSelected((current) =>
+      current.includes(id)
+        ? current.filter((provider) => provider !== id)
+        : [...current, id],
+    );
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (submitting.current) return;
+    setError(undefined);
+    const redirectURIs = callbacks
+      .split("\n")
+      .map((uri) => uri.trim())
+      .filter((uri) => uri.length > 0);
+    if (new TextEncoder().encode(name.trim()).length > 128) {
+      setError("Application name must be at most 128 UTF-8 bytes.");
+      return;
+    }
+    if (redirectURIs.length > 16) {
+      setError("Register at most 16 callback URLs.");
+      return;
+    }
+    if (selected.length === 0) {
+      setError("Select at least one identity provider.");
+      return;
+    }
+    if (redirectURIs.length === 0) {
+      setError("Register at least one callback URL.");
+      return;
+    }
+    if (new Set(redirectURIs).size !== redirectURIs.length) {
+      setError("Each callback URL must be unique.");
+      return;
+    }
+    submitting.current = true;
+    setPending(true);
+    try {
+      await onSave({
+        name: name.trim(),
+        enabled,
+        redirect_uris: redirectURIs,
+        providers: selected,
+      });
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 401)
+        onUnauthorized(cause);
+      else setError(describeError(cause));
+    } finally {
+      submitting.current = false;
+      setPending(false);
+    }
+  };
+  return (
+    <Modal
+      title={app === "new" ? "Create application" : "Edit application"}
+      onClose={onClose}
+      locked={pending}
+      wide
+    >
+      <form onSubmit={submit}>
+        <div className="modal-body">
+          <p className="modal-description">
+            Configure how this product signs in through UniAuth.
+          </p>
+          {error !== undefined && <ErrorNotice message={error} />}
+          <label className="field">
+            Application name
+            <input
+              autoFocus
+              required
+              maxLength={128}
+              value={name}
+              placeholder="e.g. Workspace"
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label className="field">
+            Callback URLs
+            <textarea
+              aria-label="Callback URLs"
+              aria-describedby={callbackHintID}
+              required
+              rows={3}
+              value={callbacks}
+              placeholder="https://product.example/auth/callback"
+              onChange={(event) => setCallbacks(event.target.value)}
+            />
+            <span id={callbackHintID} className="hint">
+              One URL per line. HTTPS is required; loopback HTTP depends on
+              deployment settings. URLs must match exactly.
+            </span>
+          </label>
+          <fieldset className="provider-picker">
+            <legend>Identity providers</legend>
+            {providers.map((provider) => (
+              <label
+                key={provider.id}
+                className={
+                  selected.includes(provider.id)
+                    ? "provider-option selected"
+                    : "provider-option"
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(provider.id)}
+                  onChange={() => toggle(provider.id)}
+                />
+                <ProviderMark provider={provider.id} />
+                <span>
+                  <strong>{providerNames[provider.id]}</strong>
+                  <small>
+                    {provider.id === "microsoft"
+                      ? "Personal accounts only"
+                      : provider.id === "google"
+                        ? "Google accounts"
+                        : "GitHub accounts"}
+                  </small>
+                </span>
+                {!provider.available && (
+                  <span className="badge muted">Not configured</span>
+                )}
+              </label>
+            ))}
+          </fieldset>
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+            />
+            <span>
+              <strong>Enable application</strong>
+              <small>Allow new login requests and identity retrieval.</small>
+            </span>
+          </label>
+        </div>
+        <div className="modal-actions">
+          <button
+            className="button secondary"
+            type="button"
+            disabled={pending}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button className="button" type="submit" disabled={pending}>
+            {pending
+              ? "Saving…"
+              : app === "new"
+                ? "Create application"
+                : "Save changes"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+export const CredentialDialog = ({
+  credential,
+  onClose,
+}: {
+  credential: Credential;
+  onClose: () => void;
+}) => {
+  const [saved, setSaved] = useState(false);
+  return (
+    <Modal title="Save your app secret" onClose={onClose} locked>
+      <div className="modal-body">
+        <div className="credential-banner">
+          <Icon name="key" />
+          <div>
+            <strong>This secret is shown once</strong>
+            <p>
+              Store it securely on the product backend before closing this
+              dialog.
+            </p>
+          </div>
+        </div>
+        <p className="modal-description">
+          Credential for <strong>{credential.app.name}</strong>
+        </p>
+        <CopyValue label="App ID" value={credential.app.id} />
+        <CopyValue label="App secret" value={credential.secret} />
+        <CopyValue label="Secret ID" value={credential.id} />
+        <p className="hint">
+          Keep this secret out of frontend code and source control. It cannot be
+          retrieved again.
+        </p>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={saved}
+            onChange={(event) => setSaved(event.target.checked)}
+          />
+          <span>I have saved this secret securely.</span>
+        </label>
+      </div>
+      <div className="modal-actions">
+        <button className="button" disabled={!saved} onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Modal>
+  );
+};
+export const ConfirmDialog = ({
+  confirmation,
+  onClose,
+  onError,
+}: {
+  confirmation: Confirmation;
+  onClose: () => void;
+  onError: (cause: unknown) => void;
+}) => {
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+  const [error, setError] = useState<string>();
+  const perform = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setPending(true);
+    setError(undefined);
+    try {
+      await confirmation.perform();
+      onClose();
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 401) onError(cause);
+      else setError(describeError(cause));
+    } finally {
+      submitting.current = false;
+      setPending(false);
+    }
+  };
+  return (
+    <Modal title={confirmation.title} onClose={onClose} locked={pending}>
+      <div className="modal-body">
+        <p className="modal-description">{confirmation.description}</p>
+        {error !== undefined && <ErrorNotice message={error} />}
+      </div>
+      <div className="modal-actions">
+        <button
+          className="button secondary"
+          disabled={pending}
+          onClick={onClose}
+        >
+          Cancel
+        </button>
+        <button className="button danger" disabled={pending} onClick={perform}>
+          {pending ? "Working…" : confirmation.action}
+        </button>
+      </div>
+    </Modal>
+  );
+};

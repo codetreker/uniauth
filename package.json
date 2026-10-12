@@ -1,0 +1,12 @@
+{
+  "name": "uniauth-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "test:browser": "playwright test",
+    "test:browser:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2"
+  }
+}
