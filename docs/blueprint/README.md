@@ -62,9 +62,11 @@ Separate production and non-production integrations use separate registrations a
 
 Generate Secrets with a cryptographically secure random source. Reveal a newly generated Secret once, retain only its verification hash, and compare credentials without timing-dependent comparisons. Support Secret rotation and revocation. Upstream provider credentials are separate configuration: UniAuth needs recoverable access to credentials used for provider token exchanges, so their storage has different requirements from downstream Secret verification hashes.
 
-The integration requires a confidential product backend. Its Secret remains server-side. The Console uses independent administrator authentication and authorization; its bootstrap and credential mechanism must be specified before implementation.
+The integration requires a confidential product backend. Its Secret remains server-side. The Console uses an administrator password supplied through deployment configuration, with an Argon2id verification hash. Its administrator session is separate from product authentication and is held in process memory. There is no administrator user table. A local command generates the deployment password hash without including the password in command-line arguments.
 
-Application configuration and upstream provider configuration survive process restarts. The persistence backend and Console frontend technology remain implementation decisions. These configuration records do not constitute an end-user database.
+SQLite persists application configuration and Secret verification records. Upstream provider credentials come from deployment configuration. These configuration records survive process restarts and do not constitute an end-user database.
+
+The Console frontend uses React, TypeScript, Vite, and pnpm. Its production static assets are embedded in the Go executable and served by the same process under `/console/`. Node.js is a build dependency. Interactive mockups use the production components and styles with representative fixture data; mockup fixtures are absent from production assets.
 
 ## Authentication and retrieval flow
 
