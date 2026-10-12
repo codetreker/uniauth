@@ -1,0 +1,226 @@
+import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+
+const value = (dialog: Locator, label: string) =>
+  dialog.locator(".copy-field").filter({ hasText: label }).locator("code");
+
+const saveCredential = async (page: Page) => {
+  const dialog = page.getByRole("dialog", { name: "Save your app secret" });
+  await expect(dialog).toBeVisible();
+  const secret = await value(dialog, "App secret").innerText();
+  const id = await value(dialog, "Secret ID").innerText();
+  const appID = await value(dialog, "App ID").innerText();
+  expect(secret.length).toBeGreaterThanOrEqual(43);
+  await expect(dialog.getByRole("button", { name: "Done" })).toBeDisabled();
+  await dialog.getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByText(secret, { exact: true })).toHaveCount(0);
+  return { secret, id, appID };
+};
+
+test("administrator manages applications and one-time credentials against the service", async ({
+  page,
+  browser,
+  context,
+}) => {
+  const failures: string[] = [];
+  page.on("pageerror", (error) => failures.push(error.message));
+  await page.goto("/console/");
+  await expect(
+    page.getByRole("heading", { name: "Welcome to your Console" }),
+  ).toBeVisible();
+  await page.getByLabel("Administrator password").fill("incorrect");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("password is incorrect");
+  await page
+    .getByLabel("Administrator password")
+    .fill("browser-test-administrator-password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your products belong here" }),
+  ).toBeVisible();
+
+  const cookies = await context.cookies();
+  expect(cookies).toHaveLength(1);
+  expect(cookies[0]).toMatchObject({
+    name: "uniauth_admin",
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: false,
+    path: "/",
+  });
+  expect(await page.evaluate(() => document.cookie)).not.toContain(
+    "uniauth_admin",
+  );
+  const anonymous = await browser.newContext();
+  try {
+    const anonymousPage = await anonymous.newPage();
+    await anonymousPage.goto("http://127.0.0.1:18080/console/");
+    await expect(
+      anonymousPage.getByLabel("Administrator password"),
+    ).toBeVisible();
+    expect(
+      (
+        await anonymous.request.get("http://127.0.0.1:18080/console/api/apps")
+      ).status(),
+    ).toBe(401);
+  } finally {
+    await anonymous.close();
+  }
+
+  await page
+    .getByRole("button", { name: "Identity providers", exact: true })
+    .click();
+  await expect(page.locator(".provider-card")).toHaveCount(3);
+  await expect(
+    page.locator(".provider-card").getByText("Not configured", { exact: true }),
+  ).toHaveCount(3);
+  await expect(
+    page.getByText("Personal Microsoft accounts", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /^Applications/ }).click();
+  await page.getByRole("button", { name: "New application" }).click();
+  const editor = page.getByRole("dialog", {
+    name: "Create application",
+    exact: true,
+  });
+  await editor.getByLabel("Application name").fill("Browser product");
+  await editor
+    .getByLabel("Callback URLs", { exact: true })
+    .fill("https://product.example/auth/callback?code=reserved");
+  await editor.getByRole("checkbox", { name: /Google/ }).check();
+  const invalid = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/console/api/apps") &&
+      response.request().method() === "POST",
+  );
+  await editor
+    .getByRole("button", { name: "Create application", exact: true })
+    .click();
+  expect((await invalid).status()).toBe(400);
+  await expect(editor.getByRole("alert")).toContainText(
+    "configuration is invalid",
+  );
+  await expect(editor.getByLabel("Application name")).toHaveValue(
+    "Browser product",
+  );
+  await editor
+    .getByLabel("Callback URLs", { exact: true })
+    .fill(
+      "https://product.example/auth/callback\nhttps://staging.product.example/auth/callback",
+    );
+  await editor.getByRole("checkbox", { name: /Microsoft/ }).check();
+  await editor.getByRole("checkbox", { name: /GitHub/ }).check();
+  await editor
+    .getByRole("button", { name: "Create application", exact: true })
+    .click();
+  const first = await saveCredential(page);
+  await expect(
+    page.getByRole("heading", { name: "Browser product", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".configuration").getByText("Not configured", { exact: true }),
+  ).toHaveCount(3);
+  await expect(
+    page.getByRole("row").filter({ hasText: first.id }),
+  ).toContainText("Active");
+
+  await page
+    .getByRole("button", { name: "Edit application", exact: true })
+    .click();
+  const edit = page.getByRole("dialog", {
+    name: "Edit application",
+    exact: true,
+  });
+  await edit.getByLabel("Application name").fill("Updated browser product");
+  await edit
+    .getByLabel("Callback URLs", { exact: true })
+    .fill("https://product.example/auth/updated");
+  await edit.getByRole("checkbox", { name: /Microsoft/ }).uncheck();
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(edit).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Updated browser product", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".url-list")).toHaveText(
+    "https://product.example/auth/updated",
+  );
+  await expect(
+    page.locator(".configuration").getByText("Microsoft", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Disable app", exact: true }).click();
+  await expect(
+    page.locator(".configuration").getByText("Disabled", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Enable app", exact: true }).click();
+  await expect(
+    page.locator(".configuration").getByText("Enabled", { exact: true }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Create secret", exact: true })
+    .click();
+  const replacement = await saveCredential(page);
+  expect(replacement.secret).not.toBe(first.secret);
+  expect(replacement.id).not.toBe(first.id);
+  await page
+    .getByRole("button", { name: `Revoke secret ${first.id}`, exact: true })
+    .click();
+  const revoke = page.getByRole("dialog", { name: "Revoke this secret?" });
+  await revoke
+    .getByRole("button", { name: "Revoke secret", exact: true })
+    .click();
+  await expect(revoke).not.toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: first.id }),
+  ).toContainText("Revoked");
+  await expect(
+    page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("Active");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Applications", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", {
+      name: "Manage Updated browser product",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByText(first.secret, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(replacement.secret, { exact: true })).toHaveCount(
+    0,
+  );
+  const listed = await context.request.get(
+    `/console/api/apps/${first.appID}/secrets`,
+  );
+  expect(listed.ok()).toBe(true);
+  const listing = await listed.text();
+  expect(listing).not.toContain(first.secret);
+  expect(listing).not.toContain(replacement.secret);
+
+  await page
+    .getByRole("button", { name: "Delete application", exact: true })
+    .click();
+  const remove = page.getByRole("dialog", { name: "Delete application?" });
+  await remove
+    .getByRole("button", { name: "Delete application", exact: true })
+    .click();
+  await expect(remove).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Your products belong here" }),
+  ).toBeVisible();
+  expect(
+    (await context.request.get(`/console/api/apps/${first.appID}`)).status(),
+  ).toBe(404);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("Administrator password")).toBeVisible();
+  expect((await context.request.get("/console/api/session")).status()).toBe(
+    401,
+  );
+  expect(await context.cookies()).toHaveLength(0);
+  await page.reload();
+  await expect(page.getByLabel("Administrator password")).toBeVisible();
+  expect(failures).toEqual([]);
+});

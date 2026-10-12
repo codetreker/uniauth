@@ -23,8 +23,6 @@ web/console/dist/
 *.dylib
 *.test
 *.out
-coverage.*
-!coverage.go
 *.coverprofile
 profile.cov
 playwright-report/
