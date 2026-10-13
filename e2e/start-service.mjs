@@ -1,18 +1,9 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 const executable = resolve(".tmp/bin/uniauth");
 const password = "browser-test-administrator-password";
-const hashed = spawnSync(executable, ["hash-password"], {
-  input: password + "\n",
-  encoding: "utf8",
-  timeout: 10_000,
-});
-if (hashed.error !== undefined) throw hashed.error;
-if (hashed.status !== 0)
-  throw new Error(`Administrator password hashing failed: ${hashed.stderr}`);
-
 mkdirSync(".tmp/browser", { recursive: true });
 const directory = mkdtempSync(resolve(".tmp/browser/server-"));
 const service = spawn(executable, ["serve"], {
@@ -22,7 +13,7 @@ const service = spawn(executable, ["serve"], {
     UNIAUTH_PUBLIC_URL: "http://127.0.0.1:018080",
     UNIAUTH_LISTEN_ADDR: "127.0.0.1:18080",
     UNIAUTH_DATABASE_PATH: resolve(directory, "uniauth.db"),
-    UNIAUTH_ADMIN_PASSWORD_HASH: hashed.stdout.trim(),
+    UNIAUTH_ADMIN_PASSWORD: password,
     UNIAUTH_ALLOW_LOOPBACK_HTTP: "true",
     UNIAUTH_MICROSOFT_CLIENT_ID: "",
     UNIAUTH_MICROSOFT_CLIENT_SECRET: "",

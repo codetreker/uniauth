@@ -15,10 +15,16 @@ end-user authentication.
 
 UniAuth is a Go gateway with an embedded React and TypeScript administrator
 Console. SQLite persists App definitions and verification digests of product
-Secrets. Upstream credentials and the Console administrator Argon2id password
-hash come from deployment configuration. No end-user table or central SSO
-session is created. The Console has its own eight-hour in-memory session and
-grants no authority to product users.
+Secrets. Upstream credentials and the Console administrator password come from
+deployment configuration. No end-user table or central SSO session is created.
+The Console has its own eight-hour in-memory session and grants no authority to
+product users.
+
+The original gateway required a deployment-configured Argon2id password hash.
+The [direct administrator password decision](../simplification/2026-10-13-direct-administrator-password.md)
+supersedes that credential format and its CLI generation step. The Console now
+compares the configured password directly; administrator authority and session
+ownership remain governed by this note.
 
 Console mutations require exact Origin and CSRF validation. The expected origin
 is derived once from deployment configuration using IDNA ASCII lowercase domain

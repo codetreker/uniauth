@@ -14,28 +14,16 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/alexedwards/argon2id"
 	"github.com/codetreker/uniauth/internal/apps"
 	"github.com/codetreker/uniauth/internal/providers"
 )
 
-var passwordHash string
-var passwordOnce sync.Once
-
 func configForTest(t *testing.T) Config {
 	t.Helper()
-	passwordOnce.Do(func() {
-		var err error
-		passwordHash, err = argon2id.CreateHash("test password", &argon2id.Params{Memory: 19456, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32})
-		if err != nil {
-			panic(err)
-		}
-	})
-	return Config{PublicURL: "http://localhost:8080", ListenAddr: "127.0.0.1:0", DatabasePath: filepath.Join(t.TempDir(), "apps.db"), AdminPasswordHash: passwordHash, AllowLoopbackHTTP: true}
+	return Config{PublicURL: "http://localhost:8080", ListenAddr: "127.0.0.1:0", DatabasePath: filepath.Join(t.TempDir(), "apps.db"), AdminPassword: "  $直接-password  ", AllowLoopbackHTTP: true}
 }
 func quietLogger() *slog.Logger { return slog.New(slog.NewJSONHandler(io.Discard, nil)) }
 func newTestService(t *testing.T, registry map[string]providers.Provider) *Service {
@@ -102,7 +90,7 @@ func TestAdministratorProductFlow(t *testing.T) {
 		}
 		return res
 	}
-	res := request("POST", "/console/api/login", `{"password":"test password"}`, "")
+	res := request("POST", "/console/api/login", `{"password":"  $直接-password  "}`, "")
 	if res.StatusCode != 200 {
 		t.Fatalf("login: %d", res.StatusCode)
 	}
@@ -229,9 +217,9 @@ func TestStartupCleanupAndLiveRegistry(t *testing.T) {
 		t.Fatal("missing logger accepted")
 	}
 	invalid := cfg
-	invalid.AdminPasswordHash = "invalid"
+	invalid.AdminPassword = strings.Repeat("x", 1025)
 	if _, err := New(context.Background(), invalid, nil, quietLogger()); err == nil {
-		t.Fatal("invalid administrator hash accepted")
+		t.Fatal("invalid administrator password accepted")
 	}
 	service, err := New(context.Background(), cfg, nil, quietLogger())
 	if err != nil {

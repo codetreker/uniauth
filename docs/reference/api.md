@@ -240,8 +240,10 @@ The HttpOnly, SameSite=Strict cookie is Secure and named
 Login replaces a prior session presented by the same browser; logout, expiry,
 or restart invalidates it. This session grants Console authority only.
 
-Password failures return `401 unauthorized`. Login rate and concurrency limits
-return `429 rate_limited` with `Retry-After`. Session capacity exhaustion returns
+The login password must contain 1–1024 bytes and match `UNIAUTH_ADMIN_PASSWORD`
+exactly, including whitespace. Empty or oversized passwords return
+`400 invalid_input`; incorrect passwords return `401 unauthorized`. The login
+rate limit returns `429 rate_limited` with `Retry-After`. Session capacity exhaustion returns
 `503 session_capacity`. Missing sessions return `401 unauthorized`; invalid
 Origin or CSRF returns `403 invalid_origin` or `403 invalid_csrf`.
 

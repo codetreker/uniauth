@@ -70,7 +70,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sensitive := range []string{created.Secret, issued.Secret, testPasswordHash(), e.csrf, e.cookie.Value, "correct horse battery staple", "private-data", "Updated App", "product.example", "client-controlled-request-id"} {
+	for _, sensitive := range []string{created.Secret, issued.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id"} {
 		if strings.Contains(string(encoded), sensitive) {
 			t.Fatalf("audit disclosed sensitive data %q: %s", sensitive, encoded)
 		}

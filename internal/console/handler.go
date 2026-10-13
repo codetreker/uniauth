@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexedwards/argon2id"
 	"github.com/codetreker/uniauth/internal/apps"
 )
 
@@ -23,7 +23,6 @@ type Handler struct {
 	cookieName      string
 	secure          bool
 	available       map[string]bool
-	passwordSlots   chan struct{}
 	mu              sync.Mutex
 	sessions        map[[32]byte]adminSession
 	loginTokens     float64
@@ -99,20 +98,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "Too many administrator login attempts.")
 		return
 	}
-	select {
-	case h.passwordSlots <- struct{}{}:
-		defer func() { <-h.passwordSlots }()
-	default:
-		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "Administrator password verification is busy.")
-		return
-	}
-	match, err := argon2id.ComparePasswordAndHash(input.Password, h.config.PasswordHash)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "Unable to verify the administrator password.")
-		return
-	}
-	if !match {
+	if subtle.ConstantTimeCompare([]byte(input.Password), []byte(h.config.Password)) != 1 {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "The administrator password is incorrect.")
 		return
 	}

@@ -17,19 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexedwards/argon2id"
 	"github.com/codetreker/uniauth/internal/apps"
 )
 
-var testPasswordHash = sync.OnceValue(func() string {
-	hash, err := argon2id.CreateHash("correct horse battery staple", &argon2id.Params{
-		Memory: 19456, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
-	})
-	if err != nil {
-		panic(err)
-	}
-	return hash
-})
+const testPassword = "correct horse battery staple"
 
 type testConsole struct {
 	handler *Handler
@@ -56,7 +47,7 @@ func newTestConsole(t *testing.T, change func(*Config)) *testConsole {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	env := &testConsole{store: store, now: time.Date(2026, 10, 12, 1, 0, 0, 0, time.UTC)}
-	cfg := Config{PublicURL: "https://auth.example", PasswordHash: testPasswordHash(), Now: func() time.Time { return env.now }, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}
+	cfg := Config{PublicURL: "https://auth.example", Password: testPassword, Now: func() time.Time { return env.now }, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}
 	if change != nil {
 		change(&cfg)
 	}
@@ -316,7 +307,32 @@ func TestSessionCapacityReauthenticationAndExpiryRecovery(t *testing.T) {
 	}
 }
 
-func TestLoginRateAndPasswordConcurrencyBound(t *testing.T) {
+func TestLoginUsesExactConfiguredPassword(t *testing.T) {
+	const password = "  $直接-password  "
+	e := newTestConsole(t, func(cfg *Config) { cfg.Password = password })
+	for _, wrong := range []string{strings.TrimSpace(password), "  $直接-password ", "  $直接-Password  "} {
+		body, err := json.Marshal(map[string]string{"password": wrong})
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := e.request("POST", "/console/api/login", string(body), nil)
+		requireStatus(t, response, http.StatusUnauthorized)
+		if len(response.Result().Cookies()) != 0 {
+			t.Fatal("incorrect password issued a session")
+		}
+	}
+	body, err := json.Marshal(map[string]string{"password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := e.request("POST", "/console/api/login", string(body), nil)
+	requireStatus(t, response, http.StatusOK)
+	if len(response.Result().Cookies()) != 1 || decodeResponse[map[string]string](t, response)["csrf_token"] == "" {
+		t.Fatal("configured password did not issue a session and CSRF token")
+	}
+}
+
+func TestLoginRateLimit(t *testing.T) {
 	e := newTestConsole(t, nil)
 	for range loginBurst {
 		requireStatus(t, e.request("POST", "/console/api/login", `{"password":"wrong"}`, nil), http.StatusUnauthorized)
@@ -325,19 +341,11 @@ func TestLoginRateAndPasswordConcurrencyBound(t *testing.T) {
 	e.now = e.now.Add(time.Second)
 	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"wrong"}`, nil), http.StatusUnauthorized)
 	e.now = e.now.Add(time.Second)
-	for range cap(e.handler.passwordSlots) {
-		e.handler.passwordSlots <- struct{}{}
-	}
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, nil), http.StatusTooManyRequests)
-	for range cap(e.handler.passwordSlots) {
-		<-e.handler.passwordSlots
-	}
-	e.now = e.now.Add(time.Second)
 	e.login(t)
 }
 
 func TestConcurrentLoginEnforcesSessionCapacity(t *testing.T) {
-	e := newTestConsole(t, func(cfg *Config) { cfg.MaxSessions = 1; cfg.PasswordConcurrency = 4 })
+	e := newTestConsole(t, func(cfg *Config) { cfg.MaxSessions = 1 })
 	responses := make(chan *httptest.ResponseRecorder, loginBurst)
 	var workers sync.WaitGroup
 	for range loginBurst {
@@ -352,7 +360,7 @@ func TestConcurrentLoginEnforcesSessionCapacity(t *testing.T) {
 		switch response.Code {
 		case http.StatusOK:
 			accepted++
-		case http.StatusServiceUnavailable, http.StatusTooManyRequests:
+		case http.StatusServiceUnavailable:
 		default:
 			t.Fatalf("unexpected concurrent login status %d: %s", response.Code, response.Body.String())
 		}
@@ -368,7 +376,7 @@ func TestLoopbackCookieAndConfigurationValidation(t *testing.T) {
 	if e.cookie.Secure || strings.HasPrefix(e.cookie.Name, "__Host-") || e.cookie.Domain != "" {
 		t.Fatalf("invalid loopback cookie: %+v", e.cookie)
 	}
-	validConfig := Config{PublicURL: "https://auth.example", PasswordHash: testPasswordHash()}
+	validConfig := Config{PublicURL: "https://auth.example", Password: testPassword}
 	tests := []struct {
 		name   string
 		change func(*Config)
@@ -383,26 +391,14 @@ func TestLoopbackCookieAndConfigurationValidation(t *testing.T) {
 		{"empty fragment", func(cfg *Config) { cfg.PublicURL = "https://auth.example#" }},
 		{"public HTTP", func(cfg *Config) { cfg.PublicURL = "http://auth.example"; cfg.AllowLoopbackHTTP = true }},
 		{"implicit loopback", func(cfg *Config) { cfg.PublicURL = "http://localhost:8080" }},
-		{"missing hash", func(cfg *Config) { cfg.PasswordHash = "" }},
-		{"large hash", func(cfg *Config) { cfg.PasswordHash = strings.Repeat("x", 513) }},
-		{"noncanonical hash", func(cfg *Config) { cfg.PasswordHash = strings.Replace(cfg.PasswordHash, "v=19", "v=19junk", 1) }},
-		{"zero memory", func(cfg *Config) { cfg.PasswordHash = strings.Replace(cfg.PasswordHash, "m=19456", "m=0", 1) }},
-		{"excessive memory", func(cfg *Config) { cfg.PasswordHash = strings.Replace(cfg.PasswordHash, "m=19456", "m=4294967295", 1) }},
-		{"zero iterations", func(cfg *Config) { cfg.PasswordHash = strings.Replace(cfg.PasswordHash, "t=1", "t=0", 1) }},
-		{"zero parallelism", func(cfg *Config) { cfg.PasswordHash = strings.Replace(cfg.PasswordHash, "p=1", "p=0", 1) }},
-		{"short key", func(cfg *Config) {
-			parts := strings.Split(cfg.PasswordHash, "$")
-			parts[5] = "eA"
-			cfg.PasswordHash = strings.Join(parts, "$")
-		}},
+		{"missing password", func(cfg *Config) { cfg.Password = "" }},
+		{"large password", func(cfg *Config) { cfg.Password = strings.Repeat("x", 1025) }},
 		{"negative lifetime", func(cfg *Config) { cfg.SessionTTL = -time.Second }},
 		{"unbounded lifetime", func(cfg *Config) { cfg.SessionTTL = 25 * time.Hour }},
 		{"negative capacity", func(cfg *Config) { cfg.MaxSessions = -1 }},
 		{"unbounded capacity", func(cfg *Config) { cfg.MaxSessions = 100001 }},
 		{"negative login interval", func(cfg *Config) { cfg.LoginInterval = -time.Second }},
 		{"excessive login interval", func(cfg *Config) { cfg.LoginInterval = time.Hour }},
-		{"negative concurrency", func(cfg *Config) { cfg.PasswordConcurrency = -1 }},
-		{"excessive concurrency", func(cfg *Config) { cfg.PasswordConcurrency = 5 }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

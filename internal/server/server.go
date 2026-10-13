@@ -53,7 +53,7 @@ func New(ctx context.Context, cfg Config, registry map[string]providers.Provider
 	for name := range registry {
 		available = append(available, name)
 	}
-	admin, err := console.New(store, available, console.Config{PublicURL: cfg.PublicURL, PasswordHash: cfg.AdminPasswordHash, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP, Logger: logger})
+	admin, err := console.New(store, available, console.Config{PublicURL: cfg.PublicURL, Password: cfg.AdminPassword, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP, Logger: logger})
 	if err != nil {
 		return fail(err)
 	}
