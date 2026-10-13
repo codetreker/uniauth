@@ -1,6 +1,6 @@
 # UniAuth Blueprint
 
-- Status: Agreed architecture, implemented by the authentication gateway delivery
+- Status: Agreed architecture
 - Date: 2026-10-13
 - Backend language: Go
 
@@ -8,15 +8,19 @@
 
 UniAuth authenticates external accounts through personal Microsoft, Google, and
 GitHub accounts and hands complete identity information to product backends.
-It owns upstream authentication, application registration, credentials, and
-short-lived flow state. Products own users, account linking, permissions, and
-login sessions. Authenticating a product user grants no Console authority.
+It owns upstream authentication, App registration, credentials, and short-lived
+flow state. External products own users, linking, permissions, and sessions.
+The gateway stores no external product users or central SSO session.
 
-There is no persistent end-user database, profile store, cross-provider linking
-record, or central SSO session. The administrator Console uses a separate
-password and in-memory session. The
-[architecture decision](../../.agents/notes/implemented/architecture/2026-10-12-authentication-gateway.md)
-records the considered alternatives and accepted costs. The
+UniAuth is also a public platform: anyone can sign in to its Console through any
+configured provider and manage their own Apps. The Console is a protected App
+using the same gateway. Its own accounts and explicit identity links persist in
+SQLite, independently of external product identity handover. Administrator
+visibility is limited to minimal user summaries and created-App counts. The
+[platform decision](../../.agents/notes/implemented/architecture/2026-10-13-public-oauth-platform.md)
+owns this Console authority and its data reset. The
+[gateway decision](../../.agents/notes/implemented/architecture/2026-10-12-authentication-gateway.md)
+retains external product ownership and handover alternatives. The
 [references](../README.md) describe implemented API and configuration details;
 [task evidence](../tasks/2026-10-12-authentication-gateway.md) distinguishes tests
 from live upstream verification.
@@ -31,9 +35,14 @@ from live upstream verification.
 | R4 | Return a standard identity profile and every obtained provider identity field under `origin`, within configured and granted scopes. |
 | R5 | Retain complete identity results only in process memory for five minutes from creation. |
 | R6 | Atomically consume an owning App's authenticated result once. |
-| R7 | Leave users, linking, authorization, and login sessions to each product. |
+| R7 | Leave external product users, linking, authorization, and login sessions to each product. |
 | R8 | Return a callback code, then let the product backend retrieve identity JSON. |
 | R9 | Provide Go and JavaScript product-backend SDKs for the existing protocol while retaining complete raw identity data and product-owned state/session persistence. |
+| R10 | Authenticate the public Console only through configured OAuth providers, as a protected UniAuth App. |
+| R11 | Persist provider-ID platform accounts and permit authenticated explicit identity linking without email-based account merging. |
+| R12 | Enforce owner-only access to Apps and Secrets, including for administrators. |
+| R13 | Claim initial administrator authority once through a configured verified email; allow only minimal user summaries and App counts to that administrator. |
+| R14 | Reset all existing Apps and Secrets through migration 3, then persist the final platform schema without legacy ownership rules. |
 
 ## Architecture
 
@@ -49,7 +58,9 @@ flowchart LR
     Product -->|App credentials and code| Gateway
     Cache -->|Atomic claim and deletion| Gateway
     Gateway -->|Complete identity JSON| Product
-    Console[Embedded Console] --> Apps[SQLite App configuration]
+    Console[Public Console] -->|Protected App login and in-process retrieval| Gateway
+    Console --> Platform[SQLite Console accounts and linked identities]
+    Console -->|Owner-only management| Apps[SQLite owned Apps and credentials]
     Apps --> Gateway
 ```
 
@@ -62,10 +73,10 @@ callback URL size limits and shared encryption-key lifecycle complexity.
 | --- | --- |
 | `cmd/uniauth/` | Configuration, startup, signals. |
 | `internal/server/` | Provider composition, HTTP routing, request logging, shutdown. |
-| `internal/apps/` | SQLite migrations, App configuration, credential lifecycle. |
+| `internal/apps/` | SQLite migrations, platform accounts and identity links, owned App configuration, credential lifecycle. |
 | `internal/providers/` | Three real provider adapters, source collection, and standard identity-field mapping. |
 | `internal/auth/` | Browser-bound transactions, result expiry and atomic handover. |
-| `internal/console/` | Administrator password verification, sessions, management API. |
+| `internal/console/` | OAuth Console login/linking, sessions, owner management API, minimal administrator listing. |
 | `web/console/` | React/TypeScript UI and embedded production assets. |
 | `sdk/go/` | Standalone standard-library Go product client module. |
 | `sdk/js/` | Node.js ESM product client package and TypeScript declarations. |
@@ -106,32 +117,62 @@ after its one-time plaintext display. The
 [Secret metadata decision](../../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md)
 owns these contracts and the upgrade rationale.
 
-SQLite persists only configuration and product Secret verification records.
-Embedded migrations establish the schema without an end-user table. Migration
-2 gives every pre-existing Secret, including revoked credentials, a deterministic
-`Secret <id>` name and an empty description. It preserves credential IDs,
-verification digests, timestamps, and the App lookup index. New code reads the
-migrated schema directly, without an old-row fallback. Provider
-Client ID/Secret pairs come from deployment configuration and are distinct from
-Console-generated product credentials. Missing providers are unavailable rather
-than given fallback credentials.
+SQLite persists Console platform accounts, linked normalized identity profiles,
+App ownership, configuration, and Secret verification records. Migration 3 clears
+all pre-platform Apps and Secrets and establishes that schema; no seed account,
+legacy owner, or row-compatibility branch is used. Products recreate registrations
+and credentials after upgrading. Provider Client ID/Secret pairs remain deployment
+configuration and are distinct from App credentials.
 
-The Console compares login passwords exactly against `UNIAUTH_ADMIN_PASSWORD`,
-a single-line deployment secret containing 1–1024 bytes, with no CR or LF.
-Deployment supplies the password directly so an operator can configure and rotate
-it without a separate credential-generation step. Spaces, dollar signs, and
-Unicode are preserved. The Console password control removes CR and LF, so
-rejecting them at startup keeps every accepted password usable in the UI. The
-[administrator password decision](../../.agents/notes/implemented/simplification/2026-10-13-direct-administrator-password.md)
-owns this choice and its deployment costs. An eight-hour in-memory administrator
-session uses an HttpOnly, SameSite=Strict cookie, Secure under HTTPS. Mutations
-require exact Origin and CSRF validation. The expected Console origin is derived
-from the configured URL using lowercase IDNA domain names, canonical IPv6
-literals, and normalized ports with default ports omitted. Incoming Origin
-headers are compared exactly without normalization, accepting normal browser
-serialization while rejecting noncanonical or foreign headers. Login attempts
-are rate-limited. Changing the configured password requires a restart, which
-invalidates these administrator sessions.
+## Public Console accounts and authority
+
+The server provisions a protected Console App. Its exact callback is
+`<UNIAUTH_PUBLIC_URL>/console/auth/callback`; its allowed providers are all
+configured upstream providers. Startup rotates its backend-only random Secret
+and stores only the verification digest in SQLite. Management APIs neither list
+nor permit modification of that system App.
+
+Console login starts the ordinary gateway authorization flow. At its callback,
+Console consumes its browser-bound pending state, then retrieves the App-bound
+result through the gateway's shared authenticated in-process operation. This
+operation checks live App credentials and applies the same five-minute expiry
+and atomic consumption as `/auth/result`, avoiding a network request back into
+the same service. External products keep the existing HTTP protocol.
+
+A new provider-qualified stable ID creates a platform account. Signing in through
+a linked ID selects its existing account. Equal emails do not merge accounts.
+Authenticated users can explicitly link another provider identity; linking
+requires the initiating session to remain live through callback and final
+attachment. An identity belonging to another account cannot move. The stored
+profile is normalized Console identity data, without raw `origin` or upstream
+tokens. This persistence applies only to Console users.
+
+`UNIAUTH_INITIAL_ADMIN_EMAIL` is a plain email address in deployment configuration,
+for example `sychenjianjun@gmail.com`. The first normalized identity with matching
+email, compared case-insensitively, and `email_verified=true` atomically claims
+bootstrap authority for its
+actual account. Google or GitHub can supply this evidence; Microsoft's unknown
+verification cannot claim it. There is no precreated administrator account.
+Before the claim, startup may update the pending configured email. After the
+claim, changing configuration never transfers administrator authority. Bootstrap
+trusts the provider's verification assertion at verification time; it performs
+no fresh mailbox challenge and does not guarantee continued mailbox control.
+
+An administrator may view only user ID, name, email, creation time, and the number
+of Apps each user created. No administrative endpoint exposes another user's
+App definitions, callback/provider settings, Secret metadata or values, identity
+links, or management controls. Every App and Secret operation requires the
+session's owner ID inside the same storage query or transaction; a different
+owner or the system App yields ordinary not-found behavior.
+
+OAuth is the sole Console login mechanism. Password configuration and login input
+are removed. At least one upstream provider is required at startup. The Console
+session remains eight hours in memory with an HttpOnly, SameSite=Strict cookie,
+Secure under HTTPS. Pending login and link state remains in memory for ten
+minutes with a separate random HttpOnly, SameSite=Lax browser binding. Origin and
+CSRF checks protect Console mutations. The expected origin uses lowercase IDNA
+domain names, canonical IPv6 literals, and normalized ports with default ports
+omitted; incoming Origin headers are compared exactly.
 
 Console configuration editing, enable/disable changes, deletion, and Secret
 creation, detail updates, reset, and revocation share one operation owner for
@@ -302,7 +343,7 @@ before caching, so serialization failure cannot consume a published result.
 A successful claim means server acceptance and deletion before response writing.
 It cannot prove client receipt. A lost response after consumption requires a
 fresh login. Process restart loses pending transactions, results, and Console
-sessions while retaining App configuration.
+sessions while retaining platform accounts, links, and owned App configuration.
 
 Deploy one process. A login's authorization, provider callback, and retrieval must
 reach that process. Multiple replicas need a separate routing or shared-state
@@ -316,10 +357,11 @@ provider, phase, and sanitized error categories. Successful result retrieval get
 its operation ID from the live result before deletion. Later unavailable claims
 can use request ID and authenticated App ID; their original operation ID need not
 survive. Cleanup reports aggregate expiration counts. Console configuration
-changes and Secret detail updates have management operation and affected App
-IDs for audit correlation; metadata updates use `secret.update`.
+changes and Secret detail updates have management operation, opaque platform actor
+account, and affected App IDs for audit correlation; metadata updates use
+`secret.update`.
 
-Logs exclude identity payloads, account identifiers, emails, result codes, product
+Logs exclude identity payloads, upstream identity IDs, emails, result codes, product
 or provider state, Secrets, Secret names and descriptions, App display data,
 authorization headers, tokens, and full sensitive URLs. Reverse-proxy configuration must preserve that exclusion. Provider errors
 retain causes internally while emitting safe operation and failure categories.

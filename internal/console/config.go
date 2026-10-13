@@ -10,15 +10,19 @@ import (
 	"time"
 
 	"github.com/codetreker/uniauth/internal/apps"
+	"github.com/codetreker/uniauth/internal/auth"
 )
 
 type Config struct {
 	PublicURL         string
-	Password          string
+	Gateway           *auth.Handler
+	AppID             string
+	AppSecret         string
 	AllowLoopbackHTTP bool
 	SessionTTL        time.Duration
 	MaxSessions       int
-	LoginInterval     time.Duration
+	PendingTTL        time.Duration
+	MaxPending        int
 	Now               func() time.Time
 	Logger            *slog.Logger
 }
@@ -43,8 +47,8 @@ func New(store *apps.Store, availableProviders []string, cfg Config) (*Handler, 
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize console public URL origin: %w", err)
 	}
-	if len(cfg.Password) == 0 || len(cfg.Password) > 1024 || strings.ContainsAny(cfg.Password, "\r\n") {
-		return nil, errors.New("console password must contain between one and 1024 bytes without CR or LF")
+	if cfg.Gateway == nil || cfg.AppID == "" || cfg.AppSecret == "" {
+		return nil, errors.New("console requires a gateway and application credentials")
 	}
 	if cfg.SessionTTL == 0 {
 		cfg.SessionTTL = 8 * time.Hour
@@ -58,11 +62,17 @@ func New(store *apps.Store, availableProviders []string, cfg Config) (*Handler, 
 	if cfg.MaxSessions < 1 || cfg.MaxSessions > 100000 {
 		return nil, errors.New("console session capacity must be between one and 100000")
 	}
-	if cfg.LoginInterval == 0 {
-		cfg.LoginInterval = time.Second
+	if cfg.PendingTTL == 0 {
+		cfg.PendingTTL = 10 * time.Minute
 	}
-	if cfg.LoginInterval < time.Millisecond || cfg.LoginInterval > time.Minute {
-		return nil, errors.New("console login interval must be between one millisecond and one minute")
+	if cfg.PendingTTL < time.Second || cfg.PendingTTL > 10*time.Minute {
+		return nil, errors.New("console pending login lifetime must be between one second and ten minutes")
+	}
+	if cfg.MaxPending == 0 {
+		cfg.MaxPending = 1000
+	}
+	if cfg.MaxPending < 1 || cfg.MaxPending > 100000 {
+		return nil, errors.New("console pending login capacity must be between one and 100000")
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -79,14 +89,16 @@ func New(store *apps.Store, availableProviders []string, cfg Config) (*Handler, 
 			return nil, fmt.Errorf("unknown available console provider %q", provider)
 		}
 	}
-	cookieName := "__Host-uniauth_admin"
+	if len(available) == 0 {
+		return nil, errors.New("console requires at least one available OAuth provider")
+	}
+	cookieName := "__Host-uniauth_console"
 	if u.Scheme == "http" {
-		cookieName = "uniauth_admin"
+		cookieName = "uniauth_console"
 	}
 	return &Handler{
 		store: store, config: cfg, origin: origin,
 		cookieName: cookieName, secure: u.Scheme == "https", available: available,
-		sessions:    make(map[[32]byte]adminSession),
-		loginTokens: loginBurst, lastLoginRefill: cfg.Now(),
+		sessions: make(map[[32]byte]consoleSession), pending: make(map[string]pendingLogin),
 	}, nil
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { APIError, createAPI } from "./api";
+import { fixtureUser } from "./test-fixtures";
 
 const app = {
   id: "app_example",
@@ -20,7 +21,9 @@ describe("Console transport", () => {
   it("sends secret metadata with CSRF and encoded application and secret IDs", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(response({ csrf_token: "session-token" }))
+      .mockResolvedValueOnce(
+        response({ csrf_token: "session-token", user: fixtureUser }),
+      )
       .mockResolvedValueOnce(
         response(
           {
@@ -86,7 +89,9 @@ describe("Console transport", () => {
     };
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(response({ csrf_token: "session-token" }))
+      .mockResolvedValueOnce(
+        response({ csrf_token: "session-token", user: fixtureUser }),
+      )
       .mockResolvedValueOnce(response(issued, 201))
       .mockResolvedValueOnce(response({ ...issued, secret: undefined }, 201));
     const api = createAPI(fetcher);
@@ -110,19 +115,20 @@ describe("Console transport", () => {
   it("adopts a new session after authentication and clears it on logout", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(response({ csrf_token: "first-token" }))
+      .mockResolvedValueOnce(
+        response({ csrf_token: "first-token", user: fixtureUser }),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(response({ csrf_token: "new-token" }))
+      .mockResolvedValueOnce(
+        response({ csrf_token: "new-token", user: fixtureUser }),
+      )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const api = createAPI(fetcher);
-    await api.login("first-password");
+    await api.session();
     await api.logout();
-    await api.login("new-password");
+    await api.session();
     await api.deleteApp(app.id);
-    const loginOptions = fetcher.mock.calls[2][1];
-    expect(loginOptions?.headers).toEqual({
-      "Content-Type": "application/json",
-    });
+    expect(fetcher.mock.calls[2][1]?.headers).toEqual({});
     expect(fetcher.mock.calls[3][1]?.headers).toEqual({
       "X-CSRF-Token": "new-token",
     });
@@ -211,4 +217,115 @@ describe("Console transport", () => {
     );
     expect(await api.listSecrets(app.id)).toEqual([metadata]);
   });
+});
+
+it("starts OAuth with only a provider and validates the authorization URL", async () => {
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      response({
+        authorization_url:
+          "https://console.example.test/auth/authorize?state=opaque",
+      }),
+    )
+    .mockResolvedValueOnce(response({ csrf_token: "legacy" }));
+  const api = createAPI(fetcher);
+  expect(await api.login("google")).toEqual({
+    authorization_url:
+      "https://console.example.test/auth/authorize?state=opaque",
+  });
+  expect(fetcher).toHaveBeenCalledWith(
+    "/console/api/login",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ provider: "google" }),
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  await expect(api.login("github")).rejects.toThrow();
+});
+
+it("uses CSRF for explicit identity binding and encodes opaque user pagination cursors", async () => {
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      response({ csrf_token: "session-token", user: fixtureUser }),
+    )
+    .mockResolvedValueOnce(
+      response({
+        authorization_url: "https://console.example.test/auth/authorize",
+      }),
+    )
+    .mockResolvedValueOnce(
+      response({
+        users: [
+          {
+            id: "usr_summary",
+            email: null,
+            name: null,
+            created_at: app.created_at,
+            app_count: 4,
+            secrets: ["must-not-expose"],
+          },
+        ],
+        next_cursor: null,
+      }),
+    );
+  const api = createAPI(fetcher);
+  await api.session();
+  await api.linkIdentity("microsoft");
+  expect(fetcher).toHaveBeenNthCalledWith(
+    2,
+    "/console/api/identities/link",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ provider: "microsoft" }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": "session-token",
+      },
+    }),
+  );
+  const page = await api.listUsers("opaque/+==");
+  expect(fetcher).toHaveBeenNthCalledWith(
+    3,
+    "/console/api/users?cursor=opaque%2F%2B%3D%3D",
+    expect.objectContaining({ method: "GET" }),
+  );
+  expect(page.users[0]).toEqual({
+    id: "usr_summary",
+    email: null,
+    name: null,
+    created_at: app.created_at,
+    app_count: 4,
+  });
+});
+
+it("requires every account profile field and preserves nullable verification in linked identities", async () => {
+  const identity = {
+    provider: "microsoft",
+    id: "microsoft:tenant:oid",
+    email: null,
+    name: null,
+    email_verified: null,
+    linked_at: app.created_at,
+  };
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      response({
+        csrf_token: "token",
+        user: { ...fixtureUser, avatar_url: undefined },
+      }),
+    )
+    .mockResolvedValueOnce(response({ identities: [identity] }))
+    .mockResolvedValueOnce(
+      response({ identities: [{ ...identity, email_verified: undefined }] }),
+    )
+    .mockResolvedValueOnce(response({ users: [], next_cursor: undefined }));
+  const api = createAPI(fetcher);
+  await expect(api.session()).rejects.toThrow();
+  expect(await api.listIdentities()).toEqual([identity]);
+  await expect(api.listIdentities()).rejects.toThrow();
+  await expect(api.listUsers()).rejects.toThrow();
 });

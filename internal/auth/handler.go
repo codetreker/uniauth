@@ -271,12 +271,12 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appID, secret, basic := r.BasicAuth()
-	if !basic || len(appID) > 128 || len(secret) > 512 || appID == "" || secret == "" {
+	if !basic {
 		w.Header().Set("WWW-Authenticate", `Basic realm="uniauth"`)
 		h.fail(w, r, 401, "invalid_app", "Application authentication failed.")
 		return
 	}
-	app, err := h.apps.Authenticate(r.Context(), appID, secret)
+	app, err := h.authenticateResult(r.Context(), appID, secret)
 	if err != nil {
 		if errors.Is(err, apps.ErrUnauthorized) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="uniauth"`)
@@ -304,20 +304,21 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, 400, "invalid_request", "The result request is invalid.")
 		return
 	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) || input.Code == "" || len(input.Code) > 512 || !utf8.ValidString(input.Code) {
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) || !validResultCode(input.Code) {
 		h.fail(w, r, 400, "invalid_request", "The result request is invalid.")
 		return
 	}
-	entry, err := h.cache.takeResult(input.Code, app.ID, h.config.Now())
+	// An accepted HTTP result remains consumed when its response is lost.
+	entry, err := h.claimResult(context.WithoutCancel(r.Context()), app.ID, input.Code)
 	if err != nil {
 		h.cacheError(w, r, err)
 		return
 	}
-	metadata.operationID, metadata.provider = entry.operationID, entry.provider
+	metadata.operationID, metadata.provider = entry.OperationID, entry.Provider
 	r = r.WithContext(context.WithValue(r.Context(), metadataKey{}, metadata))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(entry.payload); err != nil {
+	if _, err := w.Write(entry.Identity); err != nil {
 		h.log(r, "result_response", "response_write_failed", err)
 		return
 	}
@@ -352,7 +353,11 @@ func withOperation(r *http.Request, tx transaction) *http.Request {
 }
 
 func (h *Handler) log(r *http.Request, phase, errorCategory string, causes ...error) {
-	metadata, _ := r.Context().Value(metadataKey{}).(requestMetadata)
+	h.logContext(r.Context(), phase, errorCategory, causes...)
+}
+
+func (h *Handler) logContext(ctx context.Context, phase, errorCategory string, causes ...error) {
+	metadata, _ := ctx.Value(metadataKey{}).(requestMetadata)
 	fields := []any{"component", "auth", "phase", phase, "request_id", metadata.requestID, "operation_id", metadata.operationID, "app_id", metadata.appID, "provider", metadata.provider, "error_category", errorCategory}
 	if cause := errors.Join(causes...); cause != nil {
 		operation := phase
@@ -372,7 +377,7 @@ func (h *Handler) log(r *http.Request, phase, errorCategory string, causes ...er
 		}
 		fields = append(fields, "error_operation", operation, "error_cause", category)
 	}
-	h.config.Logger.InfoContext(r.Context(), "authentication operation", fields...)
+	h.config.Logger.InfoContext(ctx, "authentication operation", fields...)
 }
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, status int, code, message string, cause ...error) {

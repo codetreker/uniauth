@@ -1,5 +1,9 @@
 import { APIError, secretInputSchema } from "./api";
 import type {
+  Account,
+  LinkedIdentity,
+  ProviderID,
+  Session,
   Application,
   AppInput,
   ConsoleAPI,
@@ -8,8 +12,61 @@ import type {
   SecretInput,
 } from "./api";
 
-export const createMockAPI = (): ConsoleAPI => {
-  let authenticated = true;
+export type PreviewPersona = "administrator" | "developer" | "new-account";
+export type MockConsoleAPI = ConsoleAPI & {
+  completeAuthorization: (url: string) => Promise<Session>;
+};
+export const createMockAPI = (
+  persona: PreviewPersona = "administrator",
+  signedOut = false,
+): MockConsoleAPI => {
+  let authenticated = !signedOut;
+  const profiles: Record<PreviewPersona, Account> = {
+    administrator: {
+      id: "usr_platform_admin",
+      name: "Jianjun Chen",
+      email: "sychenjianjun@gmail.com",
+      avatar_url: null,
+      is_admin: true,
+      created_at: "2026-10-08T09:30:00Z",
+    },
+    developer: {
+      id: "usr_product_developer",
+      name: "Alex Morgan",
+      email: "alex@example.com",
+      avatar_url: null,
+      is_admin: false,
+      created_at: "2026-10-09T09:30:00Z",
+    },
+    "new-account": {
+      id: "usr_new_member",
+      name: null,
+      email: null,
+      avatar_url: null,
+      is_admin: false,
+      created_at: "2026-10-13T09:30:00Z",
+    },
+  };
+  const user = profiles[persona];
+  const identities: LinkedIdentity[] = [
+    {
+      provider:
+        persona === "administrator"
+          ? "google"
+          : persona === "developer"
+            ? "github"
+            : "microsoft",
+      id: `provider-stable-${persona}`,
+      name: user.name,
+      email: user.email,
+      email_verified: persona === "new-account" ? null : true,
+      linked_at: user.created_at,
+    },
+  ];
+  const currentSession = (): Session => ({
+    csrf_token: "preview-session",
+    user: structuredClone(user),
+  });
   let sequence = 4;
   const initialDate = "2026-10-12T09:30:00Z";
   let apps: Application[] = [
@@ -44,6 +101,8 @@ export const createMockAPI = (): ConsoleAPI => {
       updated_at: "2026-10-11T15:00:00Z",
     },
   ];
+  if (persona === "developer") apps = apps.slice(1, 2);
+  if (persona === "new-account") apps = [];
   const credentials = new Map<string, Secret[]>(
     apps.map((app, index) => [
       app.id,
@@ -89,11 +148,7 @@ export const createMockAPI = (): ConsoleAPI => {
   };
   const authorize = () => {
     if (!authenticated)
-      throw new APIError(
-        401,
-        "unauthorized",
-        "Administrator authentication is required.",
-      );
+      throw new APIError(401, "unauthorized", "Authentication is required.");
   };
   const getApp = (id: string) => {
     const app = apps.find((item) => item.id === id);
@@ -161,18 +216,67 @@ export const createMockAPI = (): ConsoleAPI => {
     session: async () => {
       await wait();
       authorize();
-      return { csrf_token: "preview-session" };
+      return currentSession();
     },
-    login: async (password) => {
+    login: async (provider) => {
       await wait();
-      if (password !== "preview")
+      return {
+        authorization_url: `https://preview.uniauth.example/authorize?provider=${provider}&action=login`,
+      };
+    },
+    completeAuthorization: async (url) => {
+      await wait();
+      const authorization = new URL(url);
+      if (authorization.origin !== "https://preview.uniauth.example")
+        throw new Error("Invalid preview authorization URL.");
+      const provider = authorization.searchParams.get("provider") as ProviderID;
+      if (!providers.some((item) => item.id === provider && item.available))
+        throw new Error("Invalid preview provider.");
+      if (authorization.searchParams.get("action") === "link") {
+        authorize();
+        if (!identities.some((identity) => identity.provider === provider))
+          identities.push({
+            provider,
+            id: `provider-stable-${persona}-${provider}`,
+            name: user.name,
+            email: user.email,
+            email_verified: provider === "microsoft" ? null : true,
+            linked_at: new Date().toISOString(),
+          });
+      } else authenticated = true;
+      return currentSession();
+    },
+    listIdentities: async () => {
+      await wait();
+      authorize();
+      return structuredClone(identities);
+    },
+    linkIdentity: async (provider) => {
+      await wait();
+      authorize();
+      return {
+        authorization_url: `https://preview.uniauth.example/authorize?provider=${provider}&action=link`,
+      };
+    },
+    listUsers: async (cursor) => {
+      await wait();
+      authorize();
+      if (!user.is_admin)
         throw new APIError(
-          401,
-          "unauthorized",
-          "The administrator password is incorrect.",
+          403,
+          "forbidden",
+          "Platform administrator access is required.",
         );
-      authenticated = true;
-      return { csrf_token: "preview-session" };
+      const summaries = Object.values(profiles).map((profile, index) => ({
+        id: profile.id,
+        email: profile.email,
+        name: profile.name,
+        created_at: profile.created_at,
+        app_count: index === 0 ? apps.length : index === 1 ? 1 : 0,
+      }));
+      return cursor === undefined
+        ? { users: summaries.slice(0, 2), next_cursor: "preview-page-2" }
+        : { users: summaries.slice(2), next_cursor: null };
     },
     logout: async () => {
       await wait();
@@ -186,7 +290,6 @@ export const createMockAPI = (): ConsoleAPI => {
     },
     listProviders: async () => {
       await wait();
-      authorize();
       return structuredClone(providers);
     },
     createApp: async (input) => {

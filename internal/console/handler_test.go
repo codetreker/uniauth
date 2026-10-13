@@ -13,14 +13,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/codetreker/uniauth/internal/apps"
+	"github.com/codetreker/uniauth/internal/auth"
+	"github.com/codetreker/uniauth/internal/providers"
+	"net/url"
 )
-
-const testPassword = "correct horse battery staple"
 
 type testConsole struct {
 	handler *Handler
@@ -29,6 +29,8 @@ type testConsole struct {
 	now     time.Time
 	cookie  *http.Cookie
 	csrf    string
+	account apps.Account
+	gateway *auth.Handler
 }
 
 func newTestConsole(t *testing.T, change func(*Config)) *testConsole {
@@ -41,21 +43,44 @@ func newTestConsole(t *testing.T, change func(*Config)) *testConsole {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	store, err := apps.Open(context.Background(), apps.Config{Path: filepath.Join(dir, "apps.sqlite")})
+	store, err := apps.Open(context.Background(), apps.Config{Path: filepath.Join(dir, "apps.sqlite"), AllowLoopbackHTTP: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	env := &testConsole{store: store, now: time.Date(2026, 10, 12, 1, 0, 0, 0, time.UTC)}
-	cfg := Config{PublicURL: "https://auth.example", Password: testPassword, Now: func() time.Time { return env.now }, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}
+	cfg := Config{PublicURL: "https://auth.example", Now: func() time.Time { return env.now }, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}
 	if change != nil {
 		change(&cfg)
 	}
+	if err := store.InitializePlatform(context.Background(), "admin@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(cfg.PublicURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = configuredOrigin(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consoleApp, err := store.ProvisionConsole(context.Background(), strings.TrimSuffix(cfg.PublicURL, "/")+"/console/auth/callback", []string{"microsoft", "github"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.gateway, err = auth.New(context.Background(), auth.Config{PublicURL: cfg.PublicURL, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP, TransactionTTL: 10 * time.Minute, CallbackTimeout: time.Second, CleanupInterval: time.Minute, MaxTransactions: 1000, MaxTransactionBytes: 1 << 20, MaxResults: 1000, MaxResultBytes: 1 << 20, Now: cfg.Now, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}, store, map[string]providers.Provider{"github": consoleProvider("github"), "microsoft": consoleProvider("microsoft")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = env.gateway.Close() })
+	cfg.Gateway, cfg.AppID, cfg.AppSecret = env.gateway, consoleApp.App.ID, consoleApp.Secret
 	env.handler, err = New(store, []string{"microsoft", "github"}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = env.handler.Close() })
 	env.mux = http.NewServeMux()
+	env.gateway.Register(env.mux)
 	env.handler.Register(env.mux)
 	return env
 }
@@ -107,19 +132,113 @@ func decodeResponse[T any](t *testing.T, response *httptest.ResponseRecorder) T 
 	return result
 }
 
+type consoleProvider string
+
+func (p consoleProvider) Name() string { return string(p) }
+func (p consoleProvider) AuthorizationURL(request providers.AuthorizationRequest) (string, error) {
+	return "https://provider.example/?state=" + url.QueryEscape(request.State), nil
+}
+func (p consoleProvider) Exchange(_ context.Context, request providers.ExchangeRequest) (providers.Identity, error) {
+	if request.Code == "failure" {
+		return providers.Identity{}, errors.New("private upstream error")
+	}
+	email, name, verified := "admin@example.com", "Admin", true
+	id := request.Code
+	if id != "admin" {
+		email = "member@example.com"
+		name = "Member"
+	}
+	var verification *bool = &verified
+	if p == "microsoft" {
+		verification = nil
+	}
+	return providers.Identity{Provider: string(p), ID: string(p) + ":" + id, Email: &email, EmailVerified: verification, Name: &name, Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"private":"upstream"}`)}}, nil
+}
+
+type consoleFlow struct {
+	pending      *http.Cookie
+	gateway      *http.Cookie
+	gatewayState string
+	state        string
+}
+
+func (e *testConsole) startFlow(t *testing.T, provider, path string) consoleFlow {
+	t.Helper()
+	response := e.request("POST", path, `{"provider":"`+provider+`"}`, nil)
+	requireStatus(t, response, 200)
+	return e.authorizeFlow(t, response)
+}
+func (e *testConsole) authorizeFlow(t *testing.T, response *httptest.ResponseRecorder) consoleFlow {
+	t.Helper()
+	authorization := decodeResponse[map[string]string](t, response)["authorization_url"]
+	pending := response.Result().Cookies()
+	if len(pending) != 1 || pending[0].SameSite != http.SameSiteLaxMode || !pending[0].HttpOnly {
+		t.Fatalf("invalid pending cookies %+v", pending)
+	}
+	parsed, err := url.Parse(authorization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", authorization, nil)
+	reply := httptest.NewRecorder()
+	e.mux.ServeHTTP(reply, req)
+	requireStatus(t, reply, 302)
+	redirect, err := url.Parse(reply.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := reply.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatal("missing gateway cookie")
+	}
+	return consoleFlow{pending: pending[0], gateway: cookies[0], gatewayState: redirect.Query().Get("state"), state: parsed.Query().Get("state")}
+}
+func (e *testConsole) gatewayCallback(t *testing.T, flow consoleFlow, provider, code string) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", e.handler.origin+"/auth/callback/"+provider+"?"+url.Values{"state": {flow.gatewayState}, "code": {code}}.Encode(), nil)
+	req.AddCookie(flow.gateway)
+	response := httptest.NewRecorder()
+	e.mux.ServeHTTP(response, req)
+	requireStatus(t, response, 302)
+	return response.Header().Get("Location")
+}
+func (e *testConsole) consoleCallback(t *testing.T, location string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", location, nil)
+	for _, cookie := range cookies {
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+	}
+	response := httptest.NewRecorder()
+	e.mux.ServeHTTP(response, req)
+	requireStatus(t, response, 303)
+	return response
+}
+func (e *testConsole) acceptLogin(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	if response.Header().Get("Location") != "/console/" {
+		t.Fatalf("login failed: %s", response.Header().Get("Location"))
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == e.handler.cookieName {
+			e.cookie = cookie
+		}
+	}
+	session := decodeResponse[struct {
+		CSRFToken string       `json:"csrf_token"`
+		User      apps.Account `json:"user"`
+	}](t, e.request("GET", "/console/api/session", "", nil))
+	e.csrf, e.account = session.CSRFToken, session.User
+	if e.cookie == nil || len(e.cookie.Value) != 43 || len(e.csrf) != 43 {
+		t.Fatal("missing session tokens")
+	}
+}
 func (e *testConsole) login(t *testing.T) {
 	t.Helper()
-	response := e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, nil)
-	requireStatus(t, response, http.StatusOK)
-	cookies := response.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("expected one session cookie: %v", cookies)
-	}
-	e.cookie = cookies[0]
-	e.csrf = decodeResponse[map[string]string](t, response)["csrf_token"]
-	if len(e.cookie.Value) != 43 || len(e.csrf) != 43 {
-		t.Fatal("session and CSRF tokens must be 256-bit values")
-	}
+	flow := e.startFlow(t, "github", "/console/api/login")
+	location := e.gatewayCallback(t, flow, "github", "admin")
+	e.acceptLogin(t, e.consoleCallback(t, location, flow.pending, e.cookie))
 }
 
 const appBody = `{"name":"Product A","enabled":true,"redirect_uris":["https://product.example/callback"],"providers":["microsoft","github"]}`
@@ -130,7 +249,7 @@ func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 	e := newTestConsole(t, nil)
 	requireStatus(t, e.request("GET", "/console/api/apps", "", nil), http.StatusUnauthorized)
 	e.login(t)
-	if e.cookie.Name != "__Host-uniauth_admin" || !e.cookie.Secure || !e.cookie.HttpOnly || e.cookie.Domain != "" || e.cookie.Path != "/" || e.cookie.SameSite != http.SameSiteStrictMode {
+	if e.cookie.Name != "__Host-uniauth_console" || !e.cookie.Secure || !e.cookie.HttpOnly || e.cookie.Domain != "" || e.cookie.Path != "/" || e.cookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("insecure session cookie: %+v", e.cookie)
 	}
 	response := e.request("POST", "/console/api/apps", createAppBody, nil)
@@ -331,15 +450,15 @@ func TestSecretResetEndpoint(t *testing.T) {
 func TestOriginCSRFAndStrictInput(t *testing.T) {
 	e := newTestConsole(t, nil)
 	for _, origin := range []string{"", "null", "https://evil.example", "https://auth.example.evil.test", "https://auth.example/"} {
-		requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, map[string]string{"Origin": origin}), http.StatusForbidden)
+		requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"github"}`, map[string]string{"Origin": origin}), http.StatusForbidden)
 	}
-	for _, body := range []string{`{`, `{}`, `null`, `[]`, `{"password":"correct horse battery staple","extra":true}`, `{"password":"correct horse battery staple"} {}`} {
+	for _, body := range []string{`{`, `{}`, `null`, `[]`, `{"provider":"github","extra":true}`, `{"provider":"github"} {}`} {
 		requireStatus(t, e.request("POST", "/console/api/login", body, nil), http.StatusBadRequest)
 	}
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"wrong"}`, nil), http.StatusUnauthorized)
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"x"}`, map[string]string{"Content-Type": "text/plain"}), http.StatusUnsupportedMediaType)
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"`+strings.Repeat("x", 1025)+`"}`, nil), http.StatusBadRequest)
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"`+strings.Repeat("x", 65536)+`"}`, nil), http.StatusBadRequest)
+	requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"unavailable"}`, nil), http.StatusBadRequest)
+	requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"github"}`, map[string]string{"Content-Type": "text/plain"}), http.StatusUnsupportedMediaType)
+	requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"`+strings.Repeat("x", 1025)+`"}`, nil), http.StatusBadRequest)
+	requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"`+strings.Repeat("x", 65536)+`"}`, nil), http.StatusBadRequest)
 	e.login(t)
 	for _, path := range []string{"/console/api/apps", "/console/api/logout", "/console/api/apps/missing/secrets", "/console/api/apps/missing/secrets/missing/reset"} {
 		for _, token := range []string{"", "wrong"} {
@@ -463,7 +582,9 @@ func TestSessionsAcrossTabsExpiryLogoutAndRestart(t *testing.T) {
 	for range 3 {
 		response := e.request("GET", "/console/api/session", "", nil)
 		requireStatus(t, response, http.StatusOK)
-		if decodeResponse[map[string]string](t, response)["csrf_token"] != initialCSRF || len(response.Result().Cookies()) != 0 {
+		if decodeResponse[struct {
+			CSRFToken string `json:"csrf_token"`
+		}](t, response).CSRFToken != initialCSRF || len(response.Result().Cookies()) != 0 {
 			t.Fatal("opening another tab changed the administrator session")
 		}
 	}
@@ -484,198 +605,13 @@ func TestSessionsAcrossTabsExpiryLogoutAndRestart(t *testing.T) {
 	requireStatus(t, e.request("GET", "/console/api/apps", "", nil), http.StatusUnauthorized)
 	e.now = e.now.Add(time.Second)
 	e.login(t)
-	replacement, err := New(e.store, nil, e.handler.config)
+	replacement, err := New(e.store, []string{"github"}, e.handler.config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.mux = http.NewServeMux()
 	replacement.Register(e.mux)
 	requireStatus(t, e.request("GET", "/console/api/session", "", nil), http.StatusUnauthorized)
-}
-
-func TestSessionCapacityReauthenticationAndExpiryRecovery(t *testing.T) {
-	e := newTestConsole(t, func(cfg *Config) { cfg.MaxSessions = 1; cfg.SessionTTL = time.Minute })
-	e.login(t)
-	oldCookie := e.cookie
-	e.login(t)
-	if oldCookie.Value == e.cookie.Value {
-		t.Fatal("reauthentication did not rotate the session")
-	}
-	currentCookie := e.cookie
-	e.cookie = oldCookie
-	requireStatus(t, e.request("GET", "/console/api/session", "", nil), http.StatusUnauthorized)
-	e.cookie = nil
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, nil), http.StatusServiceUnavailable)
-	e.cookie = currentCookie
-	requireStatus(t, e.request("GET", "/console/api/session", "", nil), http.StatusOK)
-	e.cookie = nil
-	e.now = e.now.Add(time.Minute)
-	e.login(t)
-	if len(e.handler.sessions) != 1 {
-		t.Fatalf("expired entries were retained: %d", len(e.handler.sessions))
-	}
-}
-
-func TestLoginUsesExactConfiguredPassword(t *testing.T) {
-	const password = "  $直接-password  "
-	e := newTestConsole(t, func(cfg *Config) { cfg.Password = password })
-	for _, wrong := range []string{strings.TrimSpace(password), "  $直接-password ", "  $直接-Password  ", password + "\r\n"} {
-		body, err := json.Marshal(map[string]string{"password": wrong})
-		if err != nil {
-			t.Fatal(err)
-		}
-		response := e.request("POST", "/console/api/login", string(body), nil)
-		requireStatus(t, response, http.StatusUnauthorized)
-		if len(response.Result().Cookies()) != 0 {
-			t.Fatal("incorrect password issued a session")
-		}
-	}
-	body, err := json.Marshal(map[string]string{"password": password})
-	if err != nil {
-		t.Fatal(err)
-	}
-	response := e.request("POST", "/console/api/login", string(body), nil)
-	requireStatus(t, response, http.StatusOK)
-	if len(response.Result().Cookies()) != 1 || decodeResponse[map[string]string](t, response)["csrf_token"] == "" {
-		t.Fatal("configured password did not issue a session and CSRF token")
-	}
-}
-
-func TestConfiguredPasswordIsUsableInConsole(t *testing.T) {
-	e := newTestConsole(t, nil)
-	cases := []struct {
-		name     string
-		password string
-		valid    bool
-	}{
-		{"one byte", " ", true},
-		{"1024 bytes", strings.Repeat("界", 341) + "$", true},
-		{"LF", "password\n", false},
-		{"CR", "password\r", false},
-		{"CRLF", "password\r\n", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{PublicURL: "https://auth.example", Password: tc.password}
-			handler, err := New(e.store, nil, cfg)
-			if !tc.valid {
-				if err == nil {
-					t.Fatal("multiline administrator password accepted")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("usable administrator password rejected: %v", err)
-			}
-			mux := http.NewServeMux()
-			handler.Register(mux)
-			body, err := json.Marshal(map[string]string{"password": tc.password})
-			if err != nil {
-				t.Fatal(err)
-			}
-			req := httptest.NewRequest("POST", cfg.PublicURL+"/console/api/login", bytes.NewReader(body))
-			req.Header.Set("Origin", cfg.PublicURL)
-			req.Header.Set("Content-Type", "application/json")
-			response := httptest.NewRecorder()
-			mux.ServeHTTP(response, req)
-			requireStatus(t, response, http.StatusOK)
-			if len(response.Result().Cookies()) != 1 {
-				t.Fatal("usable administrator password did not issue a session")
-			}
-		})
-	}
-}
-
-func TestLoginRateLimit(t *testing.T) {
-	e := newTestConsole(t, nil)
-	for range loginBurst {
-		requireStatus(t, e.request("POST", "/console/api/login", `{"password":"wrong"}`, nil), http.StatusUnauthorized)
-	}
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"wrong"}`, nil), http.StatusTooManyRequests)
-	e.now = e.now.Add(time.Second)
-	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"wrong"}`, nil), http.StatusUnauthorized)
-	e.now = e.now.Add(time.Second)
-	e.login(t)
-}
-
-func TestConcurrentLoginEnforcesSessionCapacity(t *testing.T) {
-	e := newTestConsole(t, func(cfg *Config) { cfg.MaxSessions = 1 })
-	responses := make(chan *httptest.ResponseRecorder, loginBurst)
-	var workers sync.WaitGroup
-	for range loginBurst {
-		workers.Go(func() {
-			responses <- e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, nil)
-		})
-	}
-	workers.Wait()
-	close(responses)
-	var accepted int
-	for response := range responses {
-		switch response.Code {
-		case http.StatusOK:
-			accepted++
-		case http.StatusServiceUnavailable:
-		default:
-			t.Fatalf("unexpected concurrent login status %d: %s", response.Code, response.Body.String())
-		}
-	}
-	if accepted != 1 || len(e.handler.sessions) != 1 {
-		t.Fatalf("concurrent logins bypassed capacity: accepted=%d stored=%d", accepted, len(e.handler.sessions))
-	}
-}
-
-func TestLoopbackCookieAndConfigurationValidation(t *testing.T) {
-	e := newTestConsole(t, func(cfg *Config) { cfg.PublicURL = "http://127.0.0.1:8080"; cfg.AllowLoopbackHTTP = true })
-	e.login(t)
-	if e.cookie.Secure || strings.HasPrefix(e.cookie.Name, "__Host-") || e.cookie.Domain != "" {
-		t.Fatalf("invalid loopback cookie: %+v", e.cookie)
-	}
-	validConfig := Config{PublicURL: "https://auth.example", Password: testPassword}
-	tests := []struct {
-		name   string
-		change func(*Config)
-	}{
-		{"invalid URL", func(cfg *Config) { cfg.PublicURL = "https://auth.example:%xx" }},
-		{"missing host", func(cfg *Config) { cfg.PublicURL = "https:///" }},
-		{"userinfo", func(cfg *Config) { cfg.PublicURL = "https://admin@auth.example" }},
-		{"path", func(cfg *Config) { cfg.PublicURL = "https://auth.example/path" }},
-		{"query", func(cfg *Config) { cfg.PublicURL = "https://auth.example?x=y" }},
-		{"empty query", func(cfg *Config) { cfg.PublicURL = "https://auth.example?" }},
-		{"fragment", func(cfg *Config) { cfg.PublicURL = "https://auth.example#fragment" }},
-		{"empty fragment", func(cfg *Config) { cfg.PublicURL = "https://auth.example#" }},
-		{"public HTTP", func(cfg *Config) { cfg.PublicURL = "http://auth.example"; cfg.AllowLoopbackHTTP = true }},
-		{"implicit loopback", func(cfg *Config) { cfg.PublicURL = "http://localhost:8080" }},
-		{"missing password", func(cfg *Config) { cfg.Password = "" }},
-		{"large password", func(cfg *Config) { cfg.Password = strings.Repeat("x", 1025) }},
-		{"negative lifetime", func(cfg *Config) { cfg.SessionTTL = -time.Second }},
-		{"unbounded lifetime", func(cfg *Config) { cfg.SessionTTL = 25 * time.Hour }},
-		{"negative capacity", func(cfg *Config) { cfg.MaxSessions = -1 }},
-		{"unbounded capacity", func(cfg *Config) { cfg.MaxSessions = 100001 }},
-		{"negative login interval", func(cfg *Config) { cfg.LoginInterval = -time.Second }},
-		{"excessive login interval", func(cfg *Config) { cfg.LoginInterval = time.Hour }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := validConfig
-			tt.change(&cfg)
-			if _, err := New(e.store, nil, cfg); err == nil {
-				t.Fatal("invalid configuration was accepted")
-			}
-		})
-	}
-	if _, err := New(nil, nil, validConfig); err == nil {
-		t.Fatal("nil store accepted")
-	}
-	if _, err := New(e.store, []string{"other"}, validConfig); err == nil {
-		t.Fatal("unknown available provider accepted")
-	}
-	for _, origin := range []string{"http://localhost:8080", "http://[::1]:8080", "https://auth.example/"} {
-		cfg := validConfig
-		cfg.PublicURL, cfg.AllowLoopbackHTTP = origin, true
-		if _, err := New(e.store, nil, cfg); err != nil {
-			t.Fatalf("valid origin %s rejected: %v", origin, err)
-		}
-	}
 }
 
 func TestStoreFailureIsSanitized(t *testing.T) {

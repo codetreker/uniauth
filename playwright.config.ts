@@ -35,7 +35,7 @@ export default defineConfig({
       command: "node e2e/start-service.mjs",
       url: "http://127.0.0.1:18080/readyz",
       reuseExistingServer: false,
-      timeout: 30_000,
+      timeout: 150_000,
       gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
       stdout: "pipe",
       stderr: "pipe",

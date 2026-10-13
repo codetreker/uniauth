@@ -1,6 +1,23 @@
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 
+const signIn = async (page: Page, provider: string, persona: string) => {
+  await page
+    .getByRole("button", { name: `Continue with ${provider}`, exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: `Fixture identity for ${provider.toLowerCase()}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: persona, exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL("http://127.0.0.1:18080/console/");
+};
+
 const value = (dialog: Locator, label: string) =>
   dialog.locator(".copy-field").filter({ hasText: label }).locator("code");
 
@@ -19,7 +36,28 @@ const saveCredential = async (page: Page) => {
   return { secret, id, appID };
 };
 
-test("administrator manages applications and one-time credentials against the service", async ({
+const createApplication = async (page: Page, name: string) => {
+  await page.getByRole("button", { name: /^Applications/ }).click();
+  await page
+    .getByRole("button", { name: "New application", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", {
+    name: "Create application",
+    exact: true,
+  });
+  await editor.getByLabel("Application name").fill(name);
+  await editor.getByLabel("Secret name", { exact: true }).fill("Backend");
+  await editor
+    .getByLabel("Callback URLs", { exact: true })
+    .fill("https://private-product.example/auth/callback");
+  await editor.getByRole("checkbox", { name: /Google/ }).check();
+  await editor
+    .getByRole("button", { name: "Create application", exact: true })
+    .click();
+  return saveCredential(page);
+};
+
+test("OAuth account manages applications and one-time credentials against the service", async ({
   page,
   browser,
   context,
@@ -35,13 +73,19 @@ test("administrator manages applications and one-time credentials against the se
   await expect(
     page.getByRole("heading", { name: "Welcome to your Console" }),
   ).toBeVisible();
-  await page.getByLabel("Administrator password").fill("incorrect");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("password is incorrect");
-  await page
-    .getByLabel("Administrator password")
-    .fill("browser-test-administrator-password");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  for (const provider of ["Microsoft", "Google", "GitHub"]) {
+    await expect(
+      page.getByRole("button", {
+        name: `Continue with ${provider}`,
+        exact: true,
+      }),
+    ).toBeEnabled();
+  }
+  await page.screenshot({
+    path: ".tmp/platform-login-real.png",
+    fullPage: true,
+  });
+  await signIn(page, "Google", "Administrator");
   await expect(
     page.getByRole("heading", { name: "Your products belong here" }),
   ).toBeVisible();
@@ -49,21 +93,24 @@ test("administrator manages applications and one-time credentials against the se
   const cookies = await context.cookies();
   expect(cookies).toHaveLength(1);
   expect(cookies[0]).toMatchObject({
-    name: "uniauth_admin",
+    name: "uniauth_console",
     httpOnly: true,
     sameSite: "Strict",
     secure: false,
     path: "/",
   });
   expect(await page.evaluate(() => document.cookie)).not.toContain(
-    "uniauth_admin",
+    "uniauth_console",
   );
   const anonymous = await browser.newContext();
   try {
     const anonymousPage = await anonymous.newPage();
     await anonymousPage.goto("http://127.0.0.1:18080/console/");
     await expect(
-      anonymousPage.getByLabel("Administrator password"),
+      anonymousPage.getByRole("button", {
+        name: "Continue with Google",
+        exact: true,
+      }),
     ).toBeVisible();
     expect(
       (
@@ -79,7 +126,7 @@ test("administrator manages applications and one-time credentials against the se
     .click();
   await expect(page.locator(".provider-card")).toHaveCount(3);
   await expect(
-    page.locator(".provider-card").getByText("Not configured", { exact: true }),
+    page.locator(".provider-card").getByText("Configured", { exact: true }),
   ).toHaveCount(3);
   await expect(
     page.getByText("Personal Microsoft accounts", { exact: true }),
@@ -140,8 +187,11 @@ test("administrator manages applications and one-time credentials against the se
     page.getByRole("heading", { name: "Browser product", exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator(".configuration").getByText("Not configured", { exact: true }),
+    page.locator(".configuration .provider-pills > span"),
   ).toHaveCount(3);
+  await expect(
+    page.locator(".configuration").getByText("Not configured", { exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("row").filter({ hasText: first.id }),
   ).toContainText("Active");
@@ -512,12 +562,400 @@ test("administrator manages applications and one-time credentials against the se
     (await context.request.get(`/console/api/apps/${first.appID}`)).status(),
   ).toBe(404);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await expect(page.getByLabel("Administrator password")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Continue with Google", exact: true }),
+  ).toBeVisible();
   expect((await context.request.get("/console/api/session")).status()).toBe(
     401,
   );
   expect(await context.cookies()).toHaveLength(0);
   await page.reload();
-  await expect(page.getByLabel("Administrator password")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Continue with Google", exact: true }),
+  ).toBeVisible();
   expect(failures).toEqual([]);
+});
+
+test("public accounts own their Apps and administrators receive only user summaries", async ({
+  browser,
+}) => {
+  const alice = await browser.newContext({ baseURL: "http://127.0.0.1:18080" });
+  const bob = await browser.newContext({ baseURL: "http://127.0.0.1:18080" });
+  const administrator = await browser.newContext({
+    baseURL: "http://127.0.0.1:18080",
+  });
+  try {
+    const alicePage = await alice.newPage();
+    const bobPage = await bob.newPage();
+    const adminPage = await administrator.newPage();
+    for (const page of [alicePage, bobPage, adminPage])
+      await page.goto("/console/");
+    await signIn(alicePage, "Google", "User A");
+    await signIn(bobPage, "GitHub", "User B");
+    const aliceAccount = (
+      await (await alice.request.get("/console/api/session")).json()
+    ).user;
+    const bobAccount = (
+      await (await bob.request.get("/console/api/session")).json()
+    ).user;
+    expect(aliceAccount.is_admin).toBe(false);
+    expect(bobAccount.is_admin).toBe(false);
+    expect(aliceAccount.id).not.toBe(bobAccount.id);
+    for (const page of [alicePage, bobPage])
+      await expect(
+        page.getByRole("button", { name: "Users", exact: true }),
+      ).toHaveCount(0);
+    const aliceApp = await createApplication(
+      alicePage,
+      "Alice private product",
+    );
+    const bobApp = await createApplication(bobPage, "Bob private product");
+    await alicePage.screenshot({
+      path: ".tmp/platform-application-real.png",
+      fullPage: true,
+    });
+    expect(
+      (await (await alice.request.get("/console/api/apps")).json()).apps.map(
+        (app: { id: string }) => app.id,
+      ),
+    ).toEqual([aliceApp.appID]);
+    expect(
+      (await (await bob.request.get("/console/api/apps")).json()).apps.map(
+        (app: { id: string }) => app.id,
+      ),
+    ).toEqual([bobApp.appID]);
+    expect((await alice.request.get("/console/api/users")).status()).toBe(403);
+    await signIn(adminPage, "Google", "Administrator");
+    expect(
+      (await (await administrator.request.get("/console/api/session")).json())
+        .user.is_admin,
+    ).toBe(true);
+    const adminApps = (
+      await (await administrator.request.get("/console/api/apps")).json()
+    ).apps;
+    expect(
+      adminApps.some(
+        (app: { id: string }) =>
+          app.id === aliceApp.appID || app.id === bobApp.appID,
+      ),
+    ).toBe(false);
+    for (const actor of [bob, administrator]) {
+      for (const path of [
+        `/console/api/apps/${aliceApp.appID}`,
+        `/console/api/apps/${aliceApp.appID}/secrets`,
+      ]) {
+        const response = await actor.request.get(path);
+        expect(response.status()).toBe(404);
+        expect(await response.text()).not.toContain("Alice private product");
+      }
+      const session = await (
+        await actor.request.get("/console/api/session")
+      ).json();
+      const headers = {
+        Origin: "http://127.0.0.1:18080",
+        "X-CSRF-Token": session.csrf_token,
+      };
+      const updates = [
+        await actor.request.put(`/console/api/apps/${aliceApp.appID}`, {
+          headers,
+          data: {
+            name: "Stolen",
+            enabled: true,
+            providers: ["google"],
+            redirect_uris: ["https://stolen.example/callback"],
+          },
+        }),
+        await actor.request.delete(`/console/api/apps/${aliceApp.appID}`, {
+          headers,
+        }),
+        await actor.request.post(
+          `/console/api/apps/${aliceApp.appID}/secrets`,
+          { headers, data: { name: "Stolen", description: "" } },
+        ),
+        await actor.request.put(
+          `/console/api/apps/${aliceApp.appID}/secrets/${aliceApp.id}`,
+          { headers, data: { name: "Stolen", description: "" } },
+        ),
+        await actor.request.delete(
+          `/console/api/apps/${aliceApp.appID}/secrets/${aliceApp.id}`,
+          { headers },
+        ),
+        await actor.request.post(
+          `/console/api/apps/${aliceApp.appID}/secrets/${aliceApp.id}/reset`,
+          { headers },
+        ),
+      ];
+      for (const response of updates) expect(response.status()).toBe(404);
+    }
+    const summary = await (
+      await administrator.request.get("/console/api/users")
+    ).json();
+    for (const user of summary.users)
+      expect(Object.keys(user).sort()).toEqual([
+        "app_count",
+        "created_at",
+        "email",
+        "id",
+        "name",
+      ]);
+    expect(
+      summary.users.find((user: { id: string }) => user.id === aliceAccount.id)
+        .app_count,
+    ).toBe(1);
+    expect(
+      summary.users.find((user: { id: string }) => user.id === bobAccount.id)
+        .app_count,
+    ).toBe(1);
+    expect(JSON.stringify(summary)).not.toContain(aliceApp.appID);
+    expect(JSON.stringify(summary)).not.toContain(aliceApp.secret);
+    expect(JSON.stringify(summary)).not.toContain("private-product.example");
+    await adminPage.getByRole("button", { name: "Users", exact: true }).click();
+    await expect(
+      adminPage.getByRole("heading", { name: "Platform users", exact: true }),
+    ).toBeVisible();
+    await expect(
+      adminPage
+        .getByRole("row")
+        .filter({ hasText: aliceAccount.id })
+        .locator(".user-app-count"),
+    ).toHaveText("1");
+    await expect(
+      adminPage
+        .getByRole("row")
+        .filter({ hasText: bobAccount.id })
+        .getByRole("button"),
+    ).toHaveCount(0);
+    await adminPage.screenshot({
+      path: ".tmp/platform-users-real.png",
+      fullPage: true,
+    });
+
+    await alicePage
+      .getByRole("button", { name: "My account", exact: true })
+      .click();
+    await alicePage
+      .getByRole("button", { name: "Link GitHub", exact: true })
+      .click();
+    await alicePage
+      .getByRole("button", { name: "User B", exact: true })
+      .click();
+    await expect(alicePage.getByRole("alert")).toContainText(
+      "belongs to another account",
+    );
+    expect(
+      (await (await alice.request.get("/console/api/session")).json()).user.id,
+    ).toBe(aliceAccount.id);
+    expect(
+      (await (await alice.request.get("/console/api/identities")).json())
+        .identities,
+    ).toHaveLength(1);
+    await alicePage
+      .getByRole("button", { name: "My account", exact: true })
+      .click();
+    await alicePage
+      .getByRole("button", { name: "Link GitHub", exact: true })
+      .click();
+    await alicePage
+      .getByRole("button", { name: "User A", exact: true })
+      .click();
+    await alicePage
+      .getByRole("button", { name: "My account", exact: true })
+      .click();
+    await expect(alicePage.locator(".identity-row")).toHaveCount(2);
+    await expect(
+      alicePage.getByRole("button", { name: "GitHub linked", exact: true }),
+    ).toBeDisabled();
+    await alicePage.screenshot({
+      path: ".tmp/platform-account-real.png",
+      fullPage: true,
+    });
+    await alicePage
+      .getByRole("button", { name: "Sign out", exact: true })
+      .click();
+    await signIn(alicePage, "GitHub", "User A");
+    expect(
+      (await (await alice.request.get("/console/api/session")).json()).user.id,
+    ).toBe(aliceAccount.id);
+    await expect(
+      alicePage.getByRole("button", {
+        name: "Manage Alice private product",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await alicePage
+      .getByRole("button", { name: "Sign out", exact: true })
+      .click();
+    await signIn(alicePage, "Google", "Separate identity with same email");
+    const separate = (
+      await (await alice.request.get("/console/api/session")).json()
+    ).user;
+    expect(separate.email).toBe(aliceAccount.email);
+    expect(separate.id).not.toBe(aliceAccount.id);
+    expect(
+      (await (await alice.request.get("/console/api/apps")).json()).apps,
+    ).toEqual([]);
+  } finally {
+    await Promise.all([alice.close(), bob.close(), administrator.close()]);
+  }
+});
+
+test("Microsoft login supports missing email and cannot claim admin through unverified email", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/console/");
+  await signIn(page, "Microsoft", "Administrator");
+  let user = (await (await context.request.get("/console/api/session")).json())
+    .user;
+  expect(user.email).toBe("sychenjianjun@gmail.com");
+  expect(user.is_admin).toBe(false);
+  await expect(
+    page.getByRole("button", { name: "Users", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await signIn(page, "Microsoft", "Identity without email");
+  user = (await (await context.request.get("/console/api/session")).json())
+    .user;
+  expect(user.email).toBeNull();
+  expect(user.is_admin).toBe(false);
+  await page.getByRole("button", { name: "My account", exact: true }).click();
+  await expect(page.locator(".account-profile")).toContainText(
+    "Email not provided",
+  );
+  await expect(page.locator(".identity-row")).toContainText(
+    "Verification not provided",
+  );
+});
+
+test("OAuth handover requires its initiating browser and cannot be replayed or completed after logout", async ({
+  page,
+  context,
+  browser,
+}) => {
+  await page.goto("/console/");
+  expect(
+    (await (await context.request.get("/console/api/providers")).json())
+      .providers,
+  ).toEqual([
+    { id: "microsoft", available: true },
+    { id: "google", available: true },
+    { id: "github", available: true },
+  ]);
+  expect(
+    (
+      await context.request.post("/console/api/login", {
+        headers: { Origin: "http://127.0.0.1:18080" },
+        data: { password: "removed-password" },
+      })
+    ).status(),
+  ).toBe(400);
+  await page
+    .getByRole("button", { name: "Continue with GitHub", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Cancel provider login", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("provider");
+  expect((await context.request.get("/console/api/session")).status()).toBe(
+    401,
+  );
+
+  let callback = "";
+  const pauseProvider = /\/fixture\/oauth\/google(?:\?.*)?$/;
+  await page.route(pauseProvider, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    // Stop the redirect chain before Console consumes its browser-bound handover.
+    const chooser = await route.fetch({ maxRedirects: 0 });
+    expect(chooser.status()).toBe(303);
+    const response = await context.request.get(chooser.headers().location, {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(302);
+    callback = response.headers().location;
+    expect(callback).toContain("/console/auth/callback?");
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<h1>Paused Console callback</h1>",
+    });
+  });
+  await page
+    .getByRole("button", { name: "Continue with Google", exact: true })
+    .click();
+  await page.getByRole("button", { name: "User A", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Paused Console callback" }),
+  ).toBeVisible();
+  const stranger = await browser.newContext();
+  try {
+    const strangerPage = await stranger.newPage();
+    await strangerPage.goto(callback);
+    await expect(
+      strangerPage.getByRole("button", {
+        name: "Continue with Google",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(
+      (
+        await stranger.request.get("http://127.0.0.1:18080/console/api/session")
+      ).status(),
+    ).toBe(401);
+  } finally {
+    await stranger.close();
+  }
+  await page.unroute(pauseProvider);
+  await page.goto(callback);
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeVisible();
+  const before = (await context.cookies()).find(
+    (cookie) => cookie.name === "uniauth_console",
+  )?.value;
+  expect(before).toHaveLength(43);
+  await page.goto(callback);
+  await expect(page.getByRole("alert")).toContainText("already used");
+  expect(
+    (await context.cookies()).find(
+      (cookie) => cookie.name === "uniauth_console",
+    )?.value,
+  ).toBe(before);
+
+  const session = await (
+    await context.request.get("/console/api/session")
+  ).json();
+  const headers = {
+    Origin: "http://127.0.0.1:18080",
+    "X-CSRF-Token": session.csrf_token,
+  };
+  const link = await (
+    await context.request.post("/console/api/identities/link", {
+      headers,
+      data: { provider: "microsoft" },
+    })
+  ).json();
+  await page.goto(link.authorization_url);
+  expect(
+    (await context.request.post("/console/api/logout", { headers })).status(),
+  ).toBe(204);
+  await page.getByRole("button", { name: "User A", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Continue with Google", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("already used");
+  expect((await context.request.get("/console/api/session")).status()).toBe(
+    401,
+  );
+  await signIn(page, "Google", "User A");
+  const identities = (
+    await (await context.request.get("/console/api/identities")).json()
+  ).identities;
+  expect(
+    identities.some(
+      (identity: { provider: string }) => identity.provider === "microsoft",
+    ),
+  ).toBe(false);
 });

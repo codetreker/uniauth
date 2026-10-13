@@ -39,14 +39,15 @@ authorized implementation task.
 | Path | Responsibility |
 | --- | --- |
 | `cmd/uniauth/` | Configuration composition, startup, and service lifecycle |
-| `internal/apps/` | SQLite application registry and credential lifecycle |
+| `internal/apps/` | SQLite platform accounts, linked identities, owned Apps, and credentials |
 | `internal/providers/` | Microsoft, Google, and GitHub authentication adapters |
 | `internal/auth/` | Login transactions and one-time identity-result handover |
-| `internal/console/` | Administrator authentication and management API |
-| `web/console/` | React and TypeScript administrator interface |
+| `internal/console/` | Console OAuth, sessions, owner management, and minimal administrator listing |
+| `web/console/` | React and TypeScript public platform Console |
 | `sdk/go/` | Standalone Go product-backend client module |
 | `sdk/js/` | ESM JavaScript product-backend package with TypeScript declarations |
 | `e2e/sdk/` | Isolated module verifying both SDKs against the gateway protocol |
+| `e2e/browser/` | Isolated production-server fixture with controlled OAuth adapters for browser validation |
 | `docs/blueprint/` | Agreed architecture and requirements |
 | `docs/reference/` | Implemented APIs, configuration, and observable behavior |
 | `docs/plans/` | Gitignored execution plans for authorized tasks |
@@ -55,16 +56,21 @@ authorized implementation task.
 | `.agents/skills/` | Canonical repository-local skills |
 
 [UniAuth Blueprint](docs/blueprint/README.md) owns the architecture. The service
-has no persistent end-user store or central SSO session. Products own user
-records, account linking, authorization, and login sessions. Identity handover
-uses an App-bound result kept only in process memory for five minutes, then
-atomically consumed once. SQLite stores application configuration; upstream
-provider credentials come from deployment configuration. Console administrator
-authority is independent of product credentials. Product SDKs use the same HTTP
+stores platform accounts and explicitly linked identities for its own Console.
+External products own their users, account linking, authorization, and login
+sessions; the gateway stores no external product users or central SSO session.
+Identity handover uses an App-bound result kept only in process memory for five
+minutes, then atomically consumed once. SQLite stores platform accounts, App
+ownership, configuration, and credential digests. Upstream credentials come from
+deployment configuration. The protected Console App uses that same gateway
+handover in process. Console sign-in is OAuth-only; initial administrator authority
+is claimed once through a configured verified email. Administrators can list
+minimal user summaries and App counts, with no bypass of owner-only App access. Product SDKs use the same HTTP
 handover protocol, expose all seven normalized identity fields and complete
 `origin`, require field presence and nullable types, and provide no state, user,
-or session storage. They do not derive profile values or retain old wire aliases. Products atomically validate and consume browser-bound pending
-login state before retrieving a result. SDK package contracts are documented in
+or session storage. They do not derive profile values or retain old wire aliases.
+Products atomically validate and consume browser-bound pending login state before
+retrieving a result. SDK package contracts are documented in
 [the SDK reference](docs/reference/sdks.md).
 
 [Agent Notes](.agents/notes/README.md) owns the decision-record lifecycle and

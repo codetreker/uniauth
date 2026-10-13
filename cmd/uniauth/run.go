@@ -26,7 +26,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer, getenv func(
 	}
 	switch command {
 	case "help", "-h", "--help":
-		_, err := fmt.Fprintln(out, "Usage: uniauth [serve|help]\n\nserve  Start the authentication service (default).\n\nServe requires UNIAUTH_PUBLIC_URL and UNIAUTH_ADMIN_PASSWORD.")
+		_, err := fmt.Fprintln(out, "Usage: uniauth [serve|help]\n\nserve  Start the authentication service (default).\n\nServe requires UNIAUTH_PUBLIC_URL, UNIAUTH_INITIAL_ADMIN_EMAIL, and at least one complete OAuth provider credential pair.")
 		return err
 	case "serve":
 		cfg, err := server.LoadConfig(getenv)

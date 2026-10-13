@@ -1,26 +1,36 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
-const executable = resolve(".tmp/bin/uniauth");
-const password = "browser-test-administrator-password";
-mkdirSync(".tmp/browser", { recursive: true });
+const executable = resolve(".tmp/bin/uniauth-browser");
+for (const directory of ["browser", "bin", "go-tmp", "tmp"])
+  mkdirSync(resolve(".tmp", directory), { recursive: true });
+const env = {
+  ...process.env,
+  GOWORK: "off",
+  GOCACHE: resolve(".tmp/go-build"),
+  GOMODCACHE: resolve(".tmp/go-mod"),
+  GOPATH: resolve(".tmp/go"),
+  GOTMPDIR: resolve(".tmp/go-tmp"),
+  TMPDIR: resolve(".tmp/tmp"),
+};
+const build = spawnSync(
+  "go",
+  ["build", "-trimpath", "-o", executable, "./cmd"],
+  {
+    cwd: resolve("e2e/browser"),
+    env,
+    stdio: "inherit",
+    timeout: 120_000,
+  },
+);
+if (build.error !== undefined) throw build.error;
+if (build.status !== 0) process.exit(build.status ?? 1);
 const directory = mkdtempSync(resolve(".tmp/browser/server-"));
-const service = spawn(executable, ["serve"], {
+const service = spawn(executable, [], {
   env: {
-    ...process.env,
-    // Browsers canonicalize decimal ports before sending an Origin header.
-    UNIAUTH_PUBLIC_URL: "http://127.0.0.1:018080",
-    UNIAUTH_LISTEN_ADDR: "127.0.0.1:18080",
+    ...env,
     UNIAUTH_DATABASE_PATH: resolve(directory, "uniauth.db"),
-    UNIAUTH_ADMIN_PASSWORD: password,
-    UNIAUTH_ALLOW_LOOPBACK_HTTP: "true",
-    UNIAUTH_MICROSOFT_CLIENT_ID: "",
-    UNIAUTH_MICROSOFT_CLIENT_SECRET: "",
-    UNIAUTH_GOOGLE_CLIENT_ID: "",
-    UNIAUTH_GOOGLE_CLIENT_SECRET: "",
-    UNIAUTH_GITHUB_CLIENT_ID: "",
-    UNIAUTH_GITHUB_CLIENT_SECRET: "",
   },
   stdio: ["ignore", "inherit", "inherit"],
 });
@@ -43,5 +53,5 @@ service.on("error", (error) => {
 service.on("exit", (code, signal) => {
   clearTimeout(deadline);
   rmSync(directory, { recursive: true, force: true });
-  process.exitCode = stopping ? 0 : (code ?? (signal === null ? 0 : 1));
+  process.exitCode = code ?? (signal === null ? 0 : 1);
 });

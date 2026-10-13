@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ const shutdownTimeout = 15 * time.Second
 type Service struct {
 	store     *apps.Store
 	auth      *auth.Handler
+	console   *console.Handler
 	handler   http.Handler
 	logger    *slog.Logger
 	closeOnce sync.Once
@@ -38,25 +40,26 @@ func New(ctx context.Context, cfg Config, registry map[string]providers.Provider
 	if logger == nil {
 		return nil, errors.New("server logger is required")
 	}
+	var err error
+	if registry == nil {
+		registry, err = buildRegistry(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(registry) == 0 {
+		return nil, errors.New("at least one OAuth provider must be available")
+	}
 	store, err := apps.Open(ctx, apps.Config{Path: cfg.DatabasePath, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP})
 	if err != nil {
 		return nil, err
 	}
 	fail := func(cause error) (*Service, error) { return nil, errors.Join(cause, store.Close()) }
-	if registry == nil {
-		registry, err = buildRegistry(ctx, cfg)
-		if err != nil {
-			return fail(err)
-		}
-	}
 	available := make([]string, 0, len(registry))
 	for name := range registry {
 		available = append(available, name)
 	}
-	admin, err := console.New(store, available, console.Config{PublicURL: cfg.PublicURL, Password: cfg.AdminPassword, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP, Logger: logger})
-	if err != nil {
-		return fail(err)
-	}
+	sort.Strings(available)
 	// The authentication cache remains live until accepted HTTP requests drain.
 	authHandler, err := auth.New(context.WithoutCancel(ctx), auth.Config{
 		PublicURL: cfg.PublicURL, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP,
@@ -66,13 +69,30 @@ func New(ctx context.Context, cfg Config, registry map[string]providers.Provider
 	if err != nil {
 		return fail(err)
 	}
+	fail = func(cause error) (*Service, error) {
+		return nil, errors.Join(cause, authHandler.Close(), store.Close())
+	}
+	if err := store.InitializePlatform(ctx, cfg.InitialAdminEmail); err != nil {
+		return fail(err)
+	}
+	consoleApp, err := store.ProvisionConsole(ctx, strings.TrimSuffix(cfg.PublicURL, "/")+"/console/auth/callback", available)
+	if err != nil {
+		return fail(err)
+	}
+	admin, err := console.New(store, available, console.Config{
+		PublicURL: cfg.PublicURL, Gateway: authHandler, AppID: consoleApp.App.ID, AppSecret: consoleApp.Secret,
+		AllowLoopbackHTTP: cfg.AllowLoopbackHTTP, Logger: logger,
+	})
+	if err != nil {
+		return fail(err)
+	}
 	mux := http.NewServeMux()
 	authHandler.Register(mux)
 	admin.Register(mux)
 	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if _, err := store.List(r.Context()); err != nil {
+		if err := store.Ping(r.Context()); err != nil {
 			http.Error(w, "Service unavailable.", http.StatusServiceUnavailable)
 			return
 		}
@@ -86,7 +106,7 @@ func New(ctx context.Context, cfg Config, registry map[string]providers.Provider
 		}
 		http.NotFound(w, r)
 	})
-	service := &Service{store: store, auth: authHandler, logger: logger}
+	service := &Service{store: store, auth: authHandler, console: admin, logger: logger}
 	service.handler = accessLog(http.MaxBytesHandler(mux, 1<<20), logger)
 	return service, nil
 }
@@ -129,7 +149,7 @@ func buildRegistry(ctx context.Context, cfg Config) (map[string]providers.Provid
 func (s *Service) Handler() http.Handler { return s.handler }
 
 func (s *Service) Close() error {
-	s.closeOnce.Do(func() { s.closeErr = errors.Join(s.auth.Close(), s.store.Close()) })
+	s.closeOnce.Do(func() { s.closeErr = errors.Join(s.console.Close(), s.auth.Close(), s.store.Close()) })
 	return s.closeErr
 }
 
@@ -221,6 +241,8 @@ func operation(path string) string {
 		return "callback"
 	case path == "/auth/result":
 		return "result"
+	case path == "/console/auth/callback":
+		return "console_callback"
 	case strings.HasPrefix(path, "/console/api/"):
 		return "console_api"
 	case strings.HasPrefix(path, "/console/"):

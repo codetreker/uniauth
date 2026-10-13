@@ -104,19 +104,23 @@ Docker Compose and tar must be installed. Public GHCR images are pulled anonymou
 
 Place an independently configured `.env` in each directory using
 [the template](../../deploy/.env.example). Set `UNIAUTH_HOST_PORT` to distinct
-loopback ports and configure the service's public URL, `UNIAUTH_ADMIN_PASSWORD`,
-and provider credential pairs. Supply the actual administrator login password in
-the deployment environment. The template leaves `UNIAUTH_ADMIN_PASSWORD` empty;
-set it explicitly before starting the service, or startup fails. Choose a single
-line containing 1–1024 bytes, with no CR or LF. Use single quotes around `.env`
-values containing dollar signs to preserve them during Compose parsing.
-See [runtime configuration](configuration.md) for the complete service settings.
+loopback ports and configure the public URL, `UNIAUTH_INITIAL_ADMIN_EMAIL`,
+and at least one provider credential pair. The template leaves the initial email
+empty; supply a plain address such as `sychenjianjun@gmail.com` before startup.
+The Console uses OAuth only. Google or GitHub verified email evidence can claim
+initial administrator authority; Microsoft alone cannot claim it. Changing the
+configured email after that one-time claim does not transfer authority.
+
+Migration 3 clears all existing Apps and Secrets when upgrading to the public
+platform schema. Recreate the product registrations and replace their backend
+credentials after the upgrade. The final schema then persists Console accounts,
+linked identities, owned Apps, and credential digests across restarts. See [runtime configuration](configuration.md) for the complete service settings.
 
 The workflow replaces only `docker-compose.yml`; `.env` remains VM-owned. Caddy
 configuration is operator-owned. The service listens on
 `127.0.0.1:UNIAUTH_HOST_PORT`, and SQLite persists in the environment's named
-volume. Service restarts invalidate pending logins, results, and administrator
-sessions.
+volume. Service restarts invalidate pending logins, results, Console login/link
+flows, and Console sessions.
 
 The [Compose release decision](../../.agents/notes/implemented/process/2026-10-13-compose-releases.md)
 records manual initiation and deployment ownership, and the

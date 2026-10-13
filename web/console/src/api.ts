@@ -59,7 +59,39 @@ const createdSchema = z.object({
 export type CreatedApp = z.infer<typeof createdSchema>;
 const providerSchema = z.object({ id: providerID, available: z.boolean() });
 export type Provider = z.infer<typeof providerSchema>;
-const sessionSchema = z.object({ csrf_token: z.string().min(1) });
+export const accountSchema = z.object({
+  id: z.string().min(1),
+  email: z.string().nullable(),
+  name: z.string().nullable(),
+  avatar_url: z.string().nullable(),
+  is_admin: z.boolean(),
+  created_at: timestamp,
+});
+export type Account = z.infer<typeof accountSchema>;
+const identitySchema = z.object({
+  provider: providerID,
+  id: z.string().min(1),
+  email: z.string().nullable(),
+  email_verified: z.boolean().nullable(),
+  name: z.string().nullable(),
+  linked_at: timestamp,
+});
+export type LinkedIdentity = z.infer<typeof identitySchema>;
+const userSummarySchema = accountSchema
+  .pick({ id: true, email: true, name: true, created_at: true })
+  .extend({ app_count: z.number().int().nonnegative() });
+export type UserSummary = z.infer<typeof userSummarySchema>;
+const userPageSchema = z.object({
+  users: z.array(userSummarySchema),
+  next_cursor: z.string().min(1).nullable(),
+});
+export type UserPage = z.infer<typeof userPageSchema>;
+const authorizationSchema = z.object({ authorization_url: z.string().url() });
+export type Authorization = z.infer<typeof authorizationSchema>;
+const sessionSchema = z.object({
+  csrf_token: z.string().min(1),
+  user: accountSchema,
+});
 export type Session = z.infer<typeof sessionSchema>;
 const errorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string().min(1) }),
@@ -78,7 +110,10 @@ export class APIError extends Error {
 
 export interface ConsoleAPI {
   session: () => Promise<Session>;
-  login: (password: string) => Promise<Session>;
+  login: (provider: ProviderID) => Promise<Authorization>;
+  listIdentities: () => Promise<LinkedIdentity[]>;
+  linkIdentity: (provider: ProviderID) => Promise<Authorization>;
+  listUsers: (cursor?: string) => Promise<UserPage>;
   logout: () => Promise<void>;
   listApps: () => Promise<Application[]>;
   listProviders: () => Promise<Provider[]>;
@@ -129,8 +164,22 @@ export const createAPI = (fetcher: typeof fetch = fetch): ConsoleAPI => {
   const appPath = (id: string) => `/apps/${encodeURIComponent(id)}`;
   return {
     session: async () => rememberSession(await request("/session")),
-    login: async (password) =>
-      rememberSession(await request("/login", "POST", { password })),
+    login: async (provider) =>
+      authorizationSchema.parse(await request("/login", "POST", { provider })),
+    listIdentities: async () =>
+      z
+        .object({ identities: z.array(identitySchema) })
+        .parse(await request("/identities")).identities,
+    linkIdentity: async (provider) =>
+      authorizationSchema.parse(
+        await request("/identities/link", "POST", { provider }),
+      ),
+    listUsers: async (cursor) =>
+      userPageSchema.parse(
+        await request(
+          `/users${cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`}`,
+        ),
+      ),
     logout: async () => {
       await request("/logout", "POST");
       csrf = undefined;

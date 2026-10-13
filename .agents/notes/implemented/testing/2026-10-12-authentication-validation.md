@@ -28,11 +28,15 @@ Go tests exercise HTTP and store behavior for provider validation, complete raw
 identity fields, separate state and browser binding, expiry, failed and wrong-App
 claims, concurrent consumption, capacity, credentials, sessions, and lifecycle
 ordering. Credential metadata assertions cover validation limits and exact
-multiline description preservation, SQL upgrades of active and revoked rows
-without digest or lifecycle changes, and detail updates that do not reissue,
-revoke, or expose credentials. Management API assertions cover required initial
+multiline description preservation, the deliberate migration-3 reset of existing
+Apps and Secrets, and detail updates that do not reissue, revoke, or expose
+credentials. Management API assertions cover required initial
 metadata, active and revoked editing, record ownership, and `secret.update`
-audit events without names or descriptions. Reset assertions verify old-key
+audit events without names or descriptions. Platform assertions cover durable
+provider-ID accounts, no email-based merging, verified-email bootstrap with one
+concurrent winner, startup-email changes before and after claim, explicit linking
+conflicts, owner-only App and Secret operations, and administrator summaries
+without access to other users' details. Reset assertions verify old-key
 rejection, new-key authentication, unchanged unrelated active keys, exact name
 and description carryover, single-winner concurrent resets, and transactional
 rollback. Controlled upstream fixtures provide token, signing-key, and profile
@@ -92,12 +96,19 @@ module runs with race detection and a bounded two-minute deadline after the
 JavaScript output has been built. It verifies client/gateway integration without
 claiming live provider authentication.
 
-Playwright uses one worker and no automatic retries. It starts a fresh local Go
-service with isolated SQLite data and the production Console, and a separate
-mockup using production components and styles. Scenarios cover administrator
-login, App management, named one-time Secret display, exact multiline
+Playwright uses one worker and no automatic retries. Its standalone
+`e2e/browser/` Go fixture module composes the production server with three
+controlled OAuth provider adapters and isolated SQLite data. The Console browser
+path goes through its API, gateway authorization, fixture provider, gateway
+callback, Console callback, authenticated one-time result consumption, and session
+creation. Browser scenarios cover OAuth login, manual identity linking and
+conflicts, equal-email separation, missing-email Microsoft identities, browser
+binding, replay and logout, two-user App isolation, administrator summary-only
+visibility, App management, named one-time Secret display, exact multiline
 descriptions, active and revoked detail editing, rotation, confirmed named reset,
-named revocation, and responsive production-component mockup interaction.
+and named revocation. A separate mockup uses production components and styles
+for account, App, credential, and responsive interaction. These injected adapters
+exercise local composition rather than live Microsoft, Google, or GitHub services.
 Existing browsers or repository-local temporary browser installations prevent
 task tooling from leaving a permanent installation.
 

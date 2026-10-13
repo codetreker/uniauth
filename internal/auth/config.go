@@ -13,9 +13,10 @@ import (
 const ResultTTL = 5 * time.Minute
 
 var (
-	ErrUnavailable = errors.New("authentication state is unavailable")
-	ErrCapacity    = errors.New("authentication capacity is exhausted")
-	ErrClosed      = errors.New("authentication service is closed")
+	ErrUnavailable    = errors.New("authentication state is unavailable")
+	ErrCapacity       = errors.New("authentication capacity is exhausted")
+	ErrClosed         = errors.New("authentication service is closed")
+	ErrInvalidRequest = errors.New("authentication result request is invalid")
 )
 
 type Config struct {

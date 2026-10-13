@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/codetreker/uniauth/internal/apps"
+	"github.com/codetreker/uniauth/internal/providers"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,8 +45,26 @@ func openStore(t *testing.T, loopback bool) *apps.Store {
 	t.Helper()
 	store, err := apps.Open(t.Context(), apps.Config{Path: filepath.Join(t.TempDir(), "apps.sqlite"), AllowLoopbackHTTP: loopback})
 	require.NoError(t, err)
+	testOwnerID(t, store)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	return store
+}
+
+var testStoreOwners sync.Map
+
+func testOwnerID(t *testing.T, store *apps.Store) string {
+	t.Helper()
+	if id, ok := testStoreOwners.Load(store); ok {
+		return id.(string)
+	}
+	require.NoError(t, store.InitializePlatform(t.Context(), "admin@example.test"))
+	account, err := store.ResolveAccount(t.Context(), providers.Identity{Provider: "google", ID: "store-fixture-owner"})
+	require.NoError(t, err)
+	id, loaded := testStoreOwners.LoadOrStore(store, account.ID)
+	if !loaded {
+		t.Cleanup(func() { testStoreOwners.Delete(store) })
+	}
+	return id.(string)
 }
 
 func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
@@ -53,7 +72,7 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "apps.sqlite")
 	store, err := apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	secretBytes, err := base64.RawURLEncoding.DecodeString(created.Secret)
 	require.NoError(t, err)
@@ -72,7 +91,7 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	stored, err := store.Get(ctx, created.App.ID)
 	require.NoError(t, err)
 	assert.Equal(t, created.App, stored)
-	listed, err := store.List(ctx)
+	listed, err := store.List(ctx, testOwnerID(t, store))
 	require.NoError(t, err)
 	assert.Equal(t, []apps.App{stored}, listed)
 	authenticated, err := store.Authenticate(ctx, stored.ID, created.Secret)
@@ -83,24 +102,24 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	updatedInput.Name = "Renamed Product"
 	updatedInput.Enabled = false
 	updatedInput.Providers = []string{"google"}
-	updated, err := store.Update(ctx, stored.ID, updatedInput)
+	updated, err := store.Update(ctx, testOwnerID(t, store), stored.ID, updatedInput)
 	require.NoError(t, err)
 	assert.Equal(t, stored.CreatedAt, updated.CreatedAt)
 	assert.GreaterOrEqual(t, updated.UpdatedAt.UnixNano(), stored.UpdatedAt.UnixNano())
 	_, err = store.Authenticate(ctx, stored.ID, created.Secret)
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
 	updatedInput.Enabled = true
-	_, err = store.Update(ctx, stored.ID, updatedInput)
+	_, err = store.Update(ctx, testOwnerID(t, store), stored.ID, updatedInput)
 	require.NoError(t, err)
 
-	issued, err := store.CreateSecret(ctx, stored.ID, validSecretInput())
+	issued, err := store.CreateSecret(ctx, testOwnerID(t, store), stored.ID, validSecretInput())
 	require.NoError(t, err)
 	assert.NotEqual(t, created.Secret, issued.Secret)
 	for _, secret := range []string{created.Secret, issued.Secret} {
 		_, err := store.Authenticate(ctx, stored.ID, secret)
 		require.NoError(t, err)
 	}
-	metadata, err := store.ListSecrets(ctx, stored.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), stored.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 2)
 	for _, secret := range metadata {
@@ -116,27 +135,27 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	assert.NotContains(t, string(serialized), "digest")
 	assert.NotContains(t, string(serialized), "revoked_at")
 
-	require.NoError(t, store.RevokeSecret(ctx, stored.ID, created.SecretID))
-	metadata, err = store.ListSecrets(ctx, stored.ID)
+	require.NoError(t, store.RevokeSecret(ctx, testOwnerID(t, store), stored.ID, created.SecretID))
+	metadata, err = store.ListSecrets(ctx, testOwnerID(t, store), stored.ID)
 	require.NoError(t, err)
 	require.NotNil(t, metadata[0].RevokedAt)
 	revoked := *metadata[0].RevokedAt
-	require.NoError(t, store.RevokeSecret(ctx, stored.ID, created.SecretID))
-	metadata, err = store.ListSecrets(ctx, stored.ID)
+	require.NoError(t, store.RevokeSecret(ctx, testOwnerID(t, store), stored.ID, created.SecretID))
+	metadata, err = store.ListSecrets(ctx, testOwnerID(t, store), stored.ID)
 	require.NoError(t, err)
 	assert.Equal(t, revoked, *metadata[0].RevokedAt)
 	_, err = store.Authenticate(ctx, stored.ID, created.Secret)
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
 	_, err = store.Authenticate(ctx, stored.ID, issued.Secret)
 	require.NoError(t, err)
-	require.NoError(t, store.Delete(ctx, stored.ID))
+	require.NoError(t, store.Delete(ctx, testOwnerID(t, store), stored.ID))
 	_, err = store.Get(ctx, stored.ID)
 	require.ErrorIs(t, err, apps.ErrNotFound)
-	_, err = store.ListSecrets(ctx, stored.ID)
+	_, err = store.ListSecrets(ctx, testOwnerID(t, store), stored.ID)
 	require.ErrorIs(t, err, apps.ErrNotFound)
 	_, err = store.Authenticate(ctx, stored.ID, issued.Secret)
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
-	listed, err = store.List(ctx)
+	listed, err = store.List(ctx, testOwnerID(t, store))
 	require.NoError(t, err)
 	assert.Empty(t, listed)
 	assert.NotNil(t, listed)
@@ -144,9 +163,9 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 
 func TestAppIsolationAndMissingRecords(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	first, err := store.Create(ctx, validCreateInput())
+	first, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
-	second, err := store.Create(ctx, validCreateInput())
+	second, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	_, err = store.Authenticate(ctx, first.App.ID, second.Secret)
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
@@ -154,27 +173,30 @@ func TestAppIsolationAndMissingRecords(t *testing.T) {
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
 	_, err = store.Authenticate(ctx, first.App.ID, "")
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
-	require.ErrorIs(t, store.RevokeSecret(ctx, second.App.ID, first.SecretID), apps.ErrNotFound)
+	require.ErrorIs(t, store.RevokeSecret(ctx, testOwnerID(t, store), second.App.ID, first.SecretID), apps.ErrNotFound)
 	_, err = store.Authenticate(ctx, first.App.ID, first.Secret)
 	require.NoError(t, err)
-	require.NoError(t, store.Delete(ctx, first.App.ID))
+	require.NoError(t, store.Delete(ctx, testOwnerID(t, store), first.App.ID))
 	_, err = store.Authenticate(ctx, second.App.ID, second.Secret)
 	require.NoError(t, err)
 	for _, operation := range []func() error{
 		func() error { _, err := store.Get(ctx, "missing"); return err },
-		func() error { _, err := store.Update(ctx, "missing", validInput()); return err },
-		func() error { return store.Delete(ctx, "missing") },
-		func() error { _, err := store.CreateSecret(ctx, "missing", validSecretInput()); return err },
-		func() error { _, err := store.ListSecrets(ctx, "missing"); return err },
+		func() error { _, err := store.Update(ctx, testOwnerID(t, store), "missing", validInput()); return err },
+		func() error { return store.Delete(ctx, testOwnerID(t, store), "missing") },
 		func() error {
-			_, err := store.UpdateSecret(ctx, "missing", second.SecretID, validSecretInput())
+			_, err := store.CreateSecret(ctx, testOwnerID(t, store), "missing", validSecretInput())
+			return err
+		},
+		func() error { _, err := store.ListSecrets(ctx, testOwnerID(t, store), "missing"); return err },
+		func() error {
+			_, err := store.UpdateSecret(ctx, testOwnerID(t, store), "missing", second.SecretID, validSecretInput())
 			return err
 		},
 		func() error {
-			_, err := store.UpdateSecret(ctx, second.App.ID, "missing", validSecretInput())
+			_, err := store.UpdateSecret(ctx, testOwnerID(t, store), second.App.ID, "missing", validSecretInput())
 			return err
 		},
-		func() error { return store.RevokeSecret(ctx, "missing", second.SecretID) },
+		func() error { return store.RevokeSecret(ctx, testOwnerID(t, store), "missing", second.SecretID) },
 	} {
 		require.ErrorIs(t, operation(), apps.ErrNotFound)
 	}
@@ -200,9 +222,9 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			input := validInput()
 			modify(&input)
-			_, err := store.Create(t.Context(), createInput(input))
+			_, err := store.Create(t.Context(), testOwnerID(t, store), createInput(input))
 			require.ErrorIs(t, err, apps.ErrInvalid)
-			_, err = store.Update(t.Context(), "missing", input)
+			_, err = store.Update(t.Context(), testOwnerID(t, store), "missing", input)
 			require.ErrorIs(t, err, apps.ErrInvalid)
 		})
 	}
@@ -219,17 +241,17 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 		t.Run(uri, func(t *testing.T) {
 			input := validInput()
 			input.RedirectURIs = []string{uri}
-			_, err := store.Create(t.Context(), createInput(input))
+			_, err := store.Create(t.Context(), testOwnerID(t, store), createInput(input))
 			require.ErrorIs(t, err, apps.ErrInvalid)
 		})
 	}
 	input := validInput()
-	created, err := store.Create(t.Context(), createInput(input))
+	created, err := store.Create(t.Context(), testOwnerID(t, store), createInput(input))
 	require.NoError(t, err)
 	assert.Equal(t, input.RedirectURIs, created.App.RedirectURIs)
 	invalidUpdate := validInput()
 	invalidUpdate.RedirectURIs = []string{"https://product.example/callback?code=reserved"}
-	_, err = store.Update(t.Context(), created.App.ID, invalidUpdate)
+	_, err = store.Update(t.Context(), testOwnerID(t, store), created.App.ID, invalidUpdate)
 	require.ErrorIs(t, err, apps.ErrInvalid)
 	input.RedirectURIs[0], input.Providers[0] = "changed", "changed"
 	stored, err := store.Get(t.Context(), created.App.ID)
@@ -240,20 +262,20 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 	for _, uri := range []string{"http://localhost:8080/callback", "http://127.0.0.1:8080/callback", "http://127.2.3.4/callback", "http://[::1]:8080/callback", "https://product.example/callback"} {
 		input := validInput()
 		input.RedirectURIs = []string{uri}
-		_, err := loopbackStore.Create(t.Context(), createInput(input))
+		_, err := loopbackStore.Create(t.Context(), testOwnerID(t, loopbackStore), createInput(input))
 		require.NoError(t, err)
 	}
 	for _, uri := range []string{"http://localhost.example/callback", "http://192.168.1.1/callback", "http://product.example/callback"} {
 		input := validInput()
 		input.RedirectURIs = []string{uri}
-		_, err := loopbackStore.Create(t.Context(), createInput(input))
+		_, err := loopbackStore.Create(t.Context(), testOwnerID(t, loopbackStore), createInput(input))
 		require.ErrorIs(t, err, apps.ErrInvalid)
 	}
 }
 
 func TestConcurrentRotationAndRevocation(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
 	var wg sync.WaitGroup
@@ -261,7 +283,7 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 	failures := make(chan error, workers)
 	for range workers {
 		wg.Go(func() {
-			secret, err := store.CreateSecret(ctx, created.App.ID, validSecretInput())
+			secret, err := store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, validSecretInput())
 			if err != nil {
 				failures <- err
 				return
@@ -287,7 +309,7 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 	require.Len(t, secrets, workers)
 	for _, secret := range secrets {
 		wg.Go(func() {
-			assert.NoError(t, store.RevokeSecret(ctx, created.App.ID, secret.ID))
+			assert.NoError(t, store.RevokeSecret(ctx, testOwnerID(t, store), created.App.ID, secret.ID))
 		})
 	}
 	wg.Wait()
@@ -297,22 +319,22 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 	}
 	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
 	require.NoError(t, err)
-	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, workers+1)
 }
 
 func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	otherInput := apps.SecretInput{Name: "Backup backend", Description: "Independent credential"}
-	other, err := store.CreateSecret(ctx, created.App.ID, otherInput)
+	other, err := store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, otherInput)
 	require.NoError(t, err)
-	secondApp, err := store.Create(ctx, validCreateInput())
+	secondApp, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	updatedInput := apps.SecretInput{Name: "Renamed primary", Description: "  Updated rotation memo\n第二行  "}
-	updated, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, updatedInput)
+	updated, err := store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID, updatedInput)
 	require.NoError(t, err)
 	require.Equal(t, updatedInput.Name, updated.Name)
 	require.Equal(t, updatedInput.Description, updated.Description)
@@ -322,13 +344,13 @@ func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
 		{created.App.ID, "missing"},
 		{"missing", created.SecretID},
 	} {
-		_, err := store.ResetSecret(ctx, target.appID, target.secretID)
+		_, err := store.ResetSecret(ctx, testOwnerID(t, store), target.appID, target.secretID)
 		require.ErrorIs(t, err, apps.ErrNotFound)
 	}
 	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
 	require.NoError(t, err)
 
-	replacement, err := store.ResetSecret(ctx, created.App.ID, created.SecretID)
+	replacement, err := store.ResetSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID)
 	require.NoError(t, err)
 	require.NotEqual(t, created.SecretID, replacement.ID)
 	require.NotEqual(t, created.Secret, replacement.Secret)
@@ -346,7 +368,7 @@ func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
 	_, err = store.Authenticate(ctx, secondApp.App.ID, secondApp.Secret)
 	require.NoError(t, err)
 
-	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 3)
 	states := make(map[string]apps.Secret, len(metadata))
@@ -362,19 +384,19 @@ func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
 	require.Nil(t, states[replacement.ID].RevokedAt)
 	require.Equal(t, updatedInput.Name, states[replacement.ID].Name)
 	require.Equal(t, updatedInput.Description, states[replacement.ID].Description)
-	_, err = store.ResetSecret(ctx, created.App.ID, created.SecretID)
+	_, err = store.ResetSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID)
 	require.ErrorIs(t, err, apps.ErrRevoked)
-	require.NoError(t, store.RevokeSecret(ctx, created.App.ID, other.ID))
-	_, err = store.ResetSecret(ctx, created.App.ID, other.ID)
+	require.NoError(t, store.RevokeSecret(ctx, testOwnerID(t, store), created.App.ID, other.ID))
+	_, err = store.ResetSecret(ctx, testOwnerID(t, store), created.App.ID, other.ID)
 	require.ErrorIs(t, err, apps.ErrRevoked)
-	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	metadata, err = store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 3)
 }
 
 func TestConcurrentResetSecretIssuesOneReplacement(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	start := make(chan struct{})
 	type result struct {
@@ -386,7 +408,7 @@ func TestConcurrentResetSecretIssuesOneReplacement(t *testing.T) {
 	for range 2 {
 		workers.Go(func() {
 			<-start
-			issued, err := store.ResetSecret(ctx, created.App.ID, created.SecretID)
+			issued, err := store.ResetSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID)
 			results <- result{issued, err}
 		})
 	}
@@ -414,14 +436,14 @@ func TestConcurrentResetSecretIssuesOneReplacement(t *testing.T) {
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
 	_, err = store.Authenticate(ctx, created.App.ID, replacement.Secret)
 	require.NoError(t, err)
-	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 2)
 }
 
 func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
 	start := make(chan struct{})
@@ -430,7 +452,7 @@ func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	for range workers {
 		wg.Go(func() {
 			<-start
-			secret, err := store.CreateSecret(ctx, created.App.ID, validSecretInput())
+			secret, err := store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, validSecretInput())
 			if err != nil {
 				assert.ErrorIs(t, err, apps.ErrNotFound)
 				return
@@ -440,7 +462,7 @@ func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	}
 	wg.Go(func() {
 		<-start
-		assert.NoError(t, store.Delete(ctx, created.App.ID))
+		assert.NoError(t, store.Delete(ctx, testOwnerID(t, store), created.App.ID))
 	})
 	close(start)
 	wg.Wait()
@@ -448,9 +470,9 @@ func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	for secret := range issued {
 		_, err := store.Authenticate(ctx, created.App.ID, secret.Secret)
 		require.ErrorIs(t, err, apps.ErrUnauthorized)
-		require.ErrorIs(t, store.RevokeSecret(ctx, created.App.ID, secret.ID), apps.ErrNotFound)
+		require.ErrorIs(t, store.RevokeSecret(ctx, testOwnerID(t, store), created.App.ID, secret.ID), apps.ErrNotFound)
 	}
-	_, err = store.ListSecrets(ctx, created.App.ID)
+	_, err = store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.ErrorIs(t, err, apps.ErrNotFound)
 }
 
@@ -465,16 +487,25 @@ func TestDatabaseErrorsRetainCauses(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	store := openStore(t, false)
 	for _, operation := range []func() error{
-		func() error { _, err := store.Create(ctx, validCreateInput()); return err },
+		func() error { _, err := store.Create(ctx, testOwnerID(t, store), validCreateInput()); return err },
 		func() error { _, err := store.Get(ctx, "missing"); return err },
-		func() error { _, err := store.List(ctx); return err },
-		func() error { _, err := store.Update(ctx, "missing", validInput()); return err },
-		func() error { return store.Delete(ctx, "missing") },
-		func() error { _, err := store.CreateSecret(ctx, "missing", validSecretInput()); return err },
-		func() error { _, err := store.ListSecrets(ctx, "missing"); return err },
-		func() error { _, err := store.UpdateSecret(ctx, "missing", "missing", validSecretInput()); return err },
-		func() error { return store.RevokeSecret(ctx, "missing", "missing") },
-		func() error { _, err := store.ResetSecret(ctx, "missing", "missing"); return err },
+		func() error { _, err := store.List(ctx, testOwnerID(t, store)); return err },
+		func() error { _, err := store.Update(ctx, testOwnerID(t, store), "missing", validInput()); return err },
+		func() error { return store.Delete(ctx, testOwnerID(t, store), "missing") },
+		func() error {
+			_, err := store.CreateSecret(ctx, testOwnerID(t, store), "missing", validSecretInput())
+			return err
+		},
+		func() error { _, err := store.ListSecrets(ctx, testOwnerID(t, store), "missing"); return err },
+		func() error {
+			_, err := store.UpdateSecret(ctx, testOwnerID(t, store), "missing", "missing", validSecretInput())
+			return err
+		},
+		func() error { return store.RevokeSecret(ctx, testOwnerID(t, store), "missing", "missing") },
+		func() error {
+			_, err := store.ResetSecret(ctx, testOwnerID(t, store), "missing", "missing")
+			return err
+		},
 		func() error { _, err := store.Authenticate(ctx, "missing", "secret"); return err },
 	} {
 		require.ErrorIs(t, operation(), context.Canceled)
@@ -490,7 +521,7 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 
 	testCases := []struct {
@@ -499,22 +530,31 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 		table     string
 		invoke    func() error
 	}{
-		{"app creation", "INSERT", "apps", func() error { _, err := store.Create(ctx, validCreateInput()); return err }},
-		{"initial credential creation", "INSERT", "app_secrets", func() error { _, err := store.Create(ctx, validCreateInput()); return err }},
-		{"credential rotation", "INSERT", "app_secrets", func() error { _, err := store.CreateSecret(ctx, created.App.ID, validSecretInput()); return err }},
-		{"credential reset insert", "INSERT", "app_secrets", func() error { _, err := store.ResetSecret(ctx, created.App.ID, created.SecretID); return err }},
-		{"credential reset revoke", "UPDATE", "app_secrets", func() error { _, err := store.ResetSecret(ctx, created.App.ID, created.SecretID); return err }},
+		{"app creation", "INSERT", "apps", func() error { _, err := store.Create(ctx, testOwnerID(t, store), validCreateInput()); return err }},
+		{"initial credential creation", "INSERT", "app_secrets", func() error { _, err := store.Create(ctx, testOwnerID(t, store), validCreateInput()); return err }},
+		{"credential rotation", "INSERT", "app_secrets", func() error {
+			_, err := store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, validSecretInput())
+			return err
+		}},
+		{"credential reset insert", "INSERT", "app_secrets", func() error {
+			_, err := store.ResetSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID)
+			return err
+		}},
+		{"credential reset revoke", "UPDATE", "app_secrets", func() error {
+			_, err := store.ResetSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID)
+			return err
+		}},
 		{"app update", "UPDATE", "apps", func() error {
 			input := validInput()
 			input.Name, input.Enabled = "Rejected update", false
-			_, err := store.Update(ctx, created.App.ID, input)
+			_, err := store.Update(ctx, testOwnerID(t, store), created.App.ID, input)
 			return err
 		}},
-		{"app deletion", "DELETE", "apps", func() error { return store.Delete(ctx, created.App.ID) }},
-		{"credential deletion", "DELETE", "app_secrets", func() error { return store.Delete(ctx, created.App.ID) }},
-		{"credential revocation", "UPDATE", "app_secrets", func() error { return store.RevokeSecret(ctx, created.App.ID, created.SecretID) }},
+		{"app deletion", "DELETE", "apps", func() error { return store.Delete(ctx, testOwnerID(t, store), created.App.ID) }},
+		{"credential deletion", "DELETE", "app_secrets", func() error { return store.Delete(ctx, testOwnerID(t, store), created.App.ID) }},
+		{"credential revocation", "UPDATE", "app_secrets", func() error { return store.RevokeSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID) }},
 		{"credential metadata", "UPDATE", "app_secrets", func() error {
-			_, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, apps.SecretInput{Name: "Rejected metadata", Description: "Rejected"})
+			_, err := store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID, apps.SecretInput{Name: "Rejected metadata", Description: "Rejected"})
 			return err
 		}},
 	}
@@ -528,10 +568,10 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 			require.ErrorAs(t, err, &sqliteErr)
 			_, err = db.ExecContext(ctx, "DROP TRIGGER fail_write")
 			require.NoError(t, err)
-			stored, err := store.List(ctx)
+			stored, err := store.List(ctx, testOwnerID(t, store))
 			require.NoError(t, err)
 			assert.Equal(t, []apps.App{created.App}, stored)
-			metadata, err := store.ListSecrets(ctx, created.App.ID)
+			metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 			require.NoError(t, err)
 			require.Len(t, metadata, 1)
 			assert.Equal(t, created.SecretID, metadata[0].ID)
@@ -549,15 +589,15 @@ func TestSecretMetadataUpdatesPreserveCredentialsAndLifecycle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "apps.sqlite")
 	store, err := apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
-	other, err := store.Create(ctx, validCreateInput())
+	other, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
-	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	initial := metadata[0]
 	input := apps.SecretInput{Name: "Production $密钥", Description: "  owner: platform\r\n部署用途\n\t"}
-	updated, err := store.UpdateSecret(ctx, created.App.ID, initial.ID, input)
+	updated, err := store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, initial.ID, input)
 	require.NoError(t, err)
 	assert.Equal(t, input.Name, updated.Name)
 	assert.Equal(t, input.Description, updated.Description)
@@ -569,16 +609,16 @@ func TestSecretMetadataUpdatesPreserveCredentialsAndLifecycle(t *testing.T) {
 	app, err := store.Get(ctx, created.App.ID)
 	require.NoError(t, err)
 	assert.Equal(t, created.App, app)
-	_, err = store.UpdateSecret(ctx, other.App.ID, initial.ID, validSecretInput())
+	_, err = store.UpdateSecret(ctx, testOwnerID(t, store), other.App.ID, initial.ID, validSecretInput())
 	require.ErrorIs(t, err, apps.ErrNotFound)
-	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	metadata, err = store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []apps.Secret{updated}, metadata)
-	require.NoError(t, store.RevokeSecret(ctx, created.App.ID, initial.ID))
-	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, store.RevokeSecret(ctx, testOwnerID(t, store), created.App.ID, initial.ID))
+	metadata, err = store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	revoked := metadata[0]
-	updated, err = store.UpdateSecret(ctx, created.App.ID, initial.ID, apps.SecretInput{Name: "Previous deployment", Description: ""})
+	updated, err = store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, initial.ID, apps.SecretInput{Name: "Previous deployment", Description: ""})
 	require.NoError(t, err)
 	assert.Equal(t, revoked.CreatedAt, updated.CreatedAt)
 	assert.Equal(t, revoked.RevokedAt, updated.RevokedAt)
@@ -589,20 +629,20 @@ func TestSecretMetadataUpdatesPreserveCredentialsAndLifecycle(t *testing.T) {
 	store, err = apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	metadata, err = store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []apps.Secret{updated}, metadata)
 	app, err = store.Get(ctx, created.App.ID)
 	require.NoError(t, err)
 	assert.Equal(t, created.App, app)
-	require.NoError(t, store.Delete(ctx, created.App.ID))
-	_, err = store.UpdateSecret(ctx, created.App.ID, initial.ID, validSecretInput())
+	require.NoError(t, store.Delete(ctx, testOwnerID(t, store), created.App.ID))
+	_, err = store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, initial.ID, validSecretInput())
 	require.ErrorIs(t, err, apps.ErrNotFound)
 }
 
 func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	invalid := map[string]apps.SecretInput{
 		"empty name":                 {Name: ""},
@@ -620,16 +660,16 @@ func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			creation := validCreateInput()
 			creation.InitialSecret = input
-			_, err := store.Create(ctx, creation)
+			_, err := store.Create(ctx, testOwnerID(t, store), creation)
 			require.ErrorIs(t, err, apps.ErrInvalid)
-			_, err = store.CreateSecret(ctx, created.App.ID, input)
+			_, err = store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, input)
 			require.ErrorIs(t, err, apps.ErrInvalid)
-			_, err = store.UpdateSecret(ctx, created.App.ID, created.SecretID, input)
+			_, err = store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID, input)
 			require.ErrorIs(t, err, apps.ErrInvalid)
-			listed, err := store.List(ctx)
+			listed, err := store.List(ctx, testOwnerID(t, store))
 			require.NoError(t, err)
 			assert.Equal(t, []apps.App{created.App}, listed)
-			metadata, err := store.ListSecrets(ctx, created.App.ID)
+			metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 			require.NoError(t, err)
 			require.Len(t, metadata, 1)
 			assert.Equal(t, validSecretInput().Name, metadata[0].Name)
@@ -637,11 +677,11 @@ func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
 		})
 	}
 	boundary := apps.SecretInput{Name: strings.Repeat("密", 42) + "ab", Description: strings.Repeat("密", 1365) + " "}
-	issued, err := store.CreateSecret(ctx, created.App.ID, boundary)
+	issued, err := store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, boundary)
 	require.NoError(t, err)
 	assert.Equal(t, boundary.Name, issued.Name)
 	assert.Equal(t, boundary.Description, issued.Description)
-	updated, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, boundary)
+	updated, err := store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID, boundary)
 	require.NoError(t, err)
 	assert.Equal(t, boundary.Name, updated.Name)
 	assert.Equal(t, boundary.Description, updated.Description)
@@ -651,73 +691,48 @@ func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestSecretMetadataMigrationPreservesHistoricalCredentials(t *testing.T) {
+func TestPublicPlatformMigrationResetsOldRegistry(t *testing.T) {
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "apps.sqlite")
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
-	provider, err := goose.NewProvider(goose.DialectSQLite3, db, os.DirFS("migrations"), goose.WithDisableGlobalRegistry(true))
+	migrationProvider, err := goose.NewProvider(goose.DialectSQLite3, db, os.DirFS("migrations"), goose.WithDisableGlobalRegistry(true))
 	require.NoError(t, err)
-	_, err = provider.UpTo(ctx, 1)
+	_, err = migrationProvider.UpTo(ctx, 2)
 	require.NoError(t, err)
-	createdAt, updatedAt, revokedAt := int64(123456789), int64(234567890), int64(345678901)
-	_, err = db.ExecContext(ctx, `INSERT INTO apps (id, name, enabled, redirect_uris, providers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, "existing-app", "Existing app", true, `["https://product.example/callback"]`, `["google"]`, createdAt, updatedAt)
+	_, err = db.ExecContext(ctx, `INSERT INTO apps (id,name,enabled,redirect_uris,providers,created_at,updated_at) VALUES ('existing-app','Old app',1,'["https://product.example/callback"]','["google"]',123,456)`)
 	require.NoError(t, err)
-	digests := make(map[string][]byte)
-	for _, id := range []string{"active", "revoked"} {
-		digest := sha256.Sum256([]byte("plaintext-" + id))
-		digests[id] = digest[:]
-		var revoked any
-		if id == "revoked" {
-			revoked = revokedAt
-		}
-		_, err = db.ExecContext(ctx, `INSERT INTO app_secrets (id, app_id, digest, created_at, revoked_at) VALUES (?, ?, ?, ?, ?)`, id, "existing-app", digest[:], createdAt, revoked)
-		require.NoError(t, err)
-	}
+	digest := sha256.Sum256([]byte("old-secret"))
+	_, err = db.ExecContext(ctx, `INSERT INTO app_secrets (id,app_id,name,description,digest,created_at) VALUES ('old-secret','existing-app','Old secret','Old note',?,123)`, digest[:])
+	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	store, err := apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
-	metadata, err := store.ListSecrets(ctx, "existing-app")
-	require.NoError(t, err)
-	require.Len(t, metadata, 2)
-	for _, secret := range metadata {
-		assert.Equal(t, "Secret "+secret.ID, secret.Name)
-		assert.Empty(t, secret.Description)
-		assert.Equal(t, time.Unix(0, createdAt).UTC(), secret.CreatedAt)
-		if secret.ID == "revoked" {
-			require.NotNil(t, secret.RevokedAt)
-			assert.Equal(t, time.Unix(0, revokedAt).UTC(), *secret.RevokedAt)
-		} else {
-			assert.Nil(t, secret.RevokedAt)
-		}
-	}
-	app, err := store.Authenticate(ctx, "existing-app", "plaintext-active")
-	require.NoError(t, err)
-	assert.Equal(t, time.Unix(0, createdAt).UTC(), app.CreatedAt)
-	assert.Equal(t, time.Unix(0, updatedAt).UTC(), app.UpdatedAt)
-	_, err = store.Authenticate(ctx, "existing-app", "plaintext-revoked")
+	_, err = store.Get(ctx, "existing-app")
+	require.ErrorIs(t, err, apps.ErrNotFound)
+	_, err = store.Authenticate(ctx, "existing-app", "old-secret")
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
-	updated, err := store.UpdateSecret(ctx, "existing-app", "active", apps.SecretInput{Name: "Named deployment", Description: "Retained note"})
+	ownerID := testOwnerID(t, store)
+	listed, err := store.List(ctx, ownerID)
+	require.NoError(t, err)
+	require.Empty(t, listed)
+	created, err := store.Create(ctx, ownerID, validCreateInput())
 	require.NoError(t, err)
 	require.NoError(t, store.Close())
 	store, err = apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	metadata, err = store.ListSecrets(ctx, "existing-app")
+	persisted, err := store.GetOwned(ctx, ownerID, created.App.ID)
 	require.NoError(t, err)
-	assert.Equal(t, updated, metadata[0])
+	require.Equal(t, created.App, persisted)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.NoError(t, err)
 	db, err = sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	for id, expected := range digests {
-		var actual []byte
-		require.NoError(t, db.QueryRowContext(ctx, "SELECT digest FROM app_secrets WHERE id = ?", id).Scan(&actual))
-		assert.Equal(t, expected, actual)
-	}
-	var index string
-	require.NoError(t, db.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'app_secrets_app_id'").Scan(&index))
-	_, err = db.ExecContext(ctx, `INSERT INTO app_secrets (id, app_id, digest, created_at) VALUES (?, ?, ?, ?)`, "unnamed", "existing-app", digests["active"], createdAt)
-	require.ErrorContains(t, err, "NOT NULL")
+	var count int
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM app_secrets WHERE id = 'old-secret'").Scan(&count))
+	require.Zero(t, count)
 }
 
 func TestSecretMetadataReadFailureRollsBackWrite(t *testing.T) {
@@ -726,16 +741,16 @@ func TestSecretMetadataReadFailureRollsBackWrite(t *testing.T) {
 	store, err := apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	_, err = db.ExecContext(ctx, `CREATE TRIGGER corrupt_metadata AFTER UPDATE OF name, description ON app_secrets BEGIN UPDATE app_secrets SET created_at = 'unreadable' WHERE id = NEW.id; END`)
 	require.NoError(t, err)
-	_, err = store.UpdateSecret(ctx, created.App.ID, created.SecretID, apps.SecretInput{Name: "Uncommitted name"})
+	_, err = store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID, apps.SecretInput{Name: "Uncommitted name"})
 	require.ErrorContains(t, err, "read app credential metadata")
-	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 1)
 	assert.Equal(t, created.App.CreatedAt, metadata[0].CreatedAt)
@@ -746,13 +761,13 @@ func TestSecretMetadataReadFailureRollsBackWrite(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, "UPDATE app_secrets SET created_at = 'unreadable' WHERE id = ?", created.SecretID)
 	require.NoError(t, err)
-	_, err = store.ListSecrets(ctx, created.App.ID)
+	_, err = store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.ErrorContains(t, err, "read app credential metadata")
 }
 
 func TestConcurrentMetadataUpdatesAndRevocation(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validCreateInput())
+	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
 	start := make(chan struct{})
@@ -760,18 +775,18 @@ func TestConcurrentMetadataUpdatesAndRevocation(t *testing.T) {
 	for range workers {
 		wg.Go(func() {
 			<-start
-			metadata, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, validSecretInput())
+			metadata, err := store.UpdateSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID, validSecretInput())
 			assert.NoError(t, err)
 			assert.Equal(t, created.App.CreatedAt, metadata.CreatedAt)
 		})
 	}
 	wg.Go(func() {
 		<-start
-		assert.NoError(t, store.RevokeSecret(ctx, created.App.ID, created.SecretID))
+		assert.NoError(t, store.RevokeSecret(ctx, testOwnerID(t, store), created.App.ID, created.SecretID))
 	})
 	close(start)
 	wg.Wait()
-	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	metadata, err := store.ListSecrets(ctx, testOwnerID(t, store), created.App.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 1)
 	require.NotNil(t, metadata[0].RevokedAt)

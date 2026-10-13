@@ -16,14 +16,14 @@ type failedWriter struct{}
 func (failedWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestCommandSelectionAndOutputErrors(t *testing.T) {
-	for _, args := range [][]string{{"bad"}, {"serve", "extra"}, {"hash-password"}} {
+	for _, args := range [][]string{{"bad"}, {"serve", "extra"}} {
 		if err := run(context.Background(), args, io.Discard, io.Discard, func(string) string { return "" }); err == nil {
 			t.Fatalf("invalid args accepted: %v", args)
 		}
 	}
 	for _, help := range []string{"help", "-h", "--help"} {
 		var out bytes.Buffer
-		if err := run(context.Background(), []string{help}, &out, io.Discard, func(string) string { return "" }); err != nil || !strings.Contains(out.String(), "UNIAUTH_ADMIN_PASSWORD") || strings.Contains(out.String(), "hash-password") {
+		if err := run(context.Background(), []string{help}, &out, io.Discard, func(string) string { return "" }); err != nil || !strings.Contains(out.String(), "UNIAUTH_INITIAL_ADMIN_EMAIL") || !strings.Contains(out.String(), "OAuth provider") {
 			t.Fatalf("help: %v %s", err, out.String())
 		}
 	}
@@ -40,7 +40,7 @@ func TestServeConfigurationStartupAndCancellation(t *testing.T) {
 	if err := run(context.Background(), nil, io.Discard, io.Discard, getenv); err == nil {
 		t.Fatal("missing config accepted")
 	}
-	values := map[string]string{"UNIAUTH_PUBLIC_URL": "http://localhost:8080", "UNIAUTH_ALLOW_LOOPBACK_HTTP": "true", "UNIAUTH_ADMIN_PASSWORD": "  $直接-password  ", "UNIAUTH_LISTEN_ADDR": "127.0.0.1:0", "UNIAUTH_DATABASE_PATH": filepath.Join(t.TempDir(), "apps.db")}
+	values := map[string]string{"UNIAUTH_PUBLIC_URL": "http://localhost:8080", "UNIAUTH_ALLOW_LOOPBACK_HTTP": "true", "UNIAUTH_INITIAL_ADMIN_EMAIL": "admin@example.com", "UNIAUTH_GITHUB_CLIENT_ID": "client", "UNIAUTH_GITHUB_CLIENT_SECRET": "secret", "UNIAUTH_LISTEN_ADDR": "127.0.0.1:0", "UNIAUTH_DATABASE_PATH": filepath.Join(t.TempDir(), "apps.db")}
 	getenv = func(key string) string { return values[key] }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -56,9 +56,9 @@ func TestServeConfigurationStartupAndCancellation(t *testing.T) {
 	if err := run(context.Background(), []string{"serve"}, io.Discard, io.Discard, getenv); err == nil {
 		t.Fatal("occupied listener accepted")
 	}
-	values["UNIAUTH_ADMIN_PASSWORD"] = strings.Repeat("x", 1025)
+	values["UNIAUTH_INITIAL_ADMIN_EMAIL"] = "Admin <admin@example.com>"
 	if err := run(context.Background(), nil, io.Discard, io.Discard, getenv); err == nil {
-		t.Fatal("invalid administrator password accepted")
+		t.Fatal("invalid initial administrator email accepted")
 	}
 }
 
@@ -76,7 +76,7 @@ func (w *cancelOnStart) Write(body []byte) (int, error) {
 }
 
 func TestServeSuccessAndSignalShutdown(t *testing.T) {
-	values := map[string]string{"UNIAUTH_PUBLIC_URL": "http://localhost:8080", "UNIAUTH_ALLOW_LOOPBACK_HTTP": "true", "UNIAUTH_ADMIN_PASSWORD": "  $直接-password  ", "UNIAUTH_LISTEN_ADDR": "127.0.0.1:0", "UNIAUTH_DATABASE_PATH": filepath.Join(t.TempDir(), "apps.db")}
+	values := map[string]string{"UNIAUTH_PUBLIC_URL": "http://localhost:8080", "UNIAUTH_ALLOW_LOOPBACK_HTTP": "true", "UNIAUTH_INITIAL_ADMIN_EMAIL": "admin@example.com", "UNIAUTH_GITHUB_CLIENT_ID": "client", "UNIAUTH_GITHUB_CLIENT_SECRET": "secret", "UNIAUTH_LISTEN_ADDR": "127.0.0.1:0", "UNIAUTH_DATABASE_PATH": filepath.Join(t.TempDir(), "apps.db")}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	output := &cancelOnStart{cancel: cancel}

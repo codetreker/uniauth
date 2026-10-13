@@ -17,6 +17,7 @@ setup: dirs
 	go mod download
 	cd sdk/go && GOWORK=off go mod download
 	cd e2e/sdk && GOWORK=off go mod download
+	cd e2e/browser && GOWORK=off go mod download
 	pnpm install --frozen-lockfile --store-dir .tmp/pnpm-store
 	cd web/console && pnpm install --frozen-lockfile --store-dir ../../.tmp/pnpm-store
 	cd sdk/js && pnpm install --frozen-lockfile --store-dir ../../.tmp/pnpm-store
@@ -47,10 +48,11 @@ coverage: frontend
 check: frontend
 	python3 scripts/check-docs.py
 	git diff --check
-	test -z "$$(gofmt -l cmd internal sdk/go e2e/sdk web/console/*.go)"
+	test -z "$$(gofmt -l cmd internal sdk/go e2e/sdk e2e/browser web/console/*.go)"
 	go vet ./...
 	cd sdk/go && GOWORK=off go vet ./...
 	cd e2e/sdk && GOWORK=off go vet ./...
+	cd e2e/browser && GOWORK=off go vet ./...
 	cd web/console && pnpm check && pnpm format:check
 	cd sdk/js && pnpm check && pnpm format:check
 	cd sdk/js && pnpm exec prettier --check ../../e2e/sdk/integration.mjs

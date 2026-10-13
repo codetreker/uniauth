@@ -112,10 +112,13 @@ test("final Console components provide an interactive desktop preview", async ({
   await expect(
     page.getByRole("heading", { name: "New workspace", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Try the login screen" }).click();
-  await expect(page.getByLabel("Administrator password")).toBeVisible();
-  await page.getByLabel("Administrator password").fill("preview");
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Continue with Microsoft", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Continue with Microsoft", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Manage New workspace" }),
   ).toBeVisible();
@@ -171,4 +174,135 @@ test("preview remains usable on a mobile viewport", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Disable app", exact: true }),
   ).toBeVisible();
+});
+
+test("platform preview exposes final OAuth, account and limited administrator screens", async ({
+  page,
+}) => {
+  const failures: string[] = [];
+  page.on("pageerror", (error) => failures.push(error.message));
+  await page.goto("/console/mockup.html");
+  await page.getByRole("button", { name: "Users", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Platform users", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("columnheader")).toHaveText([
+    "User",
+    "Created",
+    "Applications",
+  ]);
+  await expect(
+    page.getByRole("button", { name: "Load more users", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Load more users", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Load more users", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Loading users…", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("table").getByRole("button")).toHaveCount(0);
+  await page.screenshot({
+    path: ".tmp/platform-users-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: ".tmp/platform-users-mobile.png",
+    fullPage: true,
+  });
+  const usersWidth = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    document: document.documentElement.scrollWidth,
+  }));
+  expect(usersWidth.document).toBeLessThanOrEqual(usersWidth.viewport);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "My account", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Google linked", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Link GitHub", exact: true }).click();
+  await expect(page.locator(".identity-row")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: "GitHub linked", exact: true }),
+  ).toBeDisabled();
+  await page.screenshot({
+    path: ".tmp/platform-account-desktop.png",
+    fullPage: true,
+  });
+
+  await page
+    .getByLabel("Preview account", { exact: true })
+    .selectOption({ label: "Product developer" });
+  await expect(
+    page.getByRole("button", { name: "Users", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Manage Syntrix", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Manage Borgee", exact: true }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: ".tmp/platform-developer-desktop.png",
+    fullPage: true,
+  });
+  await page.getByLabel("Start signed out", { exact: true }).check();
+  for (const provider of ["Microsoft", "Google", "GitHub"])
+    await expect(
+      page.getByRole("button", {
+        name: `Continue with ${provider}`,
+        exact: true,
+      }),
+    ).toBeEnabled();
+  await page.screenshot({
+    path: ".tmp/platform-login-desktop.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "Continue with GitHub", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Manage Syntrix", exact: true }),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByLabel("Preview account", { exact: true })
+    .selectOption({ label: "New account (missing profile)" });
+  await page.getByLabel("Start signed out", { exact: true }).uncheck();
+  await expect(
+    page.getByRole("heading", {
+      name: "Your products belong here",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "My account", exact: true }).click();
+  await expect(page.locator(".account-profile")).toContainText(
+    "Unnamed account",
+  );
+  await expect(page.locator(".account-profile")).toContainText(
+    "Email not provided",
+  );
+  await expect(page.locator(".identity-row")).toHaveCount(1);
+  await page.screenshot({
+    path: ".tmp/platform-account-mobile.png",
+    fullPage: true,
+  });
+  await page.getByLabel("Start signed out", { exact: true }).check();
+  await expect(
+    page.getByRole("button", { name: "Continue with Microsoft", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: ".tmp/platform-login-mobile.png",
+    fullPage: true,
+  });
+  const dimensions = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    document: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
+  expect(failures).toEqual([]);
 });

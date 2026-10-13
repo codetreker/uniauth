@@ -78,8 +78,11 @@ cross-provider linking. Those decisions remain with the product.
 
 Consumers must use the seven-field contract and handle nullable attributes. The
 wire-field rename requires coordinated consumer updates, even though identity
-keys retain their values. There is no persisted end-user data to migrate; future
-changes to qualified ID values require an explicit product identity migration.
+keys retain their values. That normalization delivery had no persisted user data
+to migrate. The
+[public platform decision](2026-10-13-public-oauth-platform.md) subsequently adds
+Console accounts keyed by those identities. Future changes to qualified ID values
+require explicit migrations for Console links and any affected product identities.
 
 Microsoft photo data appears in both the standard data URL and `origin.photo`.
 This gives products a directly usable avatar without changing the source photo

@@ -38,7 +38,7 @@ func (h *Handler) management(actions map[string]string, serve http.HandlerFunc) 
 		}
 		h.config.Logger.InfoContext(r.Context(), "console management operation",
 			"operation_id", requestID, "request_id", requestID, "phase", "completed", "action", action,
-			"affected_app_id", reply.appID, "outcome", outcome, "error_category", auditErrorCategory(reply.status), "status", reply.status)
+			"actor_account_id", requestSession(r).accountID, "affected_app_id", reply.appID, "outcome", outcome, "error_category", auditErrorCategory(reply.status), "status", reply.status)
 	}
 }
 
