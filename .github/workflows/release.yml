@@ -56,17 +56,17 @@ jobs:
           key: ${{ secrets.OC_VM_SSH_KEY }}
           source: deploy/docker-compose.yml
           strip_components: 1
-          target: ${{ vars.STAGING_DEPLOY_PATH }}
+          target: ${{ vars.DEPLOY_PATH }}
       - name: Start services
         uses: appleboy/ssh-action@v1.2.5
         env:
-          STAGING_DEPLOY_PATH: ${{ vars.STAGING_DEPLOY_PATH }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
         with:
           host: ${{ vars.OC_VM_HOST }}
           username: ${{ vars.OC_VM_USER }}
           key: ${{ secrets.OC_VM_SSH_KEY }}
-          envs: STAGING_DEPLOY_PATH
-          script: cd "$STAGING_DEPLOY_PATH" && docker compose up -d
+          envs: DEPLOY_PATH
+          script: cd "$DEPLOY_PATH" && docker compose up -d
 
   prod:
     needs: [build, staging]
@@ -86,14 +86,14 @@ jobs:
           key: ${{ secrets.OC_VM_SSH_KEY }}
           source: deploy/docker-compose.yml
           strip_components: 1
-          target: ${{ vars.PROD_DEPLOY_PATH }}
+          target: ${{ vars.DEPLOY_PATH }}
       - name: Start services
         uses: appleboy/ssh-action@v1.2.5
         env:
-          PROD_DEPLOY_PATH: ${{ vars.PROD_DEPLOY_PATH }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
         with:
           host: ${{ vars.OC_VM_HOST }}
           username: ${{ vars.OC_VM_USER }}
           key: ${{ secrets.OC_VM_SSH_KEY }}
-          envs: PROD_DEPLOY_PATH
-          script: cd "$PROD_DEPLOY_PATH" && docker compose up -d
+          envs: DEPLOY_PATH
+          script: cd "$DEPLOY_PATH" && docker compose up -d

@@ -5,8 +5,8 @@ Date: 2026-10-13
 ## Delivered behavior
 
 Build publishes one image. Staging and prod copy their configured
-`deploy/docker-compose.yml` into `STAGING_DEPLOY_PATH` and `PROD_DEPLOY_PATH`,
-respectively, as `docker-compose.yml` and run `docker compose up -d`.
+`deploy/docker-compose.yml` into `DEPLOY_PATH` as `docker-compose.yml` and run
+`docker compose up -d`.
 VM-owned `.env` files and separate Compose project volumes retain configuration.
 
 ## Observed validation
