@@ -310,7 +310,7 @@ func TestSessionCapacityReauthenticationAndExpiryRecovery(t *testing.T) {
 func TestLoginUsesExactConfiguredPassword(t *testing.T) {
 	const password = "  $直接-password  "
 	e := newTestConsole(t, func(cfg *Config) { cfg.Password = password })
-	for _, wrong := range []string{strings.TrimSpace(password), "  $直接-password ", "  $直接-Password  "} {
+	for _, wrong := range []string{strings.TrimSpace(password), "  $直接-password ", "  $直接-Password  ", password + "\r\n"} {
 		body, err := json.Marshal(map[string]string{"password": wrong})
 		if err != nil {
 			t.Fatal(err)
@@ -329,6 +329,51 @@ func TestLoginUsesExactConfiguredPassword(t *testing.T) {
 	requireStatus(t, response, http.StatusOK)
 	if len(response.Result().Cookies()) != 1 || decodeResponse[map[string]string](t, response)["csrf_token"] == "" {
 		t.Fatal("configured password did not issue a session and CSRF token")
+	}
+}
+
+func TestConfiguredPasswordIsUsableInConsole(t *testing.T) {
+	e := newTestConsole(t, nil)
+	cases := []struct {
+		name     string
+		password string
+		valid    bool
+	}{
+		{"one byte", " ", true},
+		{"1024 bytes", strings.Repeat("界", 341) + "$", true},
+		{"LF", "password\n", false},
+		{"CR", "password\r", false},
+		{"CRLF", "password\r\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{PublicURL: "https://auth.example", Password: tc.password}
+			handler, err := New(e.store, nil, cfg)
+			if !tc.valid {
+				if err == nil {
+					t.Fatal("multiline administrator password accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("usable administrator password rejected: %v", err)
+			}
+			mux := http.NewServeMux()
+			handler.Register(mux)
+			body, err := json.Marshal(map[string]string{"password": tc.password})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest("POST", cfg.PublicURL+"/console/api/login", bytes.NewReader(body))
+			req.Header.Set("Origin", cfg.PublicURL)
+			req.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, req)
+			requireStatus(t, response, http.StatusOK)
+			if len(response.Result().Cookies()) != 1 {
+				t.Fatal("usable administrator password did not issue a session")
+			}
+		})
 	}
 }
 

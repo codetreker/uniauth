@@ -8,7 +8,7 @@ With no command, `serve` is selected. `uniauth help` prints usage.
 | Variable | Required or default | Meaning |
 | --- | --- | --- |
 | `UNIAUTH_PUBLIC_URL` | Required | External absolute origin, such as `https://auth.example`; no path other than `/`, query, fragment, or user information. |
-| `UNIAUTH_ADMIN_PASSWORD` | Required | Direct administrator password containing 1–1024 bytes, preserved exactly. |
+| `UNIAUTH_ADMIN_PASSWORD` | Required | Single-line administrator password containing 1–1024 bytes, with no CR or LF; preserved exactly. |
 | `UNIAUTH_LISTEN_ADDR` | `:8080` | HTTP listener address in `host:port` form. |
 | `UNIAUTH_DATABASE_PATH` | `uniauth.db` | SQLite database path; parent directory must exist. |
 | `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for loopback public origins and registered product callbacks. |
@@ -57,11 +57,14 @@ generated 256-bit product Secrets. It contains no end-user records, provider
 tokens, identity results, login transactions, or administrator sessions.
 
 The administrator password is read directly from `UNIAUTH_ADMIN_PASSWORD` and
-compared exactly with Console login input. Empty values and values longer than
-1024 bytes fail startup. Spaces, dollar signs, and other password characters
-are preserved; no trimming is applied. The deployment environment holds the
-password, and SQLite does not store it. Changing it requires a restart, which
-invalidates administrator sessions, pending product logins, and completed results.
+compared exactly with Console login input. It must be a single line: empty values,
+values longer than 1024 bytes, and values containing carriage return (CR) or line
+feed (LF) fail startup. Spaces, dollar signs, and Unicode are preserved; no
+trimming is applied. The Console password control removes CR and LF, making
+multiline passwords unusable through that interface. The deployment environment
+holds the password, and SQLite does not store it. Changing it requires a restart,
+which invalidates administrator sessions, pending product logins, and completed
+results.
 
 For an existing deployment, remove `UNIAUTH_ADMIN_PASSWORD_HASH` from the VM-owned
 `.env` and supply the actual login password:
@@ -70,9 +73,12 @@ For an existing deployment, remove `UNIAUTH_ADMIN_PASSWORD_HASH` from the VM-own
 UNIAUTH_ADMIN_PASSWORD='YOUR_ADMINISTRATOR_PASSWORD'
 ```
 
-Use single quotes in Compose `.env` files to preserve literal dollar signs.
-Deploy an image built from the direct-password implementation, then recreate the
-container with `docker compose up -d --force-recreate`. The old hash variable is
+The [deployment template](../../deploy/.env.example) leaves this variable empty.
+Set an administrator password before starting the service; copying the template
+unchanged fails startup. Use single quotes in Compose `.env` files to preserve
+literal dollar signs. Deploy an image built from the direct-password
+implementation, then recreate the container with
+`docker compose up -d --force-recreate`. The old hash variable is
 not read by that image. App configuration and product Secret digests remain
 unchanged. The [deployment reference](deployment.md) owns the release procedure.
 

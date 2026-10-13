@@ -16,6 +16,7 @@
 | [Authentication gateway receipt](tasks/2026-10-12-authentication-gateway.md) | Original gateway implementation checks and verification limits. |
 | [Console correction receipt](tasks/2026-10-12-console-review-fixes.md) | Origin serialization and same-App mutation validation. |
 | [Administrator password receipt](tasks/2026-10-13-direct-administrator-password.md) | Direct-password boundaries, browser and production-container login, rotation, and unchanged repository gates. |
+| [Administrator password configuration receipt](tasks/2026-10-13-administrator-password-review-fixes.md) | Empty template, single-line password validation, public caller probes, and production Compose checks. |
 | [Normalized identity receipt](tasks/2026-10-13-normalized-identity.md) | Mapping, handover, coverage, and browser validation for the standard identity contract. |
 | [Product SDK receipt](tasks/2026-10-13-product-sdks.md) | Original SDK delivery validation before normalized contract integration. |
 | [SDK/main integration receipt](tasks/2026-10-13-sdk-main-integration.md) | SDK alignment with normalized identities, deployment merge resolution, and updated validation. |

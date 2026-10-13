@@ -64,8 +64,10 @@ Place an independently configured `.env` in each directory using
 [the template](../../deploy/.env.example). Set `UNIAUTH_HOST_PORT` to distinct
 loopback ports and configure the service's public URL, `UNIAUTH_ADMIN_PASSWORD`,
 and provider credential pairs. Supply the actual administrator login password in
-the deployment environment. Use single quotes around `.env` values containing
-dollar signs to preserve them during Compose parsing.
+the deployment environment. The template leaves `UNIAUTH_ADMIN_PASSWORD` empty;
+set it explicitly before starting the service, or startup fails. Choose a single
+line containing 1–1024 bytes, with no CR or LF. Use single quotes around `.env`
+values containing dollar signs to preserve them during Compose parsing.
 See [runtime configuration](configuration.md) for the complete service settings.
 
 The workflow replaces only `docker-compose.yml`; `.env` remains VM-owned. Caddy

@@ -23,8 +23,8 @@ product users.
 The original gateway required a deployment-configured Argon2id password hash.
 The [direct administrator password decision](../simplification/2026-10-13-direct-administrator-password.md)
 supersedes that credential format and its CLI generation step. The Console now
-compares the configured password directly; administrator authority and session
-ownership remain governed by this note.
+compares the configured single-line password directly; administrator authority
+and session ownership remain governed by this note.
 
 Console mutations require exact Origin and CSRF validation. The expected origin
 is derived once from deployment configuration using IDNA ASCII lowercase domain

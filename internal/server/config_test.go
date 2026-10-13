@@ -51,3 +51,43 @@ func TestRejectInvalidConfiguration(t *testing.T) {
 		t.Fatal("whitespace client ID accepted")
 	}
 }
+
+func TestAdministratorPasswordConfigurationContract(t *testing.T) {
+	cases := []struct {
+		name     string
+		password string
+		valid    bool
+	}{
+		{"one byte", " ", true},
+		{"1024 bytes", strings.Repeat("界", 341) + "$", true},
+		{"literal password", "  $直接-password  ", true},
+		{"LF", "password\n", false},
+		{"CR", "password\r", false},
+		{"CRLF", "password\r\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{PublicURL: "https://auth.example.com", ListenAddr: ":8080", DatabasePath: "apps.db", AdminPassword: tc.password}
+			directErr := cfg.validate()
+			values := map[string]string{"UNIAUTH_PUBLIC_URL": cfg.PublicURL, "UNIAUTH_ADMIN_PASSWORD": tc.password}
+			loaded, loadErr := LoadConfig(func(name string) string { return values[name] })
+			if tc.valid {
+				if directErr != nil || loadErr != nil {
+					t.Fatalf("usable password rejected: direct=%v environment=%v", directErr, loadErr)
+				}
+				if loaded.AdminPassword != tc.password {
+					t.Fatal("configured password changed")
+				}
+			} else {
+				for _, err := range []error{directErr, loadErr} {
+					if err == nil || !strings.Contains(err.Error(), "UNIAUTH_ADMIN_PASSWORD") {
+						t.Fatalf("multiline configuration did not fail with a password diagnostic: %v", err)
+					}
+					if strings.Contains(err.Error(), "password\r") || strings.Contains(err.Error(), "password\n") {
+						t.Fatal("configuration diagnostic disclosed password")
+					}
+				}
+			}
+		})
+	}
+}

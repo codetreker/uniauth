@@ -32,8 +32,9 @@ mkdir -p data
 .tmp/bin/uniauth serve
 ```
 
-Open `/console/` and sign in with the configured password. It must contain
-1–1024 bytes; whitespace and dollar signs are literal password characters.
+Open `/console/` and sign in with the configured password. It must be a single
+line containing 1–1024 bytes, with no carriage return or line feed. Spaces, dollar
+signs, and Unicode are literal password characters.
 Configure providers before creating usable integrations; each provider requires
 its own Client ID and Client Secret pair. Production requires HTTPS, normally
 terminated by a reverse proxy in front of the service. See the

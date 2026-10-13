@@ -73,8 +73,8 @@ func (cfg Config) validate() error {
 	if cfg.DatabasePath == "" {
 		return errors.New("UNIAUTH_DATABASE_PATH is required")
 	}
-	if len(cfg.AdminPassword) == 0 || len(cfg.AdminPassword) > 1024 {
-		return errors.New("UNIAUTH_ADMIN_PASSWORD must contain between one and 1024 bytes")
+	if len(cfg.AdminPassword) == 0 || len(cfg.AdminPassword) > 1024 || strings.ContainsAny(cfg.AdminPassword, "\r\n") {
+		return errors.New("UNIAUTH_ADMIN_PASSWORD must contain between one and 1024 bytes without CR or LF")
 	}
 	for _, entry := range []struct {
 		name        string

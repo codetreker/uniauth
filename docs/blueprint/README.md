@@ -94,9 +94,11 @@ Console-generated product credentials. Missing providers are unavailable rather
 than given fallback credentials.
 
 The Console compares login passwords exactly against `UNIAUTH_ADMIN_PASSWORD`,
-a deployment-configured secret containing 1–1024 bytes. Deployment supplies the
-password directly so an operator can configure and rotate it without a separate
-credential-generation step. Whitespace is preserved. The
+a single-line deployment secret containing 1–1024 bytes, with no CR or LF.
+Deployment supplies the password directly so an operator can configure and rotate
+it without a separate credential-generation step. Spaces, dollar signs, and
+Unicode are preserved. The Console password control removes CR and LF, so
+rejecting them at startup keeps every accepted password usable in the UI. The
 [administrator password decision](../../.agents/notes/implemented/simplification/2026-10-13-direct-administrator-password.md)
 owns this choice and its deployment costs. An eight-hour in-memory administrator
 session uses an HttpOnly, SameSite=Strict cookie, Secure under HTTPS. Mutations

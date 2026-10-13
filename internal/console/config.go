@@ -43,8 +43,8 @@ func New(store *apps.Store, availableProviders []string, cfg Config) (*Handler, 
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize console public URL origin: %w", err)
 	}
-	if len(cfg.Password) == 0 || len(cfg.Password) > 1024 {
-		return nil, errors.New("console password must contain between one and 1024 bytes")
+	if len(cfg.Password) == 0 || len(cfg.Password) > 1024 || strings.ContainsAny(cfg.Password, "\r\n") {
+		return nil, errors.New("console password must contain between one and 1024 bytes without CR or LF")
 	}
 	if cfg.SessionTTL == 0 {
 		cfg.SessionTTL = 8 * time.Hour
