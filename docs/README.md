@@ -10,7 +10,8 @@
 | [Authentication gateway decision](../.agents/notes/implemented/architecture/2026-10-12-authentication-gateway.md) | Ownership, identity handover alternatives, and operating consequences. |
 | [Normalized identity decision](../.agents/notes/implemented/architecture/2026-10-13-normalized-identity.md) | Standard profile mapping, complete original data, and wire-format costs. |
 | [Product SDK decision](../.agents/notes/implemented/feature/2026-10-13-product-sdks.md) | SDK responsibilities, transport and normalized data contracts, and package-consumer validation. |
-| [Compose release decision](../.agents/notes/implemented/process/2026-10-13-compose-releases.md) | Image promotion and deployment ownership. |
+| [Compose release decision](../.agents/notes/implemented/process/2026-10-13-compose-releases.md) | Manual release initiation and Compose deployment ownership. |
+| [Tag-reference decision](../.agents/notes/implemented/process/2026-10-13-tag-image-references.md) | Shared short-tag image reference for publication, anonymous pull, and deployment. |
 | [Public GHCR decision](../.agents/notes/implemented/process/2026-10-13-public-ghcr-images.md) | Public image access and package visibility ownership. |
 | [Authentication gateway receipt](tasks/2026-10-12-authentication-gateway.md) | Original gateway implementation checks and verification limits. |
 | [Console correction receipt](tasks/2026-10-12-console-review-fixes.md) | Origin serialization and same-App mutation validation. |
