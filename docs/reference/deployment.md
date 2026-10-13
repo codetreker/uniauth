@@ -10,6 +10,13 @@ gh workflow run release.yml --ref main
 The build job requires `refs/heads/main`; selecting another ref skips the build
 and dependent deployments. Pushes to `main` do not start a release.
 
+Each Actions run title has the form
+`Release #<run-number> · staging → prod · <branch> · @<actor>`, for example
+`Release #12 · staging → prod · main · @alice`. The number is GitHub's workflow
+run number, and the actor is the original initiator. Rerunning an existing run
+retains those values. The daily image-tag sequence is allocated separately by
+the build job.
+
 ## Release image reference
 
 The build job allocates a tag in `<yymmdd>-<seq>-<hash-8>` format and derives
