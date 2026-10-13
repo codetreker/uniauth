@@ -140,9 +140,13 @@ and reconciles only the affected App. If that reload also fails, the App shows
 Refresh succeeds. An already-open draft or delete confirmation retains its owner
 and permits Retry or Cancel; it does not require Refresh before its owned retry.
 An unavailable marker may remain after a successful owned retry until Refresh.
-Administrator session expiry instead returns to login. This serialization is
-local to the Console, not a server-side version or cross-browser concurrency
-guarantee.
+A session-invalidating `401` returns to login and discards idle drafts while
+retaining owners of already in-flight requests until their handlers settle.
+An already-authorized issuance can still succeed after another request reports
+session expiry. Its successful one-time credential display retains ownership
+through Saved and Done; a failed pending operation releases its retained owner.
+This serialization is local to the Console, not a server-side version or
+cross-browser concurrency guarantee.
 
 React, TypeScript, Vite, and pnpm build the Console. Production assets are embedded
 in the executable under `/console/`; Node.js is needed for building, not serving.

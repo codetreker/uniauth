@@ -346,10 +346,15 @@ reloading server configuration and merges only the affected App into its current
 snapshot. If the reload also fails, `State unavailable` blocks new configuration
 actions until an explicit Refresh succeeds. An already-open editor or delete
 confirmation still owns the App and permits Retry or Cancel. A successful owned
-retry may leave the unavailable marker until Refresh. Administrator session
-expiry returns to login.
-These controls protect one Console instance; API callers and separate browsers
-still send full App replacements without server-side version checks.
+retry may leave the unavailable marker until Refresh. A session-invalidating
+`401` returns to login and discards idle drafts, while already in-flight
+operations retain their owners until their handlers settle. If pending App or
+Secret creation succeeds, its one-time plaintext display remains available
+through the Saved confirmation and Done action; a failed pending operation
+releases its retained owner. Another request's `401` does not establish that an
+already-authorized issuance failed. These controls protect one Console instance;
+API callers and separate browsers still send full App replacements without
+server-side version checks.
 
 Management mutations that pass Origin, administrator session, and CSRF checks
 receive `X-Operation-ID`. Their completion emits a `console management operation`

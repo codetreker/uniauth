@@ -45,13 +45,18 @@ the expected string. Registered product callback matching remains exact.
 The Console reserves an App during configuration editing, enable/disable updates,
 deletion, and Secret creation, detail updates, and revocation. A new Secret keeps
 its one-time plaintext display and ownership until the operator marks the value
-saved and closes the dialog. A failed non-authentication write retains ownership through a
-server-state reload; only that App is reconciled into the current UI snapshot.
+saved and closes the dialog. A failed non-authentication write retains ownership
+through a server-state reload; only that App is reconciled into the current UI snapshot.
 If the reload fails, `State unavailable` blocks new configuration actions until
 explicit Refresh succeeds. An existing draft or delete confirmation may Retry or
 Cancel under its retained owner, and a successful retry may conservatively leave
-the unavailable marker until Refresh. Session expiry returns to administrator
-login. These controls do not coordinate separate Console browsers or API clients.
+the unavailable marker until Refresh. A session-invalidating `401` returns to
+administrator login and discards idle drafts. Operations already in flight keep
+their owners until their handlers settle: successful App or Secret issuance
+retains its plaintext display through Saved and Done, and a failed operation
+releases its retained owner. An unrelated request losing administrator authority
+does not prove that pending issuance failed. These controls do not coordinate
+separate Console browsers or API clients.
 
 Protect runtime credentials and the database using deployment access controls.
 The database contains application definitions and SHA-256 digests of randomly

@@ -35,6 +35,7 @@ type AppPhase =
   | "editing"
   | "confirming"
   | "updating"
+  | "saving"
   | "deleting"
   | "issuing"
   | "revoking"
@@ -203,7 +204,14 @@ export const Console = ({
     editorOwner.current !== undefined ||
     secretEditorOwner.current !== undefined ||
     confirmationOwner.current !== undefined ||
-    credentialOwner.current !== undefined;
+    credentialOwner.current !== undefined ||
+    [...owners.current.values()].some(
+      ({ phase }) =>
+        phase === "issuing" ||
+        phase === "saving" ||
+        phase === "deleting" ||
+        phase === "revoking",
+    );
   const closeCredential = () => {
     const owner = credentialOwner.current;
     if (owner === undefined) return;
@@ -257,7 +265,7 @@ export const Console = ({
   const appStatus = (app: Application) => {
     const phase = operations.get(app.id);
     if (unavailable.has(app.id)) return "State unavailable";
-    return phase === "updating"
+    return phase === "updating" || phase === "saving"
       ? "Updating…"
       : phase === "deleting"
         ? "Deleting…"
@@ -270,11 +278,16 @@ export const Console = ({
     if (cause instanceof APIError && cause.status === 401) {
       setSession("signed-out");
       setLoaded(false);
-      if (editorOwner.current !== undefined) release(editorOwner.current);
-      if (confirmationOwner.current !== undefined)
-        release(confirmationOwner.current);
-      if (secretEditorOwner.current !== undefined)
-        release(secretEditorOwner.current);
+      // Discard unauthorized drafts; dispatched writes retain ownership until settlement.
+      for (const owner of [
+        editorOwner.current,
+        confirmationOwner.current,
+        secretEditorOwner.current,
+      ]) {
+        if (owner === undefined) continue;
+        const phase = owners.current.get(owner.key)?.phase;
+        if (phase === "editing" || phase === "confirming") release(owner);
+      }
       secretEditorOwner.current = undefined;
       setSecretEditor(undefined);
       editorOwner.current = undefined;
@@ -369,7 +382,7 @@ export const Console = ({
       throw new Error("No application is being edited.");
     if (owners.current.get(owner.key)?.phase !== "editing")
       throw new Error("Application changes are already being saved.");
-    transition(owner, "updating");
+    transition(owner, editor === "new" ? "issuing" : "saving");
     try {
       if (editor === "new") {
         if (!("initial_secret" in input))
@@ -396,7 +409,8 @@ export const Console = ({
     } catch (cause) {
       const failure =
         editor === "new" ? cause : await reconcileFailure(editor.id, cause);
-      transition(owner, "editing");
+      if (editorOwner.current === owner) transition(owner, "editing");
+      else release(owner);
       throw failure;
     }
   };
@@ -440,7 +454,7 @@ export const Console = ({
     if (owners.current.get(owner.key)?.phase !== "editing")
       throw new Error("Secret changes are already being saved.");
     const { app, secret } = secretEditor;
-    transition(owner, secret === "new" ? "issuing" : "updating");
+    transition(owner, secret === "new" ? "issuing" : "saving");
     secretConfigurationRevision.current += 1;
     try {
       if (secret === "new") {
@@ -476,7 +490,8 @@ export const Console = ({
       setError(undefined);
     } catch (cause) {
       const failure = await reconcileFailure(app.id, cause);
-      transition(owner, "editing");
+      if (secretEditorOwner.current === owner) transition(owner, "editing");
+      else release(owner);
       setSecretRevision((value) => value + 1);
       throw failure;
     }
@@ -503,7 +518,9 @@ export const Console = ({
           confirmationOwner.current = undefined;
         } catch (cause) {
           const failure = await reconcileFailure(app.id, cause);
-          transition(owner, "confirming");
+          if (confirmationOwner.current === owner)
+            transition(owner, "confirming");
+          else release(owner);
           throw failure;
         }
       },
@@ -530,7 +547,9 @@ export const Console = ({
           confirmationOwner.current = undefined;
         } catch (cause) {
           const failure = await reconcileFailure(app.id, cause);
-          transition(owner, "confirming");
+          if (confirmationOwner.current === owner)
+            transition(owner, "confirming");
+          else release(owner);
           setSecretRevision((value) => value + 1);
           throw failure;
         }
@@ -783,7 +802,7 @@ export const Console = ({
                       <div className="panel-heading">
                         <h2>Configuration</h2>
                         <span
-                          className={`badge ${unavailable.has(current.id) || operations.get(current.id) === "updating" || operations.get(current.id) === "deleting" ? "muted" : current.enabled ? "success" : "muted"}`}
+                          className={`badge ${unavailable.has(current.id) || operations.get(current.id) === "updating" || operations.get(current.id) === "saving" || operations.get(current.id) === "deleting" ? "muted" : current.enabled ? "success" : "muted"}`}
                         >
                           {appStatus(current)}
                         </span>
@@ -1152,7 +1171,7 @@ export const Console = ({
                                 </td>
                                 <td>
                                   <span
-                                    className={`badge ${unavailable.has(app.id) || operations.get(app.id) === "updating" || operations.get(app.id) === "deleting" ? "muted" : app.enabled ? "success" : "muted"}`}
+                                    className={`badge ${unavailable.has(app.id) || operations.get(app.id) === "updating" || operations.get(app.id) === "saving" || operations.get(app.id) === "deleting" ? "muted" : app.enabled ? "success" : "muted"}`}
                                   >
                                     <i />
                                     {appStatus(app)}

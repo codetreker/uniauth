@@ -52,8 +52,16 @@ IDs, and lifecycle state. Named revocation confirms the affected credential.
 The one-time display retains plaintext and per-App ownership until the operator
 marks it saved and closes the dialog. Secret editors and issuance, update, and
 revocation share the existing per-App operation owner with configuration changes
-and deletion. Production-component mockups use named active and revoked Secrets
-and representative multiline descriptions.
+and deletion. A session-invalidating `401` returns to login and discards idle
+drafts, while owners of operations already in flight remain until their handlers
+settle. An issuance authorized before expiry can return success after an
+unrelated request reports `401`; that response is not evidence of pending-write
+failure. Retaining ownership lets a successful App or Secret issuance expose its
+plaintext and complete Saved and Done. A failed pending operation releases its
+retained owner so login remains usable. This ordering changes local UI cleanup,
+not server session lifetime or authentication requirements. Production-component
+mockups use named active and revoked Secrets and representative multiline
+descriptions.
 
 The [gateway decision](../architecture/2026-10-12-authentication-gateway.md)
 continues to own administrator authority, credential verification, product user
@@ -82,6 +90,7 @@ metadata, and clients issuing or editing credentials must send the metadata JSON
 object. Product login, result retrieval, and SDK configuration remain unchanged.
 
 Per-App UI ownership prevents overlapping local actions and retains one-time
-plaintext until saved. It does not coordinate separate administrator browsers
-or introduce server-side version checks. The plaintext is still unavailable
+plaintext until saved, including successful pending issuance after another
+request invalidates the session. It does not coordinate separate administrator
+browsers or introduce server-side version checks. The plaintext is still unavailable
 through later metadata reads or edits.

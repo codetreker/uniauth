@@ -38,20 +38,24 @@ checks against foreign, null, or noncanonical request values.
 
 Configuration edits, enabled-state changes, deletion, and Secret creation, detail
 updates, and revocation share per-App operation ownership in the Console. Opening
-an editor or confirmation reserves the App; synchronous ownership checks prevent overlapping clicks before React renders
-updated disabled controls. New credentials retain their one-time plaintext
+an editor or confirmation reserves the App; synchronous ownership checks prevent
+overlapping clicks before React renders updated disabled controls. New credentials retain their one-time plaintext
 display and ownership until the operator marks the value saved and closes the
 dialog. Asynchronous operations retain ownership until they settle and reconcile
 successful authoritative responses before allowing another operation. Pending
 updates are shown as `Updating…`. On non-authentication configuration write
 failure, ownership remains held while server configuration is reloaded and only
-the affected App is reconciled. If the
-reload also fails, the App shows `State unavailable` and new configuration
+the affected App is reconciled. If the reload also fails, the App shows `State unavailable` and new configuration
 actions require an explicit successful Refresh. Existing drafts and delete
 confirmations retain ownership and allow Retry or Cancel; a successful owned
-retry may leave the unavailable marker until Refresh. Session expiry returns to
-administrator login. This prevents a stale edit snapshot from reversing a disable
-that has already committed without pretending a failed response proves the
+retry may leave the unavailable marker until Refresh. A session-invalidating
+`401` returns to administrator login and discards idle drafts, but owners of
+already in-flight operations survive until their handlers settle. Successful
+issuance retains its one-time display through Saved and Done; failed operations
+release the retained owner. The [Secret metadata decision](../feature/2026-10-13-secret-metadata.md)
+records why another request's `401` does not prove pending issuance failed.
+This prevents a stale edit snapshot from reversing a disable that has already
+committed without pretending a failed response proves the
 server rejected the write.
 
 Each login has separate product and provider state, browser binding, PKCE, and

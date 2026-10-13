@@ -51,7 +51,12 @@ If reconciliation fails, new actions remain blocked under `State unavailable`;
 already-owned drafts or confirmations may Retry or Cancel. Successful owned
 retries may leave that marker until explicit Refresh. Assertions distinguish
 server commit, response delivery, and verified current state rather than treating
-a failed response as proof that no write occurred.
+a failed response as proof that no write occurred. Session-invalidation
+regressions hold App and Secret issuance open while an unrelated App's recovery
+Refresh returns `401`. Successful pending issuance must keep its one-time
+plaintext accessible through Saved and Done; a failed pending operation must
+release ownership and leave login usable. Idle drafts are discarded without
+releasing owners still held by outstanding requests.
 
 SDK assertions exercise callback ambiguity, state mismatches, exact callback
 string preservation, HTTP Basic and JSON request construction, redirect rejection,

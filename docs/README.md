@@ -18,6 +18,7 @@
 | [Authentication gateway receipt](tasks/2026-10-12-authentication-gateway.md) | Original gateway implementation checks and verification limits. |
 | [Console correction receipt](tasks/2026-10-12-console-review-fixes.md) | Origin serialization and same-App mutation validation. |
 | [Administrator password receipt](tasks/2026-10-13-direct-administrator-password.md) | Direct-password boundaries, browser and production-container login, rotation, and unchanged repository gates. |
+| [Secret issuance ownership correction receipt](tasks/2026-10-13-secret-issuance-review-fix.md) | Session invalidation during pending issuance, recoverable one-time plaintext, ownership release, and component/browser validation. |
 | [Secret metadata receipt](tasks/2026-10-13-secret-metadata.md) | Metadata validation, active/revoked editing, migration preservation, concurrency, Console ownership, and desktop/mobile browser checks. |
 | [Administrator password configuration receipt](tasks/2026-10-13-administrator-password-review-fixes.md) | Empty template, single-line password validation, public caller probes, and production Compose checks. |
 | [Normalized identity receipt](tasks/2026-10-13-normalized-identity.md) | Mapping, handover, coverage, and browser validation for the standard identity contract. |
