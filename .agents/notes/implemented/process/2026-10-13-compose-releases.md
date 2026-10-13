@@ -15,9 +15,12 @@ restricting image publication and dependent deployments to `main`. Operators
 choose when source changes are ready for publication and deployment; merging a
 source change does not itself start a release.
 
-The workflow builds one image with a tag containing `sha-` followed by the
-first 16 characters of the source commit hash. Anonymous pull verification,
-staging, and prod receive the same tag reference. The
+The workflow builds one image with a tag in `<yymmdd>-<seq>-<hash-8>` format.
+The tag combines the allocation step's UTC date, the next sequence selected from
+that date's published tags, and the first eight source commit characters.
+Anonymous pull verification, staging, and prod receive the same tag reference.
+The existing workflow concurrency group serializes allocation, publication, and
+deployment across release runs. The
 [tag-reference decision](2026-10-13-tag-image-references.md) supersedes the
 original selection of the build digest and owns image-reference selection.
 Deployment copies `deploy/docker-compose.yml` as `docker-compose.yml` to the

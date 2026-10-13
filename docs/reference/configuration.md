@@ -211,6 +211,10 @@ active documents and skill metadata, formatting, Go vet for service, SDK, and
 integration modules,
 frontend/SDK types, and frontend/SDK formatting.
 
+`make test-release` runs Python standard-library tests for UTC release dates,
+published-tag sequences, registry pagination, and failure handling. `make test`
+includes this gate; these fixtures do not publish an image or deploy a service.
+
 `make browser` runs Playwright against a fresh local service and the interactive
 mockup. Use an existing Chromium executable with
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, or place a temporary Playwright browser install

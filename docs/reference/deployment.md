@@ -10,18 +10,37 @@ gh workflow run release.yml --ref main
 The build job requires `refs/heads/main`; selecting another ref skips the build
 and dependent deployments. Pushes to `main` do not start a release.
 
-The build job derives one image reference:
-`ghcr.io/codetreker/uniauth:sha-COMMIT16`, where `COMMIT16` is the first 16
-characters of the source commit hash. It publishes that tag for Linux AMD64 and
-ARM64 using `GITHUB_TOKEN` with `packages: write` permission. A separate Docker
-config verifies anonymous pull of that same tag reference before deployment.
-The build job's `image` output passes it unchanged to staging and prod.
+## Release image reference
 
-A tag is a mutable registry reference. Publishing the same commit again uses
-the same tag, and equal tag references do not themselves guarantee equal image
-content across pulls. The
-[tag-reference decision](../../.agents/notes/implemented/process/2026-10-13-tag-image-references.md)
-owns this image-selection rule and its consequences.
+The build job allocates a tag in `<yymmdd>-<seq>-<hash-8>` format and derives
+one full reference, such as `ghcr.io/codetreker/uniauth:261013-3-a1b2c3d4`.
+`yymmdd` is the UTC date captured once when the allocation step runs, and
+`hash-8` is the first eight characters of the source commit hash. The date is
+not the date when the workflow was queued or created.
+
+The allocator queries all published registry tags, following every pagination
+page, with authenticated GitHub actor and `GITHUB_TOKEN` credentials. For tags
+matching the current date and complete format, `seq` is the largest numeric
+sequence plus one; without a match it is `1`. Older `sha-` tags do not
+participate. Registry authentication, network, and malformed-response failures
+stop the build. The existing workflow concurrency group serializes releases
+through image publication and deployment.
+
+Sequences track currently published tags. A failure before publication can
+leave its sequence available for a later attempt. A published tag contributes
+to subsequent allocation even if deployment fails. Rerunning the full build
+allocates the next published sequence, including when rebuilding the same
+commit. A new UTC date starts at `1` when it has no matching published tags.
+
+The workflow publishes the allocated tag for Linux AMD64 and ARM64 using
+`GITHUB_TOKEN` with `packages: write` permission. A separate Docker config
+verifies anonymous pull of that same reference before deployment. The build
+job's `image` output passes it unchanged to staging and prod. Tags are mutable;
+matching references do not themselves establish identical content across pulls.
+The [tag-reference decision](../../.agents/notes/implemented/process/2026-10-13-tag-image-references.md)
+owns allocation, image selection, and their consequences.
+
+## Deployment
 
 Each deployment sets the image and environment name in
 [deploy/docker-compose.yml](../../deploy/docker-compose.yml), copies that file
@@ -51,7 +70,7 @@ job prevents staging and prod from starting with a private image.
 
 | Setting | Kind | Purpose |
 | --- | --- | --- |
-| `GITHUB_TOKEN` | Automatically provided token | Publishes the repository's GHCR package. |
+| `GITHUB_TOKEN` | Automatically provided token | Authenticates registry tag allocation and publishes the repository's GHCR package. |
 | `OC_VM_HOST` | Organization/repository variable | VM SSH host. |
 | `OC_VM_USER` | Organization/repository variable | VM SSH user. |
 | `OC_VM_SSH_KEY` | Secret | VM SSH private key. |
