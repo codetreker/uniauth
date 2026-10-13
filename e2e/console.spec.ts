@@ -384,10 +384,15 @@ test("administrator manages applications and one-time credentials against the se
   expect(resetCredential.id).not.toBe(replacement.id);
   await expect(
     page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toContainText("Revoked");
+  ).toHaveCount(0);
   await expect(
     page.getByRole("row").filter({ hasText: resetCredential.id }),
   ).toContainText("Active");
+  await page.getByRole("tab", { name: /^Disabled/ }).click();
+  await expect(
+    page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("Revoked");
+  await page.getByRole("tab", { name: /^Active/ }).click();
   const retrieveWith = async (secret: string) => {
     const response = await context.request.post("/auth/result", {
       headers: {
@@ -415,15 +420,19 @@ test("administrator manages applications and one-time credentials against the se
     .getByRole("button", { name: "Revoke secret", exact: true })
     .click();
   await expect(revoke).not.toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: first.id })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("row").filter({ hasText: resetCredential.id }),
+  ).toContainText("Active");
+  await page.getByRole("tab", { name: /^Disabled/ }).click();
   await expect(
     page.getByRole("row").filter({ hasText: first.id }),
   ).toContainText("Revoked");
   await expect(
     page.getByRole("row").filter({ hasText: replacement.id }),
   ).toContainText("Revoked");
-  await expect(
-    page.getByRole("row").filter({ hasText: resetCredential.id }),
-  ).toContainText("Active");
   await page
     .getByRole("button", {
       name: `Edit details for secret ${first.id}`,
@@ -452,6 +461,13 @@ test("administrator manages applications and one-time credentials against the se
       exact: true,
     })
     .click();
+  await expect(page.getByRole("tab", { name: /^Active/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("row").filter({ hasText: resetCredential.id }),
+  ).toContainText("Active");
   await expect(page.getByText(first.secret, { exact: true })).toHaveCount(0);
   await expect(page.getByText(replacement.secret, { exact: true })).toHaveCount(
     0,
@@ -486,6 +502,7 @@ test("administrator manages applications and one-time credentials against the se
       }),
     ]),
   );
+  await page.getByRole("tab", { name: /^Disabled/ }).click();
   await expect(
     page.getByRole("row").filter({ hasText: first.id }),
   ).toContainText("Retired production");
