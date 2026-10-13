@@ -52,8 +52,12 @@ complete unknown source JSON. Go raw source values and JavaScript `rawJSON`
 retain numeric representations that ordinary parsed JavaScript numbers cannot.
 Consumers import the standalone Go module with `GOWORK=off` and install the
 packed JavaScript tarball, then check bare-import runtime behavior and exported
-TypeScript declarations. These checks validate distributable content, not an
-unreleased registry version. The
+TypeScript declarations. The temporary JavaScript consumer installs only the
+local SDK tarball. Type checking uses the pinned compiler and Node ambient types
+from frozen SDK setup, while SDK declarations and runtime imports resolve from
+the consumer to the packed artifact. No source aliases or registry metadata are
+needed, and repository dependency setup stays frozen. These checks validate
+distributable content, not an unreleased registry version. The
 [SDK decision](../feature/2026-10-13-product-sdks.md) owns the client package
 contracts.
 

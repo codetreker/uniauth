@@ -1,12 +1,5 @@
 import { spawn } from "node:child_process";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -64,9 +57,6 @@ try {
   );
   if (archives.length !== 1)
     throw new Error("Expected exactly one packed SDK archive.");
-  const manifest = JSON.parse(
-    await readFile(join(packageRoot, "package.json"), "utf8"),
-  );
   await writeFile(
     join(consumer, "package.json"),
     JSON.stringify({
@@ -74,10 +64,6 @@ try {
       private: true,
       type: "module",
       dependencies: { "@codetreker/uniauth": `file:../packed/${archives[0]}` },
-      devDependencies: {
-        typescript: manifest.devDependencies.typescript,
-        "@types/node": manifest.devDependencies["@types/node"],
-      },
     }),
   );
   await writeFile(
@@ -89,6 +75,7 @@ try {
         moduleResolution: "NodeNext",
         lib: ["ES2024"],
         types: ["node"],
+        typeRoots: [join(packageRoot, "node_modules", "@types")],
         strict: true,
         exactOptionalPropertyTypes: true,
         skipLibCheck: false,
@@ -114,7 +101,10 @@ void [url, result, errors];
   await writeFile(
     join(consumer, "consumer.mjs"),
     `import assert from "node:assert/strict";
+import { realpath } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { createClient, generateState, parseCallback } from "@codetreker/uniauth";
+assert.equal(await realpath(fileURLToPath(import.meta.resolve("@codetreker/uniauth"))), await realpath(fileURLToPath(new URL("./node_modules/@codetreker/uniauth/dist/index.js", import.meta.url))));
 const rawJSON = '{ "provider":"github", "subject":"github:1", "sources":{"future":false,"large":9007199254740993} }';
 const client = createClient({ baseURL: "https://auth.example", appID: "product", appSecret: "secret", fetch: async () => new Response(rawJSON, { headers: { "Content-Type": "application/json" } }) });
 const state = generateState();
@@ -132,12 +122,19 @@ console.log("Packed SDK ESM consumer passed.");
       "install",
       "--offline",
       "--ignore-scripts",
+      "--no-frozen-lockfile",
       "--store-dir",
       join(temporaryRoot, "pnpm-store"),
     ],
     consumer,
   );
-  await run("pnpm", ["exec", "tsc", "-p", "tsconfig.json"], consumer);
+  // The consumer owns SDK resolution. Only the pinned compiler and Node ambient
+  // types come from frozen setup, avoiding a second registry-dependent toolchain.
+  await run(
+    "pnpm",
+    ["exec", "tsc", "-p", join(consumer, "tsconfig.json")],
+    packageRoot,
+  );
   await run("node", ["consumer.mjs"], consumer);
 } finally {
   await rm(temporary, { recursive: true, force: true });

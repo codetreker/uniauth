@@ -168,8 +168,14 @@ pnpm test:package
 `test:package` packs the actual tarball, installs it without scripts into a fresh
 repository-local `.tmp/` consumer using the repository's offline pnpm store,
 checks strict TypeScript `NodeNext` declarations with `skipLibCheck: false`, and
-runs an ESM import by package name. Temporary consumer files are removed on both
-success and failure. Seed `.tmp/pnpm-store` with the SDK development dependencies
+runs an ESM import by package name. The consumer installs only the SDK tarball,
+whose package has no runtime dependencies. Type checking uses the SDK's pinned
+compiler and Node ambient types from frozen dependency setup; SDK imports still
+resolve from the consumer to the installed tarball, without source aliases.
+This avoids registry metadata resolution for a second compiler installation.
+Only the temporary consumer permits lockfile generation for its local tarball;
+repository dependency setup remains frozen. Temporary consumer files are
+removed on both success and failure. Install the SDK development dependencies
 before running this offline check.
 
 The [service API reference](../../docs/reference/api.md) owns the downstream HTTP

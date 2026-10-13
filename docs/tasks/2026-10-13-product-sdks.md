@@ -30,7 +30,7 @@ package, file, or function exclusions.
 | Go SDK tests | 68 cases, including 14 top-level tests; 99.3% coverage with race detection. All functions exceeded 95%. |
 | Console tests | All 16 passed. |
 | JavaScript SDK tests | All 13 passed, including callback ambiguity, exact JSON, deadlines, transport failures, and redirect rejection. |
-| JavaScript package consumer | Actual tarball, bare ESM import, and strict NodeNext declarations with `skipLibCheck: false` passed. Offline installation also passed under `CI=true`. |
+| JavaScript package consumer | Actual tarball, bare ESM import, and strict NodeNext declarations with `skipLibCheck: false` passed. Offline installation also passed under `CI=true` with registry metadata absent. |
 | Go package consumer | An external module imported the SDK with `GOWORK=off`; its module graph contains only the consumer and SDK. |
 | Gateway integration | Both Go and JavaScript integration tests passed with race detection in 1.248 seconds. |
 | Browser scenarios | All three existing Console and desktop/mobile mockup scenarios passed against the freshly built executable in 14.3 seconds. |
@@ -51,6 +51,15 @@ it and dropped the response. Redirect handling did not mutate the caller's Go
 client. Context, timeout, network, and body-read causes remained observable.
 Both clients accepted complete identity responses larger than 8 MiB. JavaScript
 retained the exact raw JSON while documenting native numeric precision limits.
+
+The packed consumer installs only the local SDK tarball. Its strict declaration
+check uses the pinned compiler and Node ambient types from frozen SDK setup; SDK
+imports resolve from the consumer to the installed artifact without source
+aliases. This avoids resolving another compiler or its optional native package
+in a fresh environment with no registry metadata. The check reproduced the
+missing-metadata and missing-native-compiler failures before correction and
+passed with both metadata caches absent afterward. Repository lockfiles and
+frozen setup remain enforced.
 
 ## Verification limits
 

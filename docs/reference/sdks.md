@@ -217,6 +217,9 @@ present in the distributable artifact.
 
 Repository gates validate standalone Go coverage and external Go imports, and
 JavaScript runtime behavior, exported declarations, and packed bare imports.
+The temporary consumer installs only the SDK tarball; its declaration check uses
+the pinned compiler and Node ambient types from frozen SDK setup. SDK imports
+resolve to the installed artifact without source aliases or registry metadata.
 Integration tests run both clients against the actual Go authentication handler,
 SQLite App registry, and browser-bound provider callback using a fixture provider.
 They check wrong credentials and App ownership without consumption, one-time
