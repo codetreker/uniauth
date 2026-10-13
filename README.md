@@ -45,8 +45,9 @@ variables and provider registration callbacks.
 
 Start the Release workflow manually on `main` from GitHub Actions or with
 `gh workflow run release.yml --ref main`. Its Actions run title includes the
-run number, deployment flow, branch, and initiating actor, for example
-`Release #12 · staging → prod · main · @alice`. It publishes to
+run number, deployment flow, branch, initiating actor, and full Git commit hash:
+`Release #<run-number> · staging → prod · <branch> · @<actor> · <commit>`.
+It publishes to
 `ghcr.io/codetreker/uniauth` with tags in `<yymmdd>-<seq>-<hash-8>` format, such
 as `261013-3-a1b2c3d4`. The allocation step uses the current UTC date, the next
 sequence from that date's published registry tags, and the first eight source

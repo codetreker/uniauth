@@ -1,5 +1,5 @@
 name: Release
-run-name: 'Release #${{ github.run_number }} · staging → prod · ${{ github.ref_name }} · @${{ github.actor }}'
+run-name: 'Release #${{ github.run_number }} · staging → prod · ${{ github.ref_name }} · @${{ github.actor }} · ${{ github.sha }}'
 
 on:
   workflow_dispatch:

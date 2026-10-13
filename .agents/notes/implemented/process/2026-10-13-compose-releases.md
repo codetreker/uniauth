@@ -16,11 +16,11 @@ choose when source changes are ready for publication and deployment; merging a
 source change does not itself start a release.
 
 Actions run titles identify the workflow run number, staging-to-prod flow,
-branch, and initiating actor, such as
-`Release #12 · staging → prod · main · @alice`. The title is defined with
-`run-name` from the supported GitHub context; the run number and original actor
-remain stable on a rerun. This identifies a pending run before the build job
-allocates its image tag.
+branch, initiating actor, and full source Git commit:
+`Release #<run-number> · staging → prod · <branch> · @<actor> · <commit>`.
+The title is defined with `run-name` from the supported GitHub context; the run
+number, original actor, and commit remain stable on a rerun. This identifies a
+pending run before the build job allocates its image tag.
 
 The workflow builds one image with a tag in `<yymmdd>-<seq>-<hash-8>` format.
 The tag combines the allocation step's UTC date, the next sequence selected from

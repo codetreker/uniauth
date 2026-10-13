@@ -11,11 +11,11 @@ The build job requires `refs/heads/main`; selecting another ref skips the build
 and dependent deployments. Pushes to `main` do not start a release.
 
 Each Actions run title has the form
-`Release #<run-number> · staging → prod · <branch> · @<actor>`, for example
-`Release #12 · staging → prod · main · @alice`. The number is GitHub's workflow
-run number, and the actor is the original initiator. Rerunning an existing run
-retains those values. The daily image-tag sequence is allocated separately by
-the build job.
+`Release #<run-number> · staging → prod · <branch> · @<actor> · <commit>`.
+The number is GitHub's workflow run number, the actor is the original initiator,
+and the commit is the full Git commit hash from `github.sha`. Rerunning an
+existing run retains those values. The daily image-tag sequence is allocated
+separately by the build job, whose tag uses the commit's first eight characters.
 
 ## Release image reference
 
