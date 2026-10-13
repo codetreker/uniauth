@@ -6,7 +6,8 @@ AMD64 and ARM64. Staging and prod use the same image digest.
 
 Each deployment sets the image and environment name in
 [deploy/docker-compose.yml](../../deploy/docker-compose.yml), copies that file
-to `DEPLOY_PATH` as `docker-compose.yml`, and runs `cd "$DEPLOY_PATH" && docker compose up -d`. Prod starts after staging's
+as `docker-compose.yml` into `STAGING_DEPLOY_PATH` or `PROD_DEPLOY_PATH`,
+then runs `docker compose up -d` in that directory. Prod starts after staging's
 command succeeds. Startup success does not establish application readiness.
 GitHub Environment protection rules can require approval for prod.
 
@@ -20,11 +21,13 @@ GitHub Environment protection rules can require approval for prod.
 | `OC_VM_HOST` | Organization/repository variable | VM SSH host. |
 | `OC_VM_USER` | Organization/repository variable | VM SSH user. |
 | `OC_VM_SSH_KEY` | Secret | VM SSH private key. |
-| `DEPLOY_PATH` | `staging` / `prod` Environment variable | Deployment directory on the VM. |
+| `STAGING_DEPLOY_PATH` | Organization/repository variable | Staging deployment directory on the VM. |
+| `PROD_DEPLOY_PATH` | Organization/repository variable | Production deployment directory on the VM. |
 
 ## VM configuration
 
-Prepare a separate deployment directory for each environment. The SSH user needs
+Set `STAGING_DEPLOY_PATH` and `PROD_DEPLOY_PATH` to different directories
+and prepare both on the VM. The SSH user needs
 write access to these directories and permission to run Docker Compose. Docker
 must already be logged into the Registry with pull access to `default/uniauth`.
 Docker Compose and tar must be installed.
