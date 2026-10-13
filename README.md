@@ -18,24 +18,23 @@ Python 3 is used by the documentation check.
 ```sh
 make setup
 make build
-.tmp/bin/uniauth hash-password
 ```
 
-The password command reads stdin. On a terminal it hides input; its output is an
-Argon2id PHC hash. It works independently of service configuration and accepts no
-password argument. Put the generated hash and provider credentials in deployment
-configuration. For local development:
+Set the administrator password and provider credentials in deployment environment
+variables. For local development:
 
 ```sh
 export UNIAUTH_PUBLIC_URL=http://127.0.0.1:8080
 export UNIAUTH_ALLOW_LOOPBACK_HTTP=true
 export UNIAUTH_DATABASE_PATH=./data/uniauth.db
-export UNIAUTH_ADMIN_PASSWORD_HASH='YOUR_GENERATED_ARGON2ID_PHC_HASH'
+export UNIAUTH_ADMIN_PASSWORD='YOUR_ADMINISTRATOR_PASSWORD'
 mkdir -p data
 .tmp/bin/uniauth serve
 ```
 
-Open `/console/` and sign in with the password used to generate the hash.
+Open `/console/` and sign in with the configured password. It must be a single
+line containing 1–1024 bytes, with no carriage return or line feed. Spaces, dollar
+signs, and Unicode are literal password characters.
 Configure providers before creating usable integrations; each provider requires
 its own Client ID and Client Secret pair. Production requires HTTPS, normally
 terminated by a reverse proxy in front of the service. See the

@@ -60,7 +60,7 @@ callback URL size limits and shared encryption-key lifecycle complexity.
 
 | Component | Responsibility |
 | --- | --- |
-| `cmd/uniauth/` | Configuration, password-hash command, startup, signals. |
+| `cmd/uniauth/` | Configuration, startup, signals. |
 | `internal/server/` | Provider composition, HTTP routing, request logging, shutdown. |
 | `internal/apps/` | SQLite migrations, App configuration, credential lifecycle. |
 | `internal/providers/` | Three real provider adapters, source collection, and standard identity-field mapping. |
@@ -93,17 +93,22 @@ Client ID/Secret pairs come from deployment configuration and are distinct from
 Console-generated product credentials. Missing providers are unavailable rather
 than given fallback credentials.
 
-The Console authenticates a deployment-configured Argon2id password hash. A
-standalone CLI reads the password from stdin, hides terminal input, and outputs
-the PHC hash without password arguments. An eight-hour in-memory administrator
+The Console compares login passwords exactly against `UNIAUTH_ADMIN_PASSWORD`,
+a single-line deployment secret containing 1–1024 bytes, with no CR or LF.
+Deployment supplies the password directly so an operator can configure and rotate
+it without a separate credential-generation step. Spaces, dollar signs, and
+Unicode are preserved. The Console password control removes CR and LF, so
+rejecting them at startup keeps every accepted password usable in the UI. The
+[administrator password decision](../../.agents/notes/implemented/simplification/2026-10-13-direct-administrator-password.md)
+owns this choice and its deployment costs. An eight-hour in-memory administrator
 session uses an HttpOnly, SameSite=Strict cookie, Secure under HTTPS. Mutations
 require exact Origin and CSRF validation. The expected Console origin is derived
 from the configured URL using lowercase IDNA domain names, canonical IPv6
 literals, and normalized ports with default ports omitted. Incoming Origin
 headers are compared exactly without normalization, accepting normal browser
 serialization while rejecting noncanonical or foreign headers. Login attempts
-and concurrent password verification are bounded. Restart invalidates these
-administrator sessions.
+are rate-limited. Changing the configured password requires a restart, which
+invalidates these administrator sessions.
 
 Console configuration editing, enable/disable changes, and deletion share one
 operation owner for each App. Ownership is acquired before asynchronous work or

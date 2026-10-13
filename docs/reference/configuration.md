@@ -2,16 +2,13 @@
 
 `uniauth serve` reads deployment environment variables and starts one Go process.
 With no command, `serve` is selected. `uniauth help` prints usage.
-`uniauth hash-password` reads a password from stdin and prints an Argon2id PHC
-hash without requiring service configuration. Arguments containing passwords
-are not supported.
 
 ## Environment
 
 | Variable | Required or default | Meaning |
 | --- | --- | --- |
 | `UNIAUTH_PUBLIC_URL` | Required | External absolute origin, such as `https://auth.example`; no path other than `/`, query, fragment, or user information. |
-| `UNIAUTH_ADMIN_PASSWORD_HASH` | Required | Canonical Argon2id PHC hash for the administrator password. |
+| `UNIAUTH_ADMIN_PASSWORD` | Required | Single-line administrator password containing 1–1024 bytes, with no CR or LF; preserved exactly. |
 | `UNIAUTH_LISTEN_ADDR` | `:8080` | HTTP listener address in `host:port` form. |
 | `UNIAUTH_DATABASE_PATH` | `uniauth.db` | SQLite database path; parent directory must exist. |
 | `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for loopback public origins and registered product callbacks. |
@@ -59,12 +56,31 @@ The database contains application definitions and SHA-256 digests of randomly
 generated 256-bit product Secrets. It contains no end-user records, provider
 tokens, identity results, login transactions, or administrator sessions.
 
-The password-hashing command uses Argon2id with 64 MiB memory, three iterations,
-two lanes, a 16-byte salt, and a 32-byte key. Startup accepts canonical Argon2id
-hashes with bounded parameters: memory 19,456–131,072 KiB, iterations 1–10,
-parallelism 1–16, salt 16–64 bytes, and key 32–64 bytes. Malformed or unsupported
-hashes fail startup. Changing the deployment password requires a restart, which
-also invalidates administrator sessions and all pending product logins.
+The administrator password is read directly from `UNIAUTH_ADMIN_PASSWORD` and
+compared exactly with Console login input. It must be a single line: empty values,
+values longer than 1024 bytes, and values containing carriage return (CR) or line
+feed (LF) fail startup. Spaces, dollar signs, and Unicode are preserved; no
+trimming is applied. The Console password control removes CR and LF, making
+multiline passwords unusable through that interface. The deployment environment
+holds the password, and SQLite does not store it. Changing it requires a restart,
+which invalidates administrator sessions, pending product logins, and completed
+results.
+
+For an existing deployment, remove `UNIAUTH_ADMIN_PASSWORD_HASH` from the VM-owned
+`.env` and supply the actual login password:
+
+```dotenv
+UNIAUTH_ADMIN_PASSWORD='YOUR_ADMINISTRATOR_PASSWORD'
+```
+
+The [deployment template](../../deploy/.env.example) leaves this variable empty.
+Set an administrator password before starting the service; copying the template
+unchanged fails startup. Use single quotes in Compose `.env` files to preserve
+literal dollar signs. Deploy an image built from the direct-password
+implementation, then recreate the container with
+`docker compose up -d --force-recreate`. The old hash variable is
+not read by that image. App configuration and product Secret digests remain
+unchanged. The [deployment reference](deployment.md) owns the release procedure.
 
 ## Product SDK configuration
 
@@ -140,7 +156,6 @@ The following limits are fixed by service composition:
 | Each upstream response | 8 MiB; combined GitHub email response pages also limited to 8 MiB. |
 | Administrator session | 8 hours; at most 1,000 live sessions. |
 | Administrator login rate | Burst of 5 attempts, then 1 per second globally. |
-| Concurrent administrator password verifications | 2. |
 | HTTP request body | 1 MiB globally, with smaller endpoint-specific limits. |
 | HTTP header size | 16 KiB. |
 | HTTP read-header / read / write / idle timeout | 5 / 15 / 45 / 60 seconds. |

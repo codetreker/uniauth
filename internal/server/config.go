@@ -17,7 +17,7 @@ type Config struct {
 	PublicURL         string
 	ListenAddr        string
 	DatabasePath      string
-	AdminPasswordHash string
+	AdminPassword     string
 	AllowLoopbackHTTP bool
 	Microsoft         Credentials
 	Google            Credentials
@@ -26,10 +26,10 @@ type Config struct {
 
 func LoadConfig(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		PublicURL:         getenv("UNIAUTH_PUBLIC_URL"),
-		ListenAddr:        getenv("UNIAUTH_LISTEN_ADDR"),
-		DatabasePath:      getenv("UNIAUTH_DATABASE_PATH"),
-		AdminPasswordHash: getenv("UNIAUTH_ADMIN_PASSWORD_HASH"),
+		PublicURL:     getenv("UNIAUTH_PUBLIC_URL"),
+		ListenAddr:    getenv("UNIAUTH_LISTEN_ADDR"),
+		DatabasePath:  getenv("UNIAUTH_DATABASE_PATH"),
+		AdminPassword: getenv("UNIAUTH_ADMIN_PASSWORD"),
 	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8080"
@@ -73,8 +73,8 @@ func (cfg Config) validate() error {
 	if cfg.DatabasePath == "" {
 		return errors.New("UNIAUTH_DATABASE_PATH is required")
 	}
-	if cfg.AdminPasswordHash == "" {
-		return errors.New("UNIAUTH_ADMIN_PASSWORD_HASH is required")
+	if len(cfg.AdminPassword) == 0 || len(cfg.AdminPassword) > 1024 || strings.ContainsAny(cfg.AdminPassword, "\r\n") {
+		return errors.New("UNIAUTH_ADMIN_PASSWORD must contain between one and 1024 bytes without CR or LF")
 	}
 	for _, entry := range []struct {
 		name        string
