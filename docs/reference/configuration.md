@@ -32,6 +32,11 @@ enabled `localhost` or loopback IP development addresses. The server listener
 uses HTTP; terminate TLS at a reverse proxy and configure the actual external
 origin. The service does not infer its public origin from forwarded headers.
 
+The [Docker Compose deployment reference](deployment.md) defines the
+`build → staging → prod` release flow, GitHub settings, VM runtime files, and
+isolated persistent volumes. Its raw env files preserve literal credential values;
+the Compose definition sets the listener and database path for the container.
+
 Console request-origin validation derives the browser-serialized origin from the
 configured URL. Domain names use IDNA ASCII conversion and lowercase; valid IPv6
 literals are serialized canonically. Ports are decimal without leading zeros;
@@ -172,7 +177,8 @@ blocks covered, and enables race detection with a three-minute test timeout.
 No packages, files, or functions are excluded; inherited policy override
 variables are cleared by the coverage script. `make test` also runs Console unit
 tests. `make check` validates active documents and skill metadata, formatting,
-Go vet, frontend types, and frontend formatting.
+Go vet, frontend types and formatting, and deployment-script syntax and ShellCheck
+results. Python 3 and ShellCheck are required for these checks.
 
 `make browser` runs Playwright against a fresh local service and the interactive
 mockup. Use an existing Chromium executable with
@@ -180,3 +186,8 @@ mockup. Use an existing Chromium executable with
 under `.tmp/`. The browser harness uses local loopback HTTP, fixture credentials,
 isolated runtime data, one worker, and no automatic retries. Browser scenarios
 do not prove an interactive Microsoft, Google, or GitHub login.
+
+`make test-release` requires Docker Engine and Compose 2.30 or later. It builds
+the container and verifies readiness, embedded assets, literal password hashes,
+restart persistence/session invalidation, and environment volume isolation.
+See the deployment reference for its fixture cleanup and verification limits.

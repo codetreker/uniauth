@@ -1,0 +1,41 @@
+name: Deploy environment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      image:
+        required: true
+        type: string
+      revision:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision }}
+      - name: Deploy and wait for readiness
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          UNIAUTH_IMAGE: ${{ inputs.image }}
+          UNIAUTH_HOST_PORT: ${{ vars.UNIAUTH_HOST_PORT }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          OC_VM_HOST: ${{ vars.OC_VM_HOST }}
+          OC_VM_USER: ${{ vars.OC_VM_USER }}
+          OC_VM_SSH_KEY: ${{ secrets.OC_VM_SSH_KEY }}
+          OC_VM_KNOWN_HOSTS: ${{ vars.OC_VM_KNOWN_HOSTS }}
+          REGISTRY: ${{ vars.REGISTRY }}
+          HARBOR_USER: ${{ vars.HARBOR_USER }}
+          HARBOR_API_TOKEN: ${{ secrets.HARBOR_API_TOKEN }}
+        run: bash scripts/deploy.sh
