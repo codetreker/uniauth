@@ -5,8 +5,8 @@ runs on `main`. Build publishes `REGISTRY/default/uniauth:sha-COMMIT` for Linux
 AMD64 and ARM64. Staging and prod use the same image digest.
 
 Each deployment sets the image and environment name in
-[docker-compose.yml](../../docker-compose.yml), copies that file to `DEPLOY_PATH`,
-and runs `cd "$DEPLOY_PATH" && docker compose up -d`. Prod starts after staging's
+[deploy/docker-compose.yml](../../deploy/docker-compose.yml), copies that file
+to `DEPLOY_PATH` as `docker-compose.yml`, and runs `cd "$DEPLOY_PATH" && docker compose up -d`. Prod starts after staging's
 command succeeds. Startup success does not establish application readiness.
 GitHub Environment protection rules can require approval for prod.
 

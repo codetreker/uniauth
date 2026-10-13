@@ -10,8 +10,9 @@ with persistent application configuration isolated between environments.
 ## Decision
 
 The [release workflow](../../../../.github/workflows/release.yml) builds one image
-and deploys its digest to staging, then prod. Deployment copies `docker-compose.yml`
-to the environment's `DEPLOY_PATH` and runs `docker compose up -d` there.
+and deploys its digest to staging, then prod. Deployment copies
+`deploy/docker-compose.yml` as `docker-compose.yml` to the environment's
+`DEPLOY_PATH` and runs `docker compose up -d` there.
 GitHub owns image publication and file transfer. The VM owns registry login,
 `.env`, persistent volumes, and Caddy configuration.
 

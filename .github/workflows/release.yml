@@ -47,14 +47,15 @@ jobs:
       - name: Set release image
         env:
           UNIAUTH_IMAGE: ${{ needs.build.outputs.image }}
-        run: sed -i -e "s|__IMAGE__|$UNIAUTH_IMAGE|" -e 's|__ENVIRONMENT__|staging|' docker-compose.yml
+        run: sed -i -e "s|__IMAGE__|$UNIAUTH_IMAGE|" -e 's|__ENVIRONMENT__|staging|' deploy/docker-compose.yml
       - name: Copy Compose file
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ vars.OC_VM_HOST }}
           username: ${{ vars.OC_VM_USER }}
           key: ${{ secrets.OC_VM_SSH_KEY }}
-          source: docker-compose.yml
+          source: deploy/docker-compose.yml
+          strip_components: 1
           target: ${{ vars.DEPLOY_PATH }}
       - name: Start services
         uses: appleboy/ssh-action@v1.2.5
@@ -76,14 +77,15 @@ jobs:
       - name: Set release image
         env:
           UNIAUTH_IMAGE: ${{ needs.build.outputs.image }}
-        run: sed -i -e "s|__IMAGE__|$UNIAUTH_IMAGE|" -e 's|__ENVIRONMENT__|prod|' docker-compose.yml
+        run: sed -i -e "s|__IMAGE__|$UNIAUTH_IMAGE|" -e 's|__ENVIRONMENT__|prod|' deploy/docker-compose.yml
       - name: Copy Compose file
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ vars.OC_VM_HOST }}
           username: ${{ vars.OC_VM_USER }}
           key: ${{ secrets.OC_VM_SSH_KEY }}
-          source: docker-compose.yml
+          source: deploy/docker-compose.yml
+          strip_components: 1
           target: ${{ vars.DEPLOY_PATH }}
       - name: Start services
         uses: appleboy/ssh-action@v1.2.5
