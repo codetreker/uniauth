@@ -51,7 +51,7 @@ The [normalized identity decision](../architecture/2026-10-13-normalized-identit
 owns the server mapping and wire format.
 
 Go returns normalized scalar values using `ID`, nullable profile pointers, and
-complete `Origin` as `json.RawMessage`, with the entire response in `RawJSON`.
+complete `Origin` as `map[string]json.RawMessage`, with the entire response in `RawJSON`.
 JavaScript returns the exact snake-case fields and parsed unknown original data
 under `origin`, with authoritative `rawJSON`, because ordinary numeric parsing
 cannot retain every JSON integer or decimal exactly.

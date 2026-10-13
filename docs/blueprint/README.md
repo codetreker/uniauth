@@ -184,7 +184,7 @@ fields or incompatible JSON types produce protocol errors; nullable strings,
 nullable verification, and explicit `false` are returned without substitution.
 The SDKs expose the server's normalized profile without deriving fields from
 `origin` or retaining old response aliases. Go exposes `ID`, nullable profile
-pointers, `Origin` as `json.RawMessage`, and the entire body as `RawJSON`.
+pointers, `Origin` as `map[string]json.RawMessage`, and the entire body as `RawJSON`.
 JavaScript exposes the exact snake-case wire fields with unknown original data
 under `origin` and authoritative `rawJSON`; ordinary parsed JavaScript numbers
 cannot preserve every integer or decimal exactly. The

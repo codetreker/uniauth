@@ -164,7 +164,7 @@ contractual.
 SDKs validate that all seven fields are present with these types and retain
 nullable values and explicit `false`. They expose the server's profile values
 without deriving replacements from `origin`. Go retains `origin` as `Origin`
-(`json.RawMessage`) and the entire received body as `RawJSON`; JavaScript retains
+(`map[string]json.RawMessage`) and the entire received body as `RawJSON`; JavaScript retains
 parsed unknown original data as `origin` and the body as `rawJSON`. Parsed
 JavaScript numbers inside `origin` can lose integer or decimal precision; use
 the retained raw JSON when exact representation matters.
