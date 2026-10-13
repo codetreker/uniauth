@@ -54,12 +54,14 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 		events = append(events, event)
 		return response
 	}
-	response := request("POST", "/console/api/apps", appBody, "app.create", "", "success", "", "server-request-1", http.StatusCreated)
+	response := request("POST", "/console/api/apps", createAppBody, "app.create", "", "success", "", "server-request-1", http.StatusCreated)
 	created := decodeResponse[apps.CreatedApp](t, response)
 	path := "/console/api/apps/" + created.App.ID
 	request("PUT", path, strings.Replace(appBody, "Product A", "Updated App", 1), "app.update", created.App.ID, "success", "", "", http.StatusOK)
-	response = request("POST", path+"/secrets", "", "secret.create", created.App.ID, "success", "", "", http.StatusCreated)
+	response = request("POST", path+"/secrets", secretBody, "secret.create", created.App.ID, "success", "", "", http.StatusCreated)
 	issued := decodeResponse[apps.IssuedSecret](t, response)
+	request("PUT", path+"/secrets/"+issued.ID, `{"name":"Edited private label","description":"Private rotation memo"}`, "secret.update", created.App.ID, "success", "", "", http.StatusOK)
+	request("PUT", path+"/secrets/"+issued.ID, `{}`, "secret.update", created.App.ID, "failure", "invalid_input", "", http.StatusBadRequest)
 	request("DELETE", path+"/secrets/"+issued.ID, "", "secret.revoke", created.App.ID, "success", "", "", http.StatusNoContent)
 	request("DELETE", path, "", "app.delete", created.App.ID, "success", "", "", http.StatusNoContent)
 	request("DELETE", path, "", "app.delete", created.App.ID, "failure", "not_found", "", http.StatusNotFound)
@@ -70,7 +72,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sensitive := range []string{created.Secret, issued.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id"} {
+	for _, sensitive := range []string{created.Secret, issued.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id", "Production server", "Primary deployment credential", "Backup server", "Standby deployment credential", "Edited private label", "Private rotation memo"} {
 		if strings.Contains(string(encoded), sensitive) {
 			t.Fatalf("audit disclosed sensitive data %q: %s", sensitive, encoded)
 		}

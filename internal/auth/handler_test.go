@@ -77,12 +77,12 @@ func newFixture(t *testing.T, modify func(*Config)) *fixture {
 	}
 	f.store = store
 	input := apps.AppInput{Name: "Product", Enabled: true, RedirectURIs: []string{"https://product.example/callback?existing=preserved"}, Providers: []string{"google", "github"}}
-	f.app, err = store.Create(context.Background(), input)
+	f.app, err = store.Create(context.Background(), apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	input.Name = "Other"
-	f.other, err = store.Create(context.Background(), input)
+	f.other, err = store.Create(context.Background(), apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}

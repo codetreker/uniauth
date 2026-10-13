@@ -2,6 +2,7 @@ package apps_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/codetreker/uniauth/internal/apps"
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +25,18 @@ func validInput() apps.AppInput {
 		RedirectURIs: []string{"https://product.example/auth/callback?environment=test&return=%2Fhome"},
 		Providers:    []string{"microsoft", "google", "github"},
 	}
+}
+
+func validSecretInput() apps.SecretInput {
+	return apps.SecretInput{Name: "Production backend", Description: "  Deployment note\nowner: platform\n  "}
+}
+
+func createInput(input apps.AppInput) apps.CreateAppInput {
+	return apps.CreateAppInput{AppInput: input, InitialSecret: validSecretInput()}
+}
+
+func validCreateInput() apps.CreateAppInput {
+	return createInput(validInput())
 }
 
 func openStore(t *testing.T, loopback bool) *apps.Store {
@@ -38,7 +52,7 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "apps.sqlite")
 	store, err := apps.Open(ctx, apps.Config{Path: path})
 	require.NoError(t, err)
-	created, err := store.Create(ctx, validInput())
+	created, err := store.Create(ctx, validCreateInput())
 	require.NoError(t, err)
 	secretBytes, err := base64.RawURLEncoding.DecodeString(created.Secret)
 	require.NoError(t, err)
@@ -78,7 +92,7 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	_, err = store.Update(ctx, stored.ID, updatedInput)
 	require.NoError(t, err)
 
-	issued, err := store.CreateSecret(ctx, stored.ID)
+	issued, err := store.CreateSecret(ctx, stored.ID, validSecretInput())
 	require.NoError(t, err)
 	assert.NotEqual(t, created.Secret, issued.Secret)
 	for _, secret := range []string{created.Secret, issued.Secret} {
@@ -88,6 +102,12 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 	metadata, err := store.ListSecrets(ctx, stored.ID)
 	require.NoError(t, err)
 	require.Len(t, metadata, 2)
+	for _, secret := range metadata {
+		assert.Equal(t, validSecretInput().Name, secret.Name)
+		assert.Equal(t, validSecretInput().Description, secret.Description)
+	}
+	assert.Equal(t, validSecretInput().Name, issued.Name)
+	assert.Equal(t, validSecretInput().Description, issued.Description)
 	serialized, err := json.Marshal(metadata)
 	require.NoError(t, err)
 	assert.NotContains(t, string(serialized), created.Secret)
@@ -123,9 +143,9 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 
 func TestAppIsolationAndMissingRecords(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	first, err := store.Create(ctx, validInput())
+	first, err := store.Create(ctx, validCreateInput())
 	require.NoError(t, err)
-	second, err := store.Create(ctx, validInput())
+	second, err := store.Create(ctx, validCreateInput())
 	require.NoError(t, err)
 	_, err = store.Authenticate(ctx, first.App.ID, second.Secret)
 	require.ErrorIs(t, err, apps.ErrUnauthorized)
@@ -143,8 +163,16 @@ func TestAppIsolationAndMissingRecords(t *testing.T) {
 		func() error { _, err := store.Get(ctx, "missing"); return err },
 		func() error { _, err := store.Update(ctx, "missing", validInput()); return err },
 		func() error { return store.Delete(ctx, "missing") },
-		func() error { _, err := store.CreateSecret(ctx, "missing"); return err },
+		func() error { _, err := store.CreateSecret(ctx, "missing", validSecretInput()); return err },
 		func() error { _, err := store.ListSecrets(ctx, "missing"); return err },
+		func() error {
+			_, err := store.UpdateSecret(ctx, "missing", second.SecretID, validSecretInput())
+			return err
+		},
+		func() error {
+			_, err := store.UpdateSecret(ctx, second.App.ID, "missing", validSecretInput())
+			return err
+		},
 		func() error { return store.RevokeSecret(ctx, "missing", second.SecretID) },
 	} {
 		require.ErrorIs(t, operation(), apps.ErrNotFound)
@@ -171,7 +199,7 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			input := validInput()
 			modify(&input)
-			_, err := store.Create(t.Context(), input)
+			_, err := store.Create(t.Context(), createInput(input))
 			require.ErrorIs(t, err, apps.ErrInvalid)
 			_, err = store.Update(t.Context(), "missing", input)
 			require.ErrorIs(t, err, apps.ErrInvalid)
@@ -190,12 +218,12 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 		t.Run(uri, func(t *testing.T) {
 			input := validInput()
 			input.RedirectURIs = []string{uri}
-			_, err := store.Create(t.Context(), input)
+			_, err := store.Create(t.Context(), createInput(input))
 			require.ErrorIs(t, err, apps.ErrInvalid)
 		})
 	}
 	input := validInput()
-	created, err := store.Create(t.Context(), input)
+	created, err := store.Create(t.Context(), createInput(input))
 	require.NoError(t, err)
 	assert.Equal(t, input.RedirectURIs, created.App.RedirectURIs)
 	invalidUpdate := validInput()
@@ -211,20 +239,20 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 	for _, uri := range []string{"http://localhost:8080/callback", "http://127.0.0.1:8080/callback", "http://127.2.3.4/callback", "http://[::1]:8080/callback", "https://product.example/callback"} {
 		input := validInput()
 		input.RedirectURIs = []string{uri}
-		_, err := loopbackStore.Create(t.Context(), input)
+		_, err := loopbackStore.Create(t.Context(), createInput(input))
 		require.NoError(t, err)
 	}
 	for _, uri := range []string{"http://localhost.example/callback", "http://192.168.1.1/callback", "http://product.example/callback"} {
 		input := validInput()
 		input.RedirectURIs = []string{uri}
-		_, err := loopbackStore.Create(t.Context(), input)
+		_, err := loopbackStore.Create(t.Context(), createInput(input))
 		require.ErrorIs(t, err, apps.ErrInvalid)
 	}
 }
 
 func TestConcurrentRotationAndRevocation(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validInput())
+	created, err := store.Create(ctx, validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
 	var wg sync.WaitGroup
@@ -232,7 +260,7 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 	failures := make(chan error, workers)
 	for range workers {
 		wg.Go(func() {
-			secret, err := store.CreateSecret(ctx, created.App.ID)
+			secret, err := store.CreateSecret(ctx, created.App.ID, validSecretInput())
 			if err != nil {
 				failures <- err
 				return
@@ -275,7 +303,7 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 
 func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
-	created, err := store.Create(ctx, validInput())
+	created, err := store.Create(ctx, validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
 	start := make(chan struct{})
@@ -284,7 +312,7 @@ func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	for range workers {
 		wg.Go(func() {
 			<-start
-			secret, err := store.CreateSecret(ctx, created.App.ID)
+			secret, err := store.CreateSecret(ctx, created.App.ID, validSecretInput())
 			if err != nil {
 				assert.ErrorIs(t, err, apps.ErrNotFound)
 				return
@@ -319,13 +347,14 @@ func TestDatabaseErrorsRetainCauses(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	store := openStore(t, false)
 	for _, operation := range []func() error{
-		func() error { _, err := store.Create(ctx, validInput()); return err },
+		func() error { _, err := store.Create(ctx, validCreateInput()); return err },
 		func() error { _, err := store.Get(ctx, "missing"); return err },
 		func() error { _, err := store.List(ctx); return err },
 		func() error { _, err := store.Update(ctx, "missing", validInput()); return err },
 		func() error { return store.Delete(ctx, "missing") },
-		func() error { _, err := store.CreateSecret(ctx, "missing"); return err },
+		func() error { _, err := store.CreateSecret(ctx, "missing", validSecretInput()); return err },
 		func() error { _, err := store.ListSecrets(ctx, "missing"); return err },
+		func() error { _, err := store.UpdateSecret(ctx, "missing", "missing", validSecretInput()); return err },
 		func() error { return store.RevokeSecret(ctx, "missing", "missing") },
 		func() error { _, err := store.Authenticate(ctx, "missing", "secret"); return err },
 	} {
@@ -342,7 +371,7 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	created, err := store.Create(ctx, validInput())
+	created, err := store.Create(ctx, validCreateInput())
 	require.NoError(t, err)
 
 	testCases := []struct {
@@ -351,9 +380,9 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 		table     string
 		invoke    func() error
 	}{
-		{"app creation", "INSERT", "apps", func() error { _, err := store.Create(ctx, validInput()); return err }},
-		{"initial credential creation", "INSERT", "app_secrets", func() error { _, err := store.Create(ctx, validInput()); return err }},
-		{"credential rotation", "INSERT", "app_secrets", func() error { _, err := store.CreateSecret(ctx, created.App.ID); return err }},
+		{"app creation", "INSERT", "apps", func() error { _, err := store.Create(ctx, validCreateInput()); return err }},
+		{"initial credential creation", "INSERT", "app_secrets", func() error { _, err := store.Create(ctx, validCreateInput()); return err }},
+		{"credential rotation", "INSERT", "app_secrets", func() error { _, err := store.CreateSecret(ctx, created.App.ID, validSecretInput()); return err }},
 		{"app update", "UPDATE", "apps", func() error {
 			input := validInput()
 			input.Name, input.Enabled = "Rejected update", false
@@ -363,6 +392,10 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 		{"app deletion", "DELETE", "apps", func() error { return store.Delete(ctx, created.App.ID) }},
 		{"credential deletion", "DELETE", "app_secrets", func() error { return store.Delete(ctx, created.App.ID) }},
 		{"credential revocation", "UPDATE", "app_secrets", func() error { return store.RevokeSecret(ctx, created.App.ID, created.SecretID) }},
+		{"credential metadata", "UPDATE", "app_secrets", func() error {
+			_, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, apps.SecretInput{Name: "Rejected metadata", Description: "Rejected"})
+			return err
+		}},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -381,9 +414,251 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, metadata, 1)
 			assert.Equal(t, created.SecretID, metadata[0].ID)
+			assert.Equal(t, validSecretInput().Name, metadata[0].Name)
+			assert.Equal(t, validSecretInput().Description, metadata[0].Description)
 			assert.Nil(t, metadata[0].RevokedAt)
 			_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestSecretMetadataUpdatesPreserveCredentialsAndLifecycle(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "apps.sqlite")
+	store, err := apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	created, err := store.Create(ctx, validCreateInput())
+	require.NoError(t, err)
+	other, err := store.Create(ctx, validCreateInput())
+	require.NoError(t, err)
+	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	initial := metadata[0]
+	input := apps.SecretInput{Name: "Production $密钥", Description: "  owner: platform\r\n部署用途\n\t"}
+	updated, err := store.UpdateSecret(ctx, created.App.ID, initial.ID, input)
+	require.NoError(t, err)
+	assert.Equal(t, input.Name, updated.Name)
+	assert.Equal(t, input.Description, updated.Description)
+	assert.Equal(t, initial.ID, updated.ID)
+	assert.Equal(t, initial.CreatedAt, updated.CreatedAt)
+	assert.Nil(t, updated.RevokedAt)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.NoError(t, err)
+	app, err := store.Get(ctx, created.App.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.App, app)
+	_, err = store.UpdateSecret(ctx, other.App.ID, initial.ID, validSecretInput())
+	require.ErrorIs(t, err, apps.ErrNotFound)
+	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []apps.Secret{updated}, metadata)
+	require.NoError(t, store.RevokeSecret(ctx, created.App.ID, initial.ID))
+	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	revoked := metadata[0]
+	updated, err = store.UpdateSecret(ctx, created.App.ID, initial.ID, apps.SecretInput{Name: "Previous deployment", Description: ""})
+	require.NoError(t, err)
+	assert.Equal(t, revoked.CreatedAt, updated.CreatedAt)
+	assert.Equal(t, revoked.RevokedAt, updated.RevokedAt)
+	assert.Empty(t, updated.Description)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.ErrorIs(t, err, apps.ErrUnauthorized)
+	require.NoError(t, store.Close())
+	store, err = apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []apps.Secret{updated}, metadata)
+	app, err = store.Get(ctx, created.App.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.App, app)
+	require.NoError(t, store.Delete(ctx, created.App.ID))
+	_, err = store.UpdateSecret(ctx, created.App.ID, initial.ID, validSecretInput())
+	require.ErrorIs(t, err, apps.ErrNotFound)
+}
+
+func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
+	store, ctx := openStore(t, false), t.Context()
+	created, err := store.Create(ctx, validCreateInput())
+	require.NoError(t, err)
+	invalid := map[string]apps.SecretInput{
+		"empty name":                 {Name: ""},
+		"surrounding whitespace":     {Name: " Production "},
+		"carriage return":            {Name: "Production\rbackend"},
+		"line feed":                  {Name: "Production\nbackend"},
+		"long name":                  {Name: strings.Repeat("x", 129)},
+		"multibyte long name":        {Name: strings.Repeat("密", 43)},
+		"invalid UTF8 name":          {Name: string([]byte{0xff})},
+		"long description":           {Name: "Production", Description: strings.Repeat("x", 4097)},
+		"multibyte long description": {Name: "Production", Description: strings.Repeat("密", 1366)},
+		"invalid UTF8 description":   {Name: "Production", Description: string([]byte{0xff})},
+	}
+	for name, input := range invalid {
+		t.Run(name, func(t *testing.T) {
+			creation := validCreateInput()
+			creation.InitialSecret = input
+			_, err := store.Create(ctx, creation)
+			require.ErrorIs(t, err, apps.ErrInvalid)
+			_, err = store.CreateSecret(ctx, created.App.ID, input)
+			require.ErrorIs(t, err, apps.ErrInvalid)
+			_, err = store.UpdateSecret(ctx, created.App.ID, created.SecretID, input)
+			require.ErrorIs(t, err, apps.ErrInvalid)
+			listed, err := store.List(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, []apps.App{created.App}, listed)
+			metadata, err := store.ListSecrets(ctx, created.App.ID)
+			require.NoError(t, err)
+			require.Len(t, metadata, 1)
+			assert.Equal(t, validSecretInput().Name, metadata[0].Name)
+			assert.Equal(t, validSecretInput().Description, metadata[0].Description)
+		})
+	}
+	boundary := apps.SecretInput{Name: strings.Repeat("密", 42) + "ab", Description: strings.Repeat("密", 1365) + " "}
+	issued, err := store.CreateSecret(ctx, created.App.ID, boundary)
+	require.NoError(t, err)
+	assert.Equal(t, boundary.Name, issued.Name)
+	assert.Equal(t, boundary.Description, issued.Description)
+	updated, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, boundary)
+	require.NoError(t, err)
+	assert.Equal(t, boundary.Name, updated.Name)
+	assert.Equal(t, boundary.Description, updated.Description)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.NoError(t, err)
+	_, err = store.Authenticate(ctx, created.App.ID, issued.Secret)
+	require.NoError(t, err)
+}
+
+func TestSecretMetadataMigrationPreservesHistoricalCredentials(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "apps.sqlite")
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, os.DirFS("migrations"), goose.WithDisableGlobalRegistry(true))
+	require.NoError(t, err)
+	_, err = provider.UpTo(ctx, 1)
+	require.NoError(t, err)
+	createdAt, updatedAt, revokedAt := int64(123456789), int64(234567890), int64(345678901)
+	_, err = db.ExecContext(ctx, `INSERT INTO apps (id, name, enabled, redirect_uris, providers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, "existing-app", "Existing app", true, `["https://product.example/callback"]`, `["google"]`, createdAt, updatedAt)
+	require.NoError(t, err)
+	digests := make(map[string][]byte)
+	for _, id := range []string{"active", "revoked"} {
+		digest := sha256.Sum256([]byte("plaintext-" + id))
+		digests[id] = digest[:]
+		var revoked any
+		if id == "revoked" {
+			revoked = revokedAt
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO app_secrets (id, app_id, digest, created_at, revoked_at) VALUES (?, ?, ?, ?, ?)`, id, "existing-app", digest[:], createdAt, revoked)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Close())
+	store, err := apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	metadata, err := store.ListSecrets(ctx, "existing-app")
+	require.NoError(t, err)
+	require.Len(t, metadata, 2)
+	for _, secret := range metadata {
+		assert.Equal(t, "Secret "+secret.ID, secret.Name)
+		assert.Empty(t, secret.Description)
+		assert.Equal(t, time.Unix(0, createdAt).UTC(), secret.CreatedAt)
+		if secret.ID == "revoked" {
+			require.NotNil(t, secret.RevokedAt)
+			assert.Equal(t, time.Unix(0, revokedAt).UTC(), *secret.RevokedAt)
+		} else {
+			assert.Nil(t, secret.RevokedAt)
+		}
+	}
+	app, err := store.Authenticate(ctx, "existing-app", "plaintext-active")
+	require.NoError(t, err)
+	assert.Equal(t, time.Unix(0, createdAt).UTC(), app.CreatedAt)
+	assert.Equal(t, time.Unix(0, updatedAt).UTC(), app.UpdatedAt)
+	_, err = store.Authenticate(ctx, "existing-app", "plaintext-revoked")
+	require.ErrorIs(t, err, apps.ErrUnauthorized)
+	updated, err := store.UpdateSecret(ctx, "existing-app", "active", apps.SecretInput{Name: "Named deployment", Description: "Retained note"})
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	store, err = apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	metadata, err = store.ListSecrets(ctx, "existing-app")
+	require.NoError(t, err)
+	assert.Equal(t, updated, metadata[0])
+	db, err = sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for id, expected := range digests {
+		var actual []byte
+		require.NoError(t, db.QueryRowContext(ctx, "SELECT digest FROM app_secrets WHERE id = ?", id).Scan(&actual))
+		assert.Equal(t, expected, actual)
+	}
+	var index string
+	require.NoError(t, db.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'app_secrets_app_id'").Scan(&index))
+	_, err = db.ExecContext(ctx, `INSERT INTO app_secrets (id, app_id, digest, created_at) VALUES (?, ?, ?, ?)`, "unnamed", "existing-app", digests["active"], createdAt)
+	require.ErrorContains(t, err, "NOT NULL")
+}
+
+func TestSecretMetadataReadFailureRollsBackWrite(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "apps.sqlite")
+	store, err := apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	created, err := store.Create(ctx, validCreateInput())
+	require.NoError(t, err)
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.ExecContext(ctx, `CREATE TRIGGER corrupt_metadata AFTER UPDATE OF name, description ON app_secrets BEGIN UPDATE app_secrets SET created_at = 'unreadable' WHERE id = NEW.id; END`)
+	require.NoError(t, err)
+	_, err = store.UpdateSecret(ctx, created.App.ID, created.SecretID, apps.SecretInput{Name: "Uncommitted name"})
+	require.ErrorContains(t, err, "read app credential metadata")
+	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	require.Len(t, metadata, 1)
+	assert.Equal(t, created.App.CreatedAt, metadata[0].CreatedAt)
+	assert.Equal(t, validSecretInput().Name, metadata[0].Name)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, "DROP TRIGGER corrupt_metadata")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, "UPDATE app_secrets SET created_at = 'unreadable' WHERE id = ?", created.SecretID)
+	require.NoError(t, err)
+	_, err = store.ListSecrets(ctx, created.App.ID)
+	require.ErrorContains(t, err, "read app credential metadata")
+}
+
+func TestConcurrentMetadataUpdatesAndRevocation(t *testing.T) {
+	store, ctx := openStore(t, false), t.Context()
+	created, err := store.Create(ctx, validCreateInput())
+	require.NoError(t, err)
+	const workers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			<-start
+			metadata, err := store.UpdateSecret(ctx, created.App.ID, created.SecretID, validSecretInput())
+			assert.NoError(t, err)
+			assert.Equal(t, created.App.CreatedAt, metadata.CreatedAt)
+		})
+	}
+	wg.Go(func() {
+		<-start
+		assert.NoError(t, store.RevokeSecret(ctx, created.App.ID, created.SecretID))
+	})
+	close(start)
+	wg.Wait()
+	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	require.Len(t, metadata, 1)
+	require.NotNil(t, metadata[0].RevokedAt)
+	assert.Equal(t, created.App.CreatedAt, metadata[0].CreatedAt)
+	assert.Equal(t, validSecretInput().Name, metadata[0].Name)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.ErrorIs(t, err, apps.ErrUnauthorized)
+	app, err := store.Get(ctx, created.App.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.App, app)
 }

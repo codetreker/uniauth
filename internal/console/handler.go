@@ -31,6 +31,24 @@ type Handler struct {
 
 type sessionContextKey struct{}
 
+type secretInput struct {
+	Name        string          `json:"name"`
+	Description json.RawMessage `json:"description"`
+}
+
+func (input secretInput) metadata() (apps.SecretInput, error) {
+	metadata := apps.SecretInput{Name: input.Name}
+	if len(input.Description) == 0 {
+		return metadata, nil
+	}
+	var description *string
+	if err := json.Unmarshal(input.Description, &description); err != nil || description == nil {
+		return apps.SecretInput{}, apps.ErrInvalid
+	}
+	metadata.Description = *description
+	return metadata, nil
+}
+
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/console/api/login", h.route([]string{"POST"}, false, h.login))
 	mux.HandleFunc("/console/api/session", h.route([]string{"GET"}, true, h.getSession))
@@ -38,7 +56,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/console/api/apps", h.route([]string{"GET", "POST"}, true, h.management(map[string]string{"POST": "app.create"}, h.apps)))
 	mux.HandleFunc("/console/api/apps/{id}", h.route([]string{"GET", "PUT", "DELETE"}, true, h.management(map[string]string{"PUT": "app.update", "DELETE": "app.delete"}, h.app)))
 	mux.HandleFunc("/console/api/apps/{id}/secrets", h.route([]string{"GET", "POST"}, true, h.management(map[string]string{"POST": "secret.create"}, h.secrets)))
-	mux.HandleFunc("/console/api/apps/{id}/secrets/{secretID}", h.route([]string{"DELETE"}, true, h.management(map[string]string{"DELETE": "secret.revoke"}, h.secret)))
+	mux.HandleFunc("/console/api/apps/{id}/secrets/{secretID}", h.route([]string{"PUT", "DELETE"}, true, h.management(map[string]string{"PUT": "secret.update", "DELETE": "secret.revoke"}, h.secret)))
 	mux.HandleFunc("/console/api/providers", h.route([]string{"GET"}, true, h.providers))
 	mux.HandleFunc("/console/api/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -127,11 +145,18 @@ func (h *Handler) apps(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	var input apps.AppInput
+	var input struct {
+		apps.AppInput
+		InitialSecret secretInput `json:"initial_secret"`
+	}
 	if !readJSON(w, r, &input) {
 		return
 	}
-	created, err := h.store.Create(r.Context(), input)
+	metadata, err := input.InitialSecret.metadata()
+	if storeError(w, err) {
+		return
+	}
+	created, err := h.store.Create(r.Context(), apps.CreateAppInput{AppInput: input.AppInput, InitialSecret: metadata})
 	if !storeError(w, err) {
 		w.(*auditResponse).appID = created.App.ID
 		writeJSON(w, http.StatusCreated, created)
@@ -170,13 +195,36 @@ func (h *Handler) secrets(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	secret, err := h.store.CreateSecret(r.Context(), r.PathValue("id"))
+	var input secretInput
+	if !readJSON(w, r, &input) {
+		return
+	}
+	metadata, err := input.metadata()
+	if storeError(w, err) {
+		return
+	}
+	secret, err := h.store.CreateSecret(r.Context(), r.PathValue("id"), metadata)
 	if !storeError(w, err) {
 		writeJSON(w, http.StatusCreated, secret)
 	}
 }
 
 func (h *Handler) secret(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		var input secretInput
+		if !readJSON(w, r, &input) {
+			return
+		}
+		metadata, err := input.metadata()
+		if storeError(w, err) {
+			return
+		}
+		secret, err := h.store.UpdateSecret(r.Context(), r.PathValue("id"), r.PathValue("secretID"), metadata)
+		if !storeError(w, err) {
+			writeJSON(w, http.StatusOK, secret)
+		}
+		return
+	}
 	err := h.store.RevokeSecret(r.Context(), r.PathValue("id"), r.PathValue("secretID"))
 	if !storeError(w, err) {
 		w.WriteHeader(http.StatusNoContent)
@@ -221,7 +269,7 @@ func storeError(w http.ResponseWriter, err error) bool {
 	}
 	switch {
 	case errors.Is(err, apps.ErrInvalid):
-		writeError(w, http.StatusBadRequest, "invalid_input", "The application configuration is invalid.")
+		writeError(w, http.StatusBadRequest, "invalid_input", "The application configuration or credential metadata is invalid.")
 	case errors.Is(err, apps.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "The application or credential was not found.")
 	case errors.Is(err, apps.ErrUnauthorized):

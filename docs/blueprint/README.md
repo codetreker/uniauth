@@ -27,7 +27,7 @@ from live upstream verification.
 | --- | --- |
 | R1 | Implement the service and management API in Go. |
 | R2 | Support personal Microsoft accounts, Google, and GitHub. |
-| R3 | Provide a Console to register Apps and generate, rotate, and revoke Secrets. |
+| R3 | Provide a Console to register Apps and generate, name, describe, edit, rotate, and revoke Secrets. |
 | R4 | Return a standard identity profile and every obtained provider identity field under `origin`, within configured and granted scopes. |
 | R5 | Retain complete identity results only in process memory for five minutes from creation. |
 | R6 | Atomically consume an owning App's authenticated result once. |
@@ -83,12 +83,29 @@ Each App has a generated ID, name, enabled state, exact callback URLs, and allow
 providers. Separate environments use separate registrations. Apps are confidential
 backend integrations; their Secrets remain server-side. Random 256-bit Secrets
 are shown only when created. SQLite retains SHA-256 verification digests,
-compared in constant time, with creation and revocation metadata. Rotation allows
-old and new credentials to coexist until the product switches and revokes the
-old one.
+compared in constant time, with names, descriptions, and creation and revocation
+metadata. Every credential has an operator-supplied name; an optional description
+records its purpose or rotation notes. Names may repeat because the generated
+ID identifies the credential. Details remain editable after revocation, without
+changing credential validity or timestamps. Rotation allows old and new
+credentials to coexist until the product switches and revokes the old one.
+
+App creation requires initial Secret metadata; configuration replacement edits
+only the App. Later Secret creation and metadata updates have separate JSON
+requests. Names contain 1–128 valid UTF-8 bytes with no surrounding whitespace,
+CR, or LF. Descriptions contain up to 4096 valid UTF-8 bytes, preserving
+whitespace and line breaks; omission means an empty description. Response
+metadata always includes both fields. This keeps credential purpose available
+after its one-time plaintext display. The
+[Secret metadata decision](../../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md)
+owns these contracts and the upgrade rationale.
 
 SQLite persists only configuration and product Secret verification records.
-Embedded migrations establish the schema without an end-user table. Provider
+Embedded migrations establish the schema without an end-user table. Migration
+2 gives every pre-existing Secret, including revoked credentials, a deterministic
+`Secret <id>` name and an empty description. It preserves credential IDs,
+verification digests, timestamps, and the App lookup index. New code reads the
+migrated schema directly, without an old-row fallback. Provider
 Client ID/Secret pairs come from deployment configuration and are distinct from
 Console-generated product credentials. Missing providers are unavailable rather
 than given fallback credentials.
@@ -110,11 +127,12 @@ serialization while rejecting noncanonical or foreign headers. Login attempts
 are rate-limited. Changing the configured password requires a restart, which
 invalidates these administrator sessions.
 
-Console configuration editing, enable/disable changes, and deletion share one
-operation owner for each App. Ownership is acquired before asynchronous work or
+Console configuration editing, enable/disable changes, deletion, and Secret
+creation, detail updates, and revocation share one operation owner for each App. Ownership is acquired before asynchronous work or
 render updates, so overlapping controls cannot submit an older App snapshot.
-Opening an editor or delete confirmation reserves the App until completion or
-cancellation. Pending updates display `Updating…`; committed response data becomes
+Opening an editor or confirmation reserves the App until completion or
+cancellation. A newly created Secret keeps its one-time plaintext display and
+App ownership until the operator marks the value saved and closes the dialog. Pending updates display `Updating…`; committed response data becomes
 the authoritative App configuration before later actions are allowed. A failed
 configuration write keeps its owner while the UI reloads server configuration
 and reconciles only the affected App. If that reload also fails, the App shows
@@ -129,7 +147,8 @@ guarantee.
 React, TypeScript, Vite, and pnpm build the Console. Production assets are embedded
 in the executable under `/console/`; Node.js is needed for building, not serving.
 The interactive mockup uses the same components and styles with fixture Apps,
-credentials, enabled/disabled states, and error handling. Mockup fixtures are
+named active and revoked credentials, multiline descriptions, enabled/disabled
+states, and error handling. Mockup fixtures are
 excluded from production assets.
 
 ## Authentication and identity handover
@@ -285,11 +304,12 @@ provider, phase, and sanitized error categories. Successful result retrieval get
 its operation ID from the live result before deletion. Later unavailable claims
 can use request ID and authenticated App ID; their original operation ID need not
 survive. Cleanup reports aggregate expiration counts. Console configuration
-changes have management operation and affected App IDs for audit correlation.
+changes and Secret detail updates have management operation and affected App
+IDs for audit correlation; metadata updates use `secret.update`.
 
 Logs exclude identity payloads, account identifiers, emails, result codes, product
-or provider state, Secrets, authorization headers, tokens, and full sensitive
-URLs. Reverse-proxy configuration must preserve that exclusion. Provider errors
+or provider state, Secrets, Secret names and descriptions, App display data,
+authorization headers, tokens, and full sensitive URLs. Reverse-proxy configuration must preserve that exclusion. Provider errors
 retain causes internally while emitting safe operation and failure categories.
 
 The authoritative go-cov policy requires total, package, and function coverage,

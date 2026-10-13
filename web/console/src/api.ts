@@ -17,14 +17,36 @@ export type AppInput = Pick<
   Application,
   "name" | "enabled" | "redirect_uris" | "providers"
 >;
+export const secretInputSchema = z.object({
+  name: z
+    .string()
+    .refine(
+      (name) =>
+        name.length > 0 &&
+        new TextEncoder().encode(name).length <= 128 &&
+        !/^\p{White_Space}|\p{White_Space}$/u.test(name) &&
+        !/[\r\n]/.test(name),
+      "Secret name must contain 1–128 UTF-8 bytes without surrounding whitespace or line breaks.",
+    ),
+  description: z
+    .string()
+    .refine(
+      (description) => new TextEncoder().encode(description).length <= 4096,
+      "Secret description must be at most 4096 UTF-8 bytes.",
+    ),
+});
+export type SecretInput = z.infer<typeof secretInputSchema>;
+export type CreateAppInput = AppInput & { initial_secret: SecretInput };
 const secretSchema = z.object({
   id: z.string().min(1),
+  ...secretInputSchema.shape,
   created_at: timestamp,
   revoked_at: timestamp.optional(),
 });
 export type Secret = z.infer<typeof secretSchema>;
 const issuedSchema = z.object({
   id: z.string().min(1),
+  ...secretInputSchema.shape,
   secret: z.string().min(1),
   created_at: timestamp,
 });
@@ -60,11 +82,16 @@ export interface ConsoleAPI {
   logout: () => Promise<void>;
   listApps: () => Promise<Application[]>;
   listProviders: () => Promise<Provider[]>;
-  createApp: (input: AppInput) => Promise<CreatedApp>;
+  createApp: (input: CreateAppInput) => Promise<CreatedApp>;
   updateApp: (id: string, input: AppInput) => Promise<Application>;
   deleteApp: (id: string) => Promise<void>;
   listSecrets: (id: string) => Promise<Secret[]>;
-  createSecret: (id: string) => Promise<IssuedSecret>;
+  createSecret: (id: string, input: SecretInput) => Promise<IssuedSecret>;
+  updateSecret: (
+    id: string,
+    secretID: string,
+    input: SecretInput,
+  ) => Promise<Secret>;
   revokeSecret: (id: string, secretID: string) => Promise<void>;
 }
 
@@ -124,8 +151,18 @@ export const createAPI = (fetcher: typeof fetch = fetch): ConsoleAPI => {
       z
         .object({ secrets: z.array(secretSchema) })
         .parse(await request(`${appPath(id)}/secrets`)).secrets,
-    createSecret: async (id) =>
-      issuedSchema.parse(await request(`${appPath(id)}/secrets`, "POST")),
+    createSecret: async (id, input) =>
+      issuedSchema.parse(
+        await request(`${appPath(id)}/secrets`, "POST", input),
+      ),
+    updateSecret: async (id, secretID, input) =>
+      secretSchema.parse(
+        await request(
+          `${appPath(id)}/secrets/${encodeURIComponent(secretID)}`,
+          "PUT",
+          input,
+        ),
+      ),
     revokeSecret: async (id, secretID) => {
       await request(
         `${appPath(id)}/secrets/${encodeURIComponent(secretID)}`,

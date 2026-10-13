@@ -1,10 +1,11 @@
-import { APIError } from "./api";
+import { APIError, secretInputSchema } from "./api";
 import type {
   Application,
   AppInput,
   ConsoleAPI,
   Provider,
   Secret,
+  SecretInput,
 } from "./api";
 
 export const createMockAPI = (): ConsoleAPI => {
@@ -47,9 +48,31 @@ export const createMockAPI = (): ConsoleAPI => {
     apps.map((app, index) => [
       app.id,
       [
-        { id: `sec_${index}_current`, created_at: initialDate },
+        {
+          id: `sec_${index}_current`,
+          name: "Production backend",
+          description: "Main product service.\nOwner: Platform team",
+          created_at: initialDate,
+        },
+        {
+          id: `sec_${index}_staging`,
+          name: "Staging",
+          description: "",
+          created_at: initialDate,
+        },
+        {
+          id: `sec_${index}_unicode`,
+          name: "开发环境・Development " + "🔑".repeat(16),
+          description:
+            "  Deployment notes\n" +
+            "详细说明与负责人🔑".repeat(24) +
+            "\n  Preserve these spaces.  ",
+          created_at: initialDate,
+        },
         {
           id: `sec_${index}_previous`,
+          name: "Retired deployment",
+          description: "Replaced after deployment migration.",
           created_at: "2026-10-08T09:30:00Z",
           revoked_at: initialDate,
         },
@@ -105,10 +128,17 @@ export const createMockAPI = (): ConsoleAPI => {
         );
     }
   };
-  const issueSecret = (id: string) => {
+  const validateSecret = (input: SecretInput) => {
+    const parsed = secretInputSchema.safeParse(input);
+    if (!parsed.success)
+      throw new APIError(400, "invalid_input", parsed.error.issues[0].message);
+  };
+  const issueSecret = (id: string, input: SecretInput) => {
+    validateSecret(input);
     getApp(id);
     const issued = {
       id: `sec_preview_${sequence++}`,
+      ...input,
       secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll(
         "-",
         "",
@@ -120,7 +150,12 @@ export const createMockAPI = (): ConsoleAPI => {
       throw new Error("Preview application credentials are missing.");
     credentials.set(id, [
       ...existing,
-      { id: issued.id, created_at: issued.created_at },
+      {
+        id: issued.id,
+        name: issued.name,
+        description: issued.description,
+        created_at: issued.created_at,
+      },
     ]);
     return issued;
   };
@@ -160,16 +195,18 @@ export const createMockAPI = (): ConsoleAPI => {
       await wait();
       authorize();
       validate(input);
+      validateSecret(input.initial_secret);
+      const { initial_secret, ...configuration } = input;
       const now = new Date().toISOString();
       const app: Application = {
-        ...input,
+        ...configuration,
         id: `app_preview_${sequence++}`,
         created_at: now,
         updated_at: now,
       };
       apps = [...apps, app];
       credentials.set(app.id, []);
-      const issued = issueSecret(app.id);
+      const issued = issueSecret(app.id, initial_secret);
       return {
         app: structuredClone(app),
         secret: issued.secret,
@@ -204,10 +241,26 @@ export const createMockAPI = (): ConsoleAPI => {
         throw new Error("Preview application credentials are missing.");
       return structuredClone(secrets);
     },
-    createSecret: async (id) => {
+    createSecret: async (id, input) => {
       await wait();
       authorize();
-      return issueSecret(id);
+      return issueSecret(id, input);
+    },
+    updateSecret: async (id, secretID, input) => {
+      await wait();
+      authorize();
+      getApp(id);
+      validateSecret(input);
+      const secrets = credentials.get(id);
+      const secret = secrets?.find((item) => item.id === secretID);
+      if (secrets === undefined || secret === undefined)
+        throw new APIError(404, "not_found", "The secret was not found.");
+      const updated = { ...secret, ...input };
+      credentials.set(
+        id,
+        secrets.map((item) => (item.id === secretID ? updated : item)),
+      );
+      return structuredClone(updated);
     },
     revokeSecret: async (id, secretID) => {
       await wait();
