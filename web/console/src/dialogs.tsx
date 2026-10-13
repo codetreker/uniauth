@@ -24,7 +24,18 @@ export type Credential = SecretInput & {
   app: Application;
   secret: string;
   id: string;
+  replacedSecretID?: string;
 };
+export class ConfirmationFailure extends Error {
+  constructor(
+    message: string,
+    public retryable: boolean,
+    cause?: unknown,
+  ) {
+    super(message, { cause });
+    this.name = "ConfirmationFailure";
+  }
+}
 export type Confirmation = {
   title: string;
   description: string;
@@ -478,6 +489,12 @@ export const CredentialDialog = ({
         <p className="modal-description">
           Credential for <strong>{credential.app.name}</strong>
         </p>
+        {credential.replacedSecretID !== undefined && (
+          <p className="modal-description">
+            Secret <code>{credential.replacedSecretID}</code> has been revoked.
+            Update your product with this new key.
+          </p>
+        )}
         <CopyValue label="App ID" value={credential.app.id} />
         <CopyValue label="App secret" value={credential.secret} />
         <CopyValue label="Secret ID" value={credential.id} />
@@ -524,6 +541,7 @@ export const ConfirmDialog = ({
   const [pending, setPending] = useState(false);
   const submitting = useRef(false);
   const [error, setError] = useState<string>();
+  const [retryable, setRetryable] = useState(true);
   const perform = async () => {
     if (submitting.current) return;
     submitting.current = true;
@@ -534,7 +552,10 @@ export const ConfirmDialog = ({
       onClose();
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401) onError(cause);
-      else setError(describeError(cause));
+      else {
+        setError(describeError(cause));
+        if (cause instanceof ConfirmationFailure) setRetryable(cause.retryable);
+      }
     } finally {
       submitting.current = false;
       setPending(false);
@@ -552,9 +573,13 @@ export const ConfirmDialog = ({
           disabled={pending}
           onClick={onClose}
         >
-          Cancel
+          {retryable ? "Cancel" : "Close"}
         </button>
-        <button className="button danger" disabled={pending} onClick={perform}>
+        <button
+          className="button danger"
+          disabled={pending || !retryable}
+          onClick={perform}
+        >
           {pending ? "Working…" : confirmation.action}
         </button>
       </div>

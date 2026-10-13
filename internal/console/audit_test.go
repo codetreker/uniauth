@@ -62,7 +62,14 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	issued := decodeResponse[apps.IssuedSecret](t, response)
 	request("PUT", path+"/secrets/"+issued.ID, `{"name":"Edited private label","description":"Private rotation memo"}`, "secret.update", created.App.ID, "success", "", "", http.StatusOK)
 	request("PUT", path+"/secrets/"+issued.ID, `{}`, "secret.update", created.App.ID, "failure", "invalid_input", "", http.StatusBadRequest)
-	request("DELETE", path+"/secrets/"+issued.ID, "", "secret.revoke", created.App.ID, "success", "", "", http.StatusNoContent)
+	resetPath := path + "/secrets/" + issued.ID + "/reset"
+	response = request("POST", resetPath, "", "secret.reset", created.App.ID, "success", "", "", http.StatusCreated)
+	replacement := decodeResponse[apps.IssuedSecret](t, response)
+	if replacement.Name != "Edited private label" || replacement.Description != "Private rotation memo" {
+		t.Fatalf("reset lost target metadata: %+v", replacement)
+	}
+	request("POST", resetPath, "", "secret.reset", created.App.ID, "failure", "already_revoked", "", http.StatusConflict)
+	request("DELETE", path+"/secrets/"+replacement.ID, "", "secret.revoke", created.App.ID, "success", "", "", http.StatusNoContent)
 	request("DELETE", path, "", "app.delete", created.App.ID, "success", "", "", http.StatusNoContent)
 	request("DELETE", path, "", "app.delete", created.App.ID, "failure", "not_found", "", http.StatusNotFound)
 	request("POST", "/console/api/apps", `{}`, "app.create", "", "failure", "invalid_input", "", http.StatusBadRequest)
@@ -72,7 +79,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sensitive := range []string{created.Secret, issued.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id", "Production server", "Primary deployment credential", "Backup server", "Standby deployment credential", "Edited private label", "Private rotation memo"} {
+	for _, sensitive := range []string{created.Secret, issued.Secret, replacement.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id", "Production server", "Primary deployment credential", "Backup server", "Standby deployment credential", "Edited private label", "Private rotation memo"} {
 		if strings.Contains(string(encoded), sensitive) {
 			t.Fatalf("audit disclosed sensitive data %q: %s", sensitive, encoded)
 		}

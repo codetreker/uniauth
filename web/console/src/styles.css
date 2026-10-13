@@ -965,7 +965,8 @@ tbody tr:last-child td {
 }
 .secret-actions {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
   align-items: center;
   white-space: nowrap;
 }

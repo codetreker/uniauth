@@ -66,6 +66,13 @@ const apiFixture = (overrides: Partial<ConsoleAPI> = {}): ConsoleAPI => ({
     ...input,
     created_at: example.created_at,
   })),
+  resetSecret: vi.fn().mockResolvedValue({
+    id: "sec_replacement",
+    name: "Production",
+    description: "Owner: Operations\nProduction service.",
+    secret: "reset-only-once",
+    created_at: example.created_at,
+  }),
   revokeSecret: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 });
@@ -837,6 +844,355 @@ describe("Administrator Console", () => {
       );
       expect(operation.api.createSecret).toHaveBeenCalledTimes(
         initialSecret ? 0 : 1,
+      );
+    },
+  );
+  it("requires confirmation, shows the replacement once, and owns the app until it is saved", async () => {
+    const issued = {
+      id: "sec_replacement",
+      name: "Production",
+      description: "Owner: Operations\nProduction service.",
+      secret: "reset-only-once",
+      created_at: example.created_at,
+    };
+    let rows: Secret[] = [
+      {
+        id: "sec_original",
+        name: "Production",
+        description: "Owner: Operations\nProduction service.",
+        created_at: example.created_at,
+      },
+    ];
+    const api = apiFixture({
+      listSecrets: vi.fn(async () => structuredClone(rows)),
+      resetSecret: vi.fn(async () => {
+        rows = [
+          { ...rows[0], revoked_at: issued.created_at },
+          {
+            id: issued.id,
+            name: issued.name,
+            description: issued.description,
+            created_at: issued.created_at,
+          },
+        ];
+        return issued;
+      }),
+    });
+    render(<Console api={api} />);
+    await openApp();
+
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset secret sec_original" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Revoke secret sec_original" }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "← All applications" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    });
+    let confirmation = screen.getByRole("dialog", {
+      name: "Reset this secret?",
+    });
+    expect(api.createSecret).not.toHaveBeenCalled();
+    expect(api.revokeSecret).not.toHaveBeenCalled();
+    expect(api.logout).not.toHaveBeenCalled();
+    expect(confirmation.textContent).toContain("sec_original");
+    expect(confirmation.textContent).toContain("Production");
+    expect(confirmation.textContent).toContain("stop working immediately");
+    expect(confirmation.textContent).toContain("shown once");
+    expect(confirmation.textContent).toContain("cannot be recovered");
+    expect(api.resetSecret).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Cancel" }),
+    );
+    expect(api.resetSecret).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Reset secret sec_original" }),
+    ).toBeDefined();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset secret sec_original" }),
+    );
+    confirmation = screen.getByRole("dialog", { name: "Reset this secret?" });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "← All applications",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Reset secret" }),
+    );
+    const credential = await screen.findByRole("dialog", {
+      name: "Save your app secret",
+    });
+    expect(api.resetSecret).toHaveBeenCalledExactlyOnceWith(
+      example.id,
+      "sec_original",
+    );
+    expect(within(credential).getByText("reset-only-once")).toBeDefined();
+    expect(within(credential).getByText("Production")).toBeDefined();
+    expect(
+      within(credential).getByText("Owner: Operations Production service."),
+    ).toBeDefined();
+    expect(credential.textContent).toContain("sec_original has been revoked");
+    expect(
+      (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (
+        within(credential).getByRole("button", {
+          name: "Done",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(within(credential).getByRole("checkbox"));
+    fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(screen.queryByText("reset-only-once")).toBeNull(),
+    );
+    await screen.findByText("Revoked");
+    expect(
+      (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      screen.getByRole("button", { name: "Reset secret sec_replacement" }),
+    ).toBeDefined();
+  });
+
+  it("keeps the confirmation available for retry when the original secret is still active", async () => {
+    const resetSecret = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Connection interrupted."))
+      .mockResolvedValueOnce({
+        id: "sec_replacement",
+        name: "Production",
+        description: "Owner: Operations\nProduction service.",
+        secret: "reset-only-once",
+        created_at: example.created_at,
+      });
+    const api = apiFixture({ resetSecret });
+    render(<Console api={api} />);
+    await openApp();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset secret sec_original" }),
+    );
+    const confirmation = screen.getByRole("dialog", {
+      name: "Reset this secret?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Reset secret" }),
+    );
+    await within(confirmation).findByText("Connection interrupted.");
+    expect(
+      (
+        within(confirmation).getByRole("button", {
+          name: "Reset secret",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Reset secret" }),
+    );
+    await screen.findByText("reset-only-once");
+    expect(resetSecret).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports an already revoked secret when the new plaintext was lost", async () => {
+    const rows: Secret[] = [
+      {
+        id: "sec_original",
+        name: "Production",
+        description: "Owner: Operations\nProduction service.",
+        created_at: example.created_at,
+        revoked_at: example.created_at,
+      },
+      {
+        id: "sec_replacement",
+        name: "Production",
+        description: "Owner: Operations\nProduction service.",
+        created_at: example.created_at,
+      },
+    ];
+    const listSecrets = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: "sec_original",
+          name: "Production",
+          description: "Owner: Operations\nProduction service.",
+          created_at: example.created_at,
+        },
+      ])
+      .mockResolvedValueOnce(rows);
+    const resetSecret = vi
+      .fn()
+      .mockRejectedValue(
+        new APIError(409, "already_revoked", "The secret is already revoked."),
+      );
+    const api = apiFixture({ listSecrets, resetSecret });
+    render(<Console api={api} />);
+    await openApp();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset secret sec_original" }),
+    );
+    const confirmation = screen.getByRole("dialog", {
+      name: "Reset this secret?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Reset secret" }),
+    );
+    await within(confirmation).findByText(/new key was not received/);
+    expect(confirmation.textContent).toContain("Create another secret");
+    expect(
+      (
+        within(confirmation).getByRole("button", {
+          name: "Reset secret",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Close" }),
+    );
+    expect(resetSecret).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("sec_replacement")).toBeDefined();
+    expect(screen.getByText("Revoked")).toBeDefined();
+    expect(screen.queryByText("reset-only-once")).toBeNull();
+  });
+
+  it("preserves the one-time key when session expiry interrupts the post-reset list refresh", async () => {
+    const listSecrets = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: "sec_original",
+          name: "Production",
+          description: "Owner: Operations\nProduction service.",
+          created_at: example.created_at,
+        },
+      ])
+      .mockRejectedValueOnce(
+        new APIError(
+          401,
+          "unauthorized",
+          "Administrator authentication is required.",
+        ),
+      );
+    const api = apiFixture({ listSecrets });
+    render(<Console api={api} />);
+    await openApp();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reset secret sec_original" }),
+    );
+    const confirmation = screen.getByRole("dialog", {
+      name: "Reset this secret?",
+    });
+    fireEvent.click(
+      within(confirmation).getByRole("button", { name: "Reset secret" }),
+    );
+    const credential = await screen.findByRole("dialog", {
+      name: "Save your app secret",
+    });
+    await screen.findByRole("button", { name: "Sign in" });
+    expect(within(credential).getByText("reset-only-once")).toBeDefined();
+    expect(
+      (
+        within(credential).getByRole("button", {
+          name: "Done",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(within(credential).getByRole("checkbox"));
+    fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(screen.queryByText("reset-only-once")).toBeNull(),
+    );
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeDefined();
+  });
+  it.each([true, false])(
+    "settles reset ownership after an unrelated session expiry (success=%s)",
+    async (succeeds) => {
+      const other = { ...example, id: "app_other", name: "Other" };
+      const refresh = Promise.withResolvers<Application[]>();
+      const reset = Promise.withResolvers<IssuedSecret>();
+      const api = apiFixture({
+        listApps: vi
+          .fn()
+          .mockResolvedValue([example, other])
+          .mockResolvedValueOnce([example, other])
+          .mockRejectedValueOnce(new Error("Reconciliation unavailable."))
+          .mockReturnValueOnce(refresh.promise),
+        updateApp: vi.fn().mockRejectedValue(new Error("Write response lost.")),
+        resetSecret: vi.fn().mockReturnValue(reset.promise),
+      });
+      render(<Console api={api} />);
+      await openApp();
+      fireEvent.click(screen.getByRole("button", { name: "Disable app" }));
+      await screen.findByText("State unavailable");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Refresh application" }),
+      );
+      await waitFor(() => expect(api.listApps).toHaveBeenCalledTimes(3));
+      fireEvent.click(
+        screen.getByRole("button", { name: "← All applications" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
+      await screen.findByText("sec_original");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reset secret sec_original" }),
+      );
+      const confirmation = screen.getByRole("dialog", {
+        name: "Reset this secret?",
+      });
+      fireEvent.click(
+        within(confirmation).getByRole("button", { name: "Reset secret" }),
+      );
+      await act(async () =>
+        refresh.reject(new APIError(401, "unauthorized", "Session expired.")),
+      );
+      await screen.findByLabelText("Administrator password");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      if (succeeds) {
+        await act(async () =>
+          reset.resolve({
+            id: "sec_replacement",
+            name: "Production",
+            description: "",
+            secret: "delayed-reset-key",
+            created_at: example.created_at,
+          }),
+        );
+        const credential = await screen.findByRole("dialog", {
+          name: "Save your app secret",
+        });
+        expect(within(credential).getByText("delayed-reset-key")).toBeDefined();
+        fireEvent.click(within(credential).getByRole("checkbox"));
+        fireEvent.click(
+          within(credential).getByRole("button", { name: "Done" }),
+        );
+      } else {
+        await act(async () => reset.reject(new Error("Reset response lost.")));
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      await signInAgain();
+      expect(
+        (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+      expect(api.resetSecret).toHaveBeenCalledExactlyOnceWith(
+        other.id,
+        "sec_original",
       );
     },
   );

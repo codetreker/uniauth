@@ -3,6 +3,7 @@ import { APIError } from "./api";
 import {
   AppEditor,
   ConfirmDialog,
+  ConfirmationFailure,
   CredentialDialog,
   Login,
   SecretEditor,
@@ -38,6 +39,7 @@ type AppPhase =
   | "saving"
   | "deleting"
   | "issuing"
+  | "resetting-secret"
   | "revoking"
   | "credential";
 type SecretDraft = { app: Application; secret: Secret | "new" };
@@ -97,6 +99,7 @@ export const Console = ({
   const secretEditorOwner = useRef<AppOwner | undefined>(undefined);
   const credentialOwner = useRef<AppOwner | undefined>(undefined);
   const secretConfigurationRevision = useRef(0);
+  const secretReadGeneration = useRef(0);
   const secretAppID = useRef<string | undefined>(undefined);
   const confirmationOwner = useRef<AppOwner | undefined>(undefined);
   const logoutPending = useRef(false);
@@ -210,7 +213,8 @@ export const Console = ({
         phase === "issuing" ||
         phase === "saving" ||
         phase === "deleting" ||
-        phase === "revoking",
+        phase === "revoking" ||
+        phase === "resetting-secret",
     );
   const closeCredential = () => {
     const owner = credentialOwner.current;
@@ -353,23 +357,33 @@ export const Console = ({
       setSecrets([]);
     }
     const revision = secretConfigurationRevision.current;
+    const generation = ++secretReadGeneration.current;
     setSecretsError(undefined);
     setSecretsLoading(true);
     api
       .listSecrets(selected)
       .then((result) => {
-        if (active && revision === secretConfigurationRevision.current)
+        if (
+          active &&
+          revision === secretConfigurationRevision.current &&
+          generation === secretReadGeneration.current
+        )
           setSecrets(result);
       })
       .catch((cause: unknown) => {
-        if (active && revision === secretConfigurationRevision.current) {
+        if (
+          active &&
+          revision === secretConfigurationRevision.current &&
+          generation === secretReadGeneration.current
+        ) {
           setSecretsError(describeError(cause));
           if (cause instanceof APIError && cause.status === 401)
             reportError(cause);
         }
       })
       .finally(() => {
-        if (active) setSecretsLoading(false);
+        if (active && generation === secretReadGeneration.current)
+          setSecretsLoading(false);
       });
     return () => {
       active = false;
@@ -552,6 +566,98 @@ export const Console = ({
           else release(owner);
           setSecretRevision((value) => value + 1);
           throw failure;
+        }
+      },
+    });
+  };
+  const resetSecret = (app: Application, secret: Secret) => {
+    if (
+      dialogOwned() ||
+      unsettled.current.has(app.id) ||
+      secret.revoked_at !== undefined ||
+      secretsLoading ||
+      secretsError !== undefined
+    )
+      return;
+    const owner = acquire(app.id, "confirming");
+    if (owner === undefined) return;
+    confirmationOwner.current = owner;
+    const restoreConfirmation = () => {
+      if (confirmationOwner.current === owner) transition(owner, "confirming");
+      else release(owner);
+    };
+    setConfirmation({
+      title: "Reset this secret?",
+      description: `Reset “${secret.name}” (${secret.id}) for ${app.name}? The current key will stop working immediately. The new key will be shown once. If the reset response is lost, the new key cannot be recovered.`,
+      action: "Reset secret",
+      perform: async () => {
+        if (owners.current.get(owner.key)?.phase !== "confirming")
+          throw new Error("Secret reset is already in progress.");
+        transition(owner, "resetting-secret");
+        secretConfigurationRevision.current += 1;
+        try {
+          const issued = await api.resetSecret(app.id, secret.id);
+          secretReadGeneration.current += 1;
+          setSecretsLoading(true);
+          setSecretRevision((value) => value + 1);
+          setCredential({
+            app,
+            secret: issued.secret,
+            id: issued.id,
+            name: issued.name,
+            description: issued.description,
+            replacedSecretID: secret.id,
+          });
+          setError(undefined);
+          transition(owner, "credential");
+          credentialOwner.current = owner;
+          confirmationOwner.current = undefined;
+          setConfirmation(undefined);
+        } catch (cause) {
+          if (cause instanceof APIError && cause.status === 401) {
+            restoreConfirmation();
+            throw cause;
+          }
+          let currentSecrets: Secret[];
+          try {
+            currentSecrets = await api.listSecrets(app.id);
+          } catch (readError) {
+            restoreConfirmation();
+            if (readError instanceof APIError && readError.status === 401) {
+              readError.cause = cause;
+              throw readError;
+            }
+            secretReadGeneration.current += 1;
+            setSecretsError(describeError(readError));
+            setSecretsLoading(false);
+            throw new ConfirmationFailure(
+              `The reset outcome could not be verified: ${describeError(readError)} Refresh the secret list before another reset. If secret ${secret.id} is revoked, create another secret.`,
+              false,
+              new AggregateError(
+                [cause, readError],
+                "Secret reset and reconciliation failed.",
+              ),
+            );
+          }
+          secretReadGeneration.current += 1;
+          setSecrets(currentSecrets);
+          setSecretsError(undefined);
+          setSecretsLoading(false);
+          restoreConfirmation();
+          const currentSecret = currentSecrets.find(
+            (item) => item.id === secret.id,
+          );
+          if (
+            currentSecret === undefined ||
+            currentSecret.revoked_at !== undefined ||
+            (cause instanceof APIError && cause.code === "already_revoked")
+          )
+            throw new ConfirmationFailure(
+              `Secret ${secret.id} is revoked, but the new key was not received. Create another secret and update your product.`,
+              false,
+              cause,
+            );
+          throw cause;
         }
       },
     });
@@ -989,20 +1095,38 @@ export const Console = ({
                                       Edit details
                                     </button>
                                     {secret.revoked_at === undefined && (
-                                      <button
-                                        aria-label={`Revoke secret ${secret.id}`}
-                                        className="text-button danger-text"
-                                        disabled={
-                                          pending ||
-                                          operations.has(current.id) ||
-                                          unavailable.has(current.id)
-                                        }
-                                        onClick={() =>
-                                          revokeSecret(current, secret)
-                                        }
-                                      >
-                                        Revoke
-                                      </button>
+                                      <>
+                                        <button
+                                          aria-label={`Reset secret ${secret.id}`}
+                                          className="text-button"
+                                          disabled={
+                                            pending ||
+                                            operations.has(current.id) ||
+                                            unavailable.has(current.id) ||
+                                            secretsLoading ||
+                                            secretsError !== undefined
+                                          }
+                                          onClick={() =>
+                                            resetSecret(current, secret)
+                                          }
+                                        >
+                                          Reset
+                                        </button>
+                                        <button
+                                          aria-label={`Revoke secret ${secret.id}`}
+                                          className="text-button danger-text"
+                                          disabled={
+                                            pending ||
+                                            operations.has(current.id) ||
+                                            unavailable.has(current.id)
+                                          }
+                                          onClick={() =>
+                                            revokeSecret(current, secret)
+                                          }
+                                        >
+                                          Revoke
+                                        </button>
+                                      </>
                                     )}
                                   </div>
                                 </td>

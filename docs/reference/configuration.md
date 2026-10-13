@@ -43,10 +43,11 @@ headers: Console mutations still require exactly one canonical Origin matching
 the expected string. Registered product callback matching remains exact.
 
 The Console reserves an App during configuration editing, enable/disable updates,
-deletion, and Secret creation, detail updates, and revocation. A new Secret keeps
-its one-time plaintext display and ownership until the operator marks the value
-saved and closes the dialog. A failed non-authentication write retains ownership
-through a server-state reload; only that App is reconciled into the current UI snapshot.
+deletion, and Secret creation, detail updates, reset, and revocation. A new Secret
+keeps its one-time plaintext display and ownership until the operator marks the
+value saved and closes the dialog. A failed non-authentication write retains
+ownership through a server-state reload; only that App is reconciled into the
+current UI snapshot.
 If the reload fails, `State unavailable` blocks new configuration actions until
 explicit Refresh succeeds. An existing draft or delete confirmation may Retry or
 Cancel under its retained owner, and a successful retry may conservatively leave
@@ -63,6 +64,11 @@ The database contains application definitions and SHA-256 digests of randomly
 generated 256-bit product Secrets, their names and descriptions, and lifecycle
 metadata. It contains no end-user records, provider
 tokens, identity results, login transactions, or administrator sessions.
+
+Reset atomically revokes one active credential and issues a new ID and key with
+the same name and description. Its old key stops authenticating after commit,
+so update the product with the new value immediately. If the one-time response
+is lost, create another Secret; the reset value cannot be recovered or replayed.
 
 The administrator password is read directly from `UNIAUTH_ADMIN_PASSWORD` and
 compared exactly with Console login input. It must be a single line: empty values,
@@ -208,10 +214,11 @@ Cleanup logs report aggregate expired-entry counts.
 Authorized management mutations emit `console management operation` events with
 `operation_id`, `request_id`, `action`, `affected_app_id`, `phase=completed`,
 `outcome`, `error_category`, and HTTP `status`. Supported actions are `app.create`,
-`app.update`, `app.delete`, `secret.create`, `secret.update`, and `secret.revoke`.
-The response header `X-Operation-ID` correlates the completed operation with its request;
-successful creation logs the generated App ID. Failed mutations retain safe
-status and error-category information without Secrets, App display values, or
+`app.update`, `app.delete`, `secret.create`, `secret.update`, `secret.reset`, and
+`secret.revoke`. The response header `X-Operation-ID` correlates the completed
+operation with its request; successful creation logs the generated App ID.
+Failed mutations retain safe status and error-category information without
+Secrets, App display values, or
 Secret names and descriptions.
 
 Identity payloads, account identifiers, email addresses, Secrets, tokens, result

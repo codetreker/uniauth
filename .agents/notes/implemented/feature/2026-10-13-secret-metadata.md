@@ -34,6 +34,12 @@ management mutations. The audit action is `secret.update`; payload names and
 descriptions are excluded from logs. The [API reference](../../../../docs/reference/api.md)
 owns exact requests and responses.
 
+The [Secret reset decision](2026-10-13-secret-reset.md) owns immediate
+replacement. It copies the selected active credential's current name and
+description into the new record within the same transaction that revokes the
+old key. Both records retain their metadata for later context, and the one-time
+replacement display includes those copied values.
+
 Embedded SQL migration 2 rebuilds the Secret table with required metadata and
 preserves its App lookup index. Existing active and revoked rows receive the
 deterministic name `Secret <id>` and an empty description. IDs, digests, and
@@ -50,10 +56,11 @@ The Console collects initial metadata with App creation, has separate creation
 and detail-editing forms for later credentials, and lists names, descriptions,
 IDs, and lifecycle state. Named revocation confirms the affected credential.
 The one-time display retains plaintext and per-App ownership until the operator
-marks it saved and closes the dialog. Secret editors and issuance, update, and
-revocation share the existing per-App operation owner with configuration changes
-and deletion. A session-invalidating `401` returns to login and discards idle
-drafts, while owners of operations already in flight remain until their handlers
+marks it saved and closes the dialog. Secret editors and issuance, update,
+reset, and revocation share the existing per-App operation owner with
+configuration changes and deletion. A session-invalidating `401` returns to
+login and discards idle drafts, while owners of operations already in flight
+remain until their handlers
 settle. An issuance authorized before expiry can return success after an
 unrelated request reports `401`; that response is not evidence of pending-write
 failure. Retaining ownership lets a successful App or Secret issuance expose its

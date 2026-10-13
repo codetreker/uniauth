@@ -27,7 +27,7 @@ from live upstream verification.
 | --- | --- |
 | R1 | Implement the service and management API in Go. |
 | R2 | Support personal Microsoft accounts, Google, and GitHub. |
-| R3 | Provide a Console to register Apps and generate, name, describe, edit, rotate, and revoke Secrets. |
+| R3 | Provide a Console to register Apps and generate, name, describe, edit, rotate, reset, and revoke Secrets. |
 | R4 | Return a standard identity profile and every obtained provider identity field under `origin`, within configured and granted scopes. |
 | R5 | Retain complete identity results only in process memory for five minutes from creation. |
 | R6 | Atomically consume an owning App's authenticated result once. |
@@ -82,13 +82,19 @@ App ownership, serialization, expiry, and single consumption.
 Each App has a generated ID, name, enabled state, exact callback URLs, and allowed
 providers. Separate environments use separate registrations. Apps are confidential
 backend integrations; their Secrets remain server-side. Random 256-bit Secrets
-are shown only when created. SQLite retains SHA-256 verification digests,
+are shown only when issued. SQLite retains SHA-256 verification digests,
 compared in constant time, with names, descriptions, and creation and revocation
 metadata. Every credential has an operator-supplied name; an optional description
 records its purpose or rotation notes. Names may repeat because the generated
 ID identifies the credential. Details remain editable after revocation, without
-changing credential validity or timestamps. Rotation allows old and new
+changing credential validity or timestamps. Planned rotation allows old and new
 credentials to coexist until the product switches and revokes the old one.
+Reset atomically revokes one active Secret and issues a replacement with a new
+ID and key, copying the selected credential's name and description. Subsequent
+authentication rejects the old key. The Console confirms the affected named
+credential and displays the replacement once. The
+[reset decision](../../.agents/notes/implemented/feature/2026-10-13-secret-reset.md)
+owns this lifecycle and its response-loss cost.
 
 App creation requires initial Secret metadata; configuration replacement edits
 only the App. Later Secret creation and metadata updates have separate JSON
@@ -128,11 +134,13 @@ are rate-limited. Changing the configured password requires a restart, which
 invalidates these administrator sessions.
 
 Console configuration editing, enable/disable changes, deletion, and Secret
-creation, detail updates, and revocation share one operation owner for each App. Ownership is acquired before asynchronous work or
-render updates, so overlapping controls cannot submit an older App snapshot.
-Opening an editor or confirmation reserves the App until completion or
-cancellation. A newly created Secret keeps its one-time plaintext display and
-App ownership until the operator marks the value saved and closes the dialog. Pending updates display `Updating…`; committed response data becomes
+creation, detail updates, reset, and revocation share one operation owner for
+each App. Ownership is acquired before asynchronous work or render updates, so
+overlapping controls cannot submit an older App snapshot. Opening an editor or
+confirmation reserves the App until completion or cancellation. A newly issued
+Secret keeps its one-time plaintext display and App ownership until the operator
+marks the value saved and closes the dialog. Pending updates display
+`Updating…`; committed response data becomes
 the authoritative App configuration before later actions are allowed. A failed
 configuration write keeps its owner while the UI reloads server configuration
 and reconciles only the affected App. If that reload also fails, the App shows

@@ -92,6 +92,7 @@ export interface ConsoleAPI {
     secretID: string,
     input: SecretInput,
   ) => Promise<Secret>;
+  resetSecret: (id: string, secretID: string) => Promise<IssuedSecret>;
   revokeSecret: (id: string, secretID: string) => Promise<void>;
 }
 
@@ -161,6 +162,13 @@ export const createAPI = (fetcher: typeof fetch = fetch): ConsoleAPI => {
           `${appPath(id)}/secrets/${encodeURIComponent(secretID)}`,
           "PUT",
           input,
+        ),
+      ),
+    resetSecret: async (id, secretID) =>
+      issuedSchema.parse(
+        await request(
+          `${appPath(id)}/secrets/${encodeURIComponent(secretID)}/reset`,
+          "POST",
         ),
       ),
     revokeSecret: async (id, secretID) => {

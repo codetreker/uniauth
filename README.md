@@ -70,6 +70,12 @@ providers. Start a browser login at
 `/auth/authorize` with `app_id`, `provider`, `redirect_uri`, and a random `state`
 bound to that browser's pending product login.
 
+For planned credential rotation, create a second Secret, update the product,
+then revoke the previous one. Reset an active Secret when its current key must
+stop working immediately. The replacement keeps its name and description. The
+Console asks for confirmation and shows the new key once; save it and update the
+product.
+
 The product callback receives `code` and the original `state`. Validate and
 consume the pending product login before the backend sends an authenticated
 `POST /auth/result` with `{"code":"RECEIVED_CODE"}`. Use HTTP Basic authentication

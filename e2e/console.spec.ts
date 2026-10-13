@@ -343,6 +343,70 @@ test("administrator manages applications and one-time credentials against the se
   expect(replacement.secret).not.toBe(first.secret);
   expect(replacement.id).not.toBe(first.id);
   await page
+    .getByRole("button", {
+      name: `Reset secret ${replacement.id}`,
+      exact: true,
+    })
+    .click();
+  const reset = page.getByRole("dialog", { name: "Reset this secret?" });
+  await expect(reset).toContainText(replacement.id);
+  await expect(reset).toContainText("Production replacement");
+  await expect(reset).toContainText("stop working immediately");
+  await expect(reset).toContainText("shown once");
+  await reset.getByRole("button", { name: "Cancel" }).click();
+  await expect(reset).not.toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("Active");
+  const afterCancel = await context.request.get(
+    `/console/api/apps/${first.appID}/secrets`,
+  );
+  expect(afterCancel.ok()).toBe(true);
+  expect(
+    (await afterCancel.json()).secrets.find(
+      (secret: { id: string }) => secret.id === replacement.id,
+    ).revoked_at,
+  ).toBeUndefined();
+  await page
+    .getByRole("button", {
+      name: `Reset secret ${replacement.id}`,
+      exact: true,
+    })
+    .click();
+  await reset.getByRole("button", { name: "Reset secret" }).click();
+  const resetDialog = page.getByRole("dialog", {
+    name: "Save your app secret",
+  });
+  await expect(resetDialog).toContainText("Production replacement");
+  await expect(resetDialog).toContainText("No description");
+  const resetCredential = await saveCredential(page);
+  expect(resetCredential.secret).not.toBe(replacement.secret);
+  expect(resetCredential.id).not.toBe(replacement.id);
+  await expect(
+    page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("Revoked");
+  await expect(
+    page.getByRole("row").filter({ hasText: resetCredential.id }),
+  ).toContainText("Active");
+  const retrieveWith = async (secret: string) => {
+    const response = await context.request.post("/auth/result", {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${first.appID}:${secret}`).toString("base64")}`,
+        "Content-Type": "application/json",
+      },
+      data: { code: "unknown-result-code" },
+    });
+    return { status: response.status(), body: await response.json() };
+  };
+  expect(await retrieveWith(replacement.secret)).toMatchObject({
+    status: 401,
+    body: { error: { code: "invalid_app" } },
+  });
+  expect(await retrieveWith(resetCredential.secret)).toMatchObject({
+    status: 410,
+    body: { error: { code: "result_unavailable" } },
+  });
+  await page
     .getByRole("button", { name: `Revoke secret ${first.id}`, exact: true })
     .click();
   const revoke = page.getByRole("dialog", { name: "Revoke this secret?" });
@@ -356,6 +420,9 @@ test("administrator manages applications and one-time credentials against the se
   ).toContainText("Revoked");
   await expect(
     page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("Revoked");
+  await expect(
+    page.getByRole("row").filter({ hasText: resetCredential.id }),
   ).toContainText("Active");
   await page
     .getByRole("button", {
@@ -389,12 +456,15 @@ test("administrator manages applications and one-time credentials against the se
   await expect(page.getByText(replacement.secret, { exact: true })).toHaveCount(
     0,
   );
+  await expect(
+    page.getByText(resetCredential.secret, { exact: true }),
+  ).toHaveCount(0);
   const listed = await context.request.get(
     `/console/api/apps/${first.appID}/secrets`,
   );
   expect(listed.ok()).toBe(true);
   const listedBody = await listed.json();
-  expect(listedBody.secrets).toHaveLength(2);
+  expect(listedBody.secrets).toHaveLength(3);
   expect(listedBody.secrets).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -405,6 +475,12 @@ test("administrator manages applications and one-time credentials against the se
       }),
       expect.objectContaining({
         id: replacement.id,
+        name: "Production replacement",
+        description: "",
+        revoked_at: expect.any(String),
+      }),
+      expect.objectContaining({
+        id: resetCredential.id,
         name: "Production replacement",
         description: "",
       }),
@@ -419,6 +495,7 @@ test("administrator manages applications and one-time credentials against the se
   const listing = JSON.stringify(listedBody);
   expect(listing).not.toContain(first.secret);
   expect(listing).not.toContain(replacement.secret);
+  expect(listing).not.toContain(resetCredential.secret);
 
   await page
     .getByRole("button", { name: "Delete application", exact: true })

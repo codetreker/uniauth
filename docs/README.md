@@ -12,6 +12,7 @@
 | [Normalized identity decision](../.agents/notes/implemented/architecture/2026-10-13-normalized-identity.md) | Standard profile mapping, complete original data, and wire-format costs. |
 | [Secret metadata decision](../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md) | Credential names and descriptions, creation and detail-update contracts, and migration of existing credentials. |
 | [Product SDK decision](../.agents/notes/implemented/feature/2026-10-13-product-sdks.md) | SDK responsibilities, transport and normalized data contracts, and package-consumer validation. |
+| [Secret reset decision](../.agents/notes/implemented/feature/2026-10-13-secret-reset.md) | Immediate App credential replacement, confirmation, and response-loss cost. |
 | [Compose release decision](../.agents/notes/implemented/process/2026-10-13-compose-releases.md) | Manual release initiation and Compose deployment ownership. |
 | [Tag-reference decision](../.agents/notes/implemented/process/2026-10-13-tag-image-references.md) | UTC date, published-tag sequence, and commit hash allocation shared by publication, anonymous pull, and deployment. |
 | [Public GHCR decision](../.agents/notes/implemented/process/2026-10-13-public-ghcr-images.md) | Public image access and package visibility ownership. |
@@ -24,6 +25,7 @@
 | [Normalized identity receipt](tasks/2026-10-13-normalized-identity.md) | Mapping, handover, coverage, and browser validation for the standard identity contract. |
 | [Product SDK receipt](tasks/2026-10-13-product-sdks.md) | Original SDK delivery validation before normalized contract integration. |
 | [SDK/main integration receipt](tasks/2026-10-13-sdk-main-integration.md) | SDK alignment with normalized identities, deployment merge resolution, and updated validation. |
+| [Secret reset receipt](tasks/2026-10-13-secret-reset.md) | Atomic replacement, confirmed one-time display, authentication probes, and review validation. |
 | [Release validation](tasks/2026-10-13-compose-releases.md) | Observed release checks and verification limits. |
 | [GHCR validation](tasks/2026-10-13-public-ghcr-images.md) | Publication research and external setup limits. |
 | [Agent Notes](../.agents/notes/README.md) | Decision-record lifecycle and retention. |

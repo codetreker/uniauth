@@ -32,8 +32,11 @@ multiline description preservation, SQL upgrades of active and revoked rows
 without digest or lifecycle changes, and detail updates that do not reissue,
 revoke, or expose credentials. Management API assertions cover required initial
 metadata, active and revoked editing, record ownership, and `secret.update`
-audit events without names or descriptions. Controlled upstream fixtures provide
-token, signing-key, and profile responses, including invalid responses and faults. These tests preserve errors
+audit events without names or descriptions. Reset assertions verify old-key
+rejection, new-key authentication, unchanged unrelated active keys, exact name
+and description carryover, single-winner concurrent resets, and transactional
+rollback. Controlled upstream fixtures provide token, signing-key, and profile
+responses, including invalid responses and faults. These tests preserve errors
 and observe externally visible effects. Console origin regressions cover browser
 serialization of configured uppercase and IDNA domains, IPv6 literals, and
 default or zero-padded ports through login and CRUD requests. Foreign, null,
@@ -42,8 +45,8 @@ noncanonical, and multiple Origin values and invalid CSRF remain rejected.
 Frontend configuration regressions hold mutation responses open after the
 simulated backend commits. They verify that Edit, enable/disable, and deletion
 cannot overlap for one App, repeated submissions start one request, and a later
-editor uses the committed configuration. Secret creation, detail updates, and
-revocation share that owner; the one-time credential dialog retains it until the
+editor uses the committed configuration. Secret creation, detail updates, reset,
+and revocation share that owner; the one-time credential dialog retains it until the
 value is marked saved and the dialog is closed. Failure cases hold ownership
 through server-state reconciliation and verify that only the affected App
 changes, preserving other accepted mutations.
@@ -93,9 +96,10 @@ Playwright uses one worker and no automatic retries. It starts a fresh local Go
 service with isolated SQLite data and the production Console, and a separate
 mockup using production components and styles. Scenarios cover administrator
 login, App management, named one-time Secret display, exact multiline
-descriptions, active and revoked detail editing, rotation and named revocation,
-and responsive production-component mockup interaction. Existing browsers or repository-local temporary
-browser installations prevent task tooling from leaving a permanent installation.
+descriptions, active and revoked detail editing, rotation, confirmed named reset,
+named revocation, and responsive production-component mockup interaction.
+Existing browsers or repository-local temporary browser installations prevent
+task tooling from leaving a permanent installation.
 
 The [configuration reference](../../../../docs/reference/configuration.md) owns
 validation commands and limits. The

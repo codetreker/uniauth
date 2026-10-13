@@ -133,18 +133,16 @@ export const createMockAPI = (): ConsoleAPI => {
     if (!parsed.success)
       throw new APIError(400, "invalid_input", parsed.error.issues[0].message);
   };
+  const newSecret = (input: SecretInput) => ({
+    id: `sec_preview_${sequence++}`,
+    ...input,
+    secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", ""),
+    created_at: new Date().toISOString(),
+  });
   const issueSecret = (id: string, input: SecretInput) => {
     validateSecret(input);
     getApp(id);
-    const issued = {
-      id: `sec_preview_${sequence++}`,
-      ...input,
-      secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll(
-        "-",
-        "",
-      ),
-      created_at: new Date().toISOString(),
-    };
+    const issued = newSecret(input);
     const existing = credentials.get(id);
     if (existing === undefined)
       throw new Error("Preview application credentials are missing.");
@@ -261,6 +259,41 @@ export const createMockAPI = (): ConsoleAPI => {
         secrets.map((item) => (item.id === secretID ? updated : item)),
       );
       return structuredClone(updated);
+    },
+    resetSecret: async (id, secretID) => {
+      await wait();
+      authorize();
+      getApp(id);
+      const secrets = credentials.get(id);
+      if (secrets === undefined)
+        throw new Error("Preview application credentials are missing.");
+      const target = secrets.find((secret) => secret.id === secretID);
+      if (target === undefined)
+        throw new APIError(404, "not_found", "The secret was not found.");
+      if (target.revoked_at !== undefined)
+        throw new APIError(
+          409,
+          "already_revoked",
+          "The secret is already revoked.",
+        );
+      const issued = newSecret({
+        name: target.name,
+        description: target.description,
+      });
+      credentials.set(id, [
+        ...secrets.map((secret) =>
+          secret.id === secretID
+            ? { ...secret, revoked_at: issued.created_at }
+            : secret,
+        ),
+        {
+          id: issued.id,
+          name: issued.name,
+          description: issued.description,
+          created_at: issued.created_at,
+        },
+      ]);
+      return issued;
     },
     revokeSecret: async (id, secretID) => {
       await wait();

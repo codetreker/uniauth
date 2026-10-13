@@ -257,6 +257,38 @@ func (s *Store) RevokeSecret(ctx context.Context, appID, secretID string) error 
 	return requireAffected(result)
 }
 
+func (s *Store) ResetSecret(ctx context.Context, appID, secretID string) (IssuedSecret, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return IssuedSecret{}, fmt.Errorf("begin credential reset: %w", err)
+	}
+	defer tx.Rollback()
+	var metadata SecretInput
+	err = tx.QueryRowContext(ctx, "UPDATE app_secrets SET revoked_at = ? WHERE app_id = ? AND id = ? AND revoked_at IS NULL RETURNING name, description", time.Now().UTC().UnixNano(), appID, secretID).Scan(&metadata.Name, &metadata.Description)
+	if errors.Is(err, sql.ErrNoRows) {
+		var found int
+		err = tx.QueryRowContext(ctx, "SELECT 1 FROM app_secrets WHERE app_id = ? AND id = ?", appID, secretID).Scan(&found)
+		if errors.Is(err, sql.ErrNoRows) {
+			return IssuedSecret{}, ErrNotFound
+		}
+		if err != nil {
+			return IssuedSecret{}, fmt.Errorf("check credential reset state: %w", err)
+		}
+		return IssuedSecret{}, ErrRevoked
+	}
+	if err != nil {
+		return IssuedSecret{}, fmt.Errorf("revoke app credential for reset: %w", err)
+	}
+	issued, digest := newCredential(metadata)
+	if err := insertCredential(ctx, tx, appID, issued, digest); err != nil {
+		return IssuedSecret{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return IssuedSecret{}, fmt.Errorf("commit credential reset: %w", err)
+	}
+	return issued, nil
+}
+
 func (s *Store) Authenticate(ctx context.Context, appID, plaintext string) (App, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
