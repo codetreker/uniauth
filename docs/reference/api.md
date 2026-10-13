@@ -5,6 +5,12 @@ retrieval. Products need a confidential backend with an App Secret. Microsoft
 and Google use OIDC upstream; this downstream protocol does not issue ID tokens,
 access tokens, refresh tokens, or central login sessions.
 
+[Go and JavaScript SDKs](sdks.md) implement these product endpoints without changing
+the protocol. They validate URLs and callback parameters and preserve complete
+identity data. Products retain atomic browser-bound pending-state consumption and
+session ownership. A retrieval SDK sends one POST and does not follow redirects
+or retry a consumed code.
+
 Production traffic requires HTTPS. Authentication and Console API responses use
 `Cache-Control: no-store`. Requests have an `X-Request-ID` for log correlation.
 Errors use this JSON shape unless an unsupported route or HTTP method is handled
@@ -154,6 +160,14 @@ a type mismatch fails authentication, including in a lower-priority source
 field. Unknown source fields retain their original meaning. The API has no
 `subject` or `sources` aliases. Whitespace and JSON object ordering are not
 contractual.
+
+SDKs validate that all seven fields are present with these types and retain
+nullable values and explicit `false`. They expose the server's profile values
+without deriving replacements from `origin`. Go retains `origin` as `Origin`
+(`map[string]json.RawMessage`) and the entire received body as `RawJSON`; JavaScript retains
+parsed unknown original data as `origin` and the body as `rawJSON`. Parsed
+JavaScript numbers inside `origin` can lose integer or decimal precision; use
+the retained raw JSON when exact representation matters.
 
 ### Provider field mapping
 

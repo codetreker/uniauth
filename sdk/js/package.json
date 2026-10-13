@@ -1,0 +1,34 @@
+{
+  "name": "@codetreker/uniauth",
+  "version": "0.1.0",
+  "description": "UniAuth product backend SDK",
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --test test/*.test.mjs",
+    "test:package": "pnpm build && node scripts/test-package.mjs",
+    "format:check": "prettier --check src test scripts '*.json' README.md",
+    "prepack": "pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2"
+  }
+}

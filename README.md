@@ -67,20 +67,33 @@ provider-qualified `id`, standard `email`, `email_verified`, `name`, and
 Unavailable standard profile fields are `null`; an explicit verification value
 of `false` remains `false`. Products control account linking and email policy.
 
-Keep Secrets and result retrieval server-side. An expired or consumed code, a
-service restart, or a response lost after consumption requires a fresh login.
-The [API reference](docs/reference/api.md) defines requests, identity sources,
-and error handling.
+Product backends can use the [Go SDK](sdk/go/README.md) or
+[JavaScript SDK](sdk/js/README.md) to create authorization URLs, validate callback
+parameters, and retrieve complete identity results. The JavaScript package emits
+ESM and TypeScript declarations for Node.js 24 or later. Both use the existing
+HTTP protocol, expose the server's seven-field normalized identity and complete
+`origin`, and leave pending state, users, and sessions with the product. Missing
+standard fields or incompatible response types are SDK protocol errors.
+
+Keep Secrets and result retrieval server-side. Atomically validate and consume the
+browser-bound pending login state before the one-time result request. A lost,
+aborted, or malformed retrieval response may already have consumed the result;
+start a fresh login rather than retrying the code. See the
+[SDK reference](docs/reference/sdks.md) for API examples and local package use,
+and the [API reference](docs/reference/api.md) for the underlying protocol.
+Package metadata and local artifact validation do not establish a registry
+release; this delivery does not publish a Go tag or JavaScript package.
 
 ## Development
 
 | Command | Purpose |
 | --- | --- |
 | `make setup` | Install pinned Go and pnpm dependencies using repository-local caches. |
-| `make build` | Build Console assets and the Go executable in `.tmp/bin/`. |
-| `make check` | Check documentation, formatting, Go vet, and Console types and formatting. |
-| `make test` | Enforce Go coverage and race checks, then run Console unit tests. |
-| `make coverage` | Run the authoritative go-cov policy. |
+| `make build` | Build Console assets, both SDKs, and the Go executable in `.tmp/bin/`. |
+| `make sdks` | Build the standalone Go module and emitted JavaScript/types. |
+| `make check` | Check documentation, formatting, Go vet for both modules, and Console/SDK types and formatting. |
+| `make test` | Enforce both Go coverage/race gates, run Console/JavaScript tests, and validate package consumers plus both SDKs against the gateway. |
+| `make coverage` | Run the authoritative go-cov policy for the service and standalone Go SDK. |
 | `make browser` | Build and run Playwright Console and mockup scenarios. |
 | `make mockup` | Open the interactive Console preview using production components and styles. |
 

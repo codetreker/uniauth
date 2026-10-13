@@ -16,6 +16,7 @@ data/
 bin/
 node_modules/
 web/console/dist/
+sdk/js/dist/
 *.exe
 *.exe~
 *.dll

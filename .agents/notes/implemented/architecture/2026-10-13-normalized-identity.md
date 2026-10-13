@@ -46,7 +46,11 @@ identity and continues to own App binding, serialization, capacity, five-minute
 expiry, and atomic single consumption. No second provider interface or profile
 store is needed. The [API reference](../../../../docs/reference/api.md) owns the
 exact consumer contract; the [blueprint](../../../../docs/blueprint/README.md)
-owns component responsibilities.
+owns component responsibilities. The Go and JavaScript SDKs expose these
+server-provided fields, require all seven fields and their nullable types, and
+retain `origin` and whole-response raw JSON. They do not recompute provider
+mapping. The [SDK decision](../feature/2026-10-13-product-sdks.md) owns client
+representation and transport behavior.
 
 This decision partially supersedes the response shape in the
 [gateway ownership and handover decision](2026-10-12-authentication-gateway.md).

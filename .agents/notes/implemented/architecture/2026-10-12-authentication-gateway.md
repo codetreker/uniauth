@@ -32,8 +32,7 @@ ownership in the Console. Opening an editor or delete confirmation reserves the
 App; synchronous ownership checks prevent overlapping clicks before React renders
 updated disabled controls. Asynchronous operations retain ownership until they
 settle and reconcile successful authoritative responses before allowing another
-operation. Pending updates are shown as
-`Updating…`. On non-authentication write failure, ownership remains held while
+operation. Pending updates are shown as `Updating…`. On non-authentication write failure, ownership remains held while
 server configuration is reloaded and only the affected App is reconciled. If the
 reload also fails, the App shows `State unavailable` and new configuration
 actions require an explicit successful Refresh. Existing drafts and delete
@@ -62,6 +61,16 @@ and Secret to retrieve identity JSON. The complete payload is serialized before
 insertion into memory, bound to the App, and expires five minutes after creation.
 Ownership and expiry checks and deletion occur atomically; one claim succeeds.
 Authentication failures and wrong-App claims do not consume another App's result.
+
+Product-facing Go and JavaScript SDKs expose that same HTTP handover without
+adding state, users, sessions, or administrator authority. Their callback parser
+checks expected state, while the product atomically validates and consumes its
+browser-bound pending login before retrieval. The
+[SDK decision](../feature/2026-10-13-product-sdks.md) owns client packaging,
+transport errors, and complete raw identity representation. The SDKs expose the
+current seven-field normalized profile and `origin`, require their presence and
+types, and retain nullable values without deriving provider mappings. SDK delivery
+does not supersede gateway ownership or memory retention.
 
 Unknown JSON fields, explicit nulls, false booleans, complete email arrays, and
 binary Microsoft photo data retain their source meaning under `origin` alongside
