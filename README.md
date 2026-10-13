@@ -44,12 +44,15 @@ variables and provider registration callbacks.
 
 ## Release with Docker Compose
 
-The Release workflow publishes to `ghcr.io/codetreker/uniauth` and verifies
-anonymous pull before copying `deploy/docker-compose.yml` to staging and prod.
-It runs `docker compose up -d` in each deployment directory using the same image
-digest. The VM owns `.env` and Caddy configuration; public images need no registry
-login. See the [deployment reference](docs/reference/deployment.md) for GitHub
-settings, the one-time Public package setting, and VM prerequisites.
+Start the Release workflow manually on `main` from GitHub Actions or with
+`gh workflow run release.yml --ref main`. It publishes to
+`ghcr.io/codetreker/uniauth` with tags formed from `sha-` and the first 16
+characters of the source commit hash, then verifies anonymous pull before
+copying `deploy/docker-compose.yml` to staging and prod. It runs `docker compose up -d`
+in each deployment directory using the same image digest. The VM owns `.env`
+and Caddy configuration; public images need no registry login. See the
+[deployment reference](docs/reference/deployment.md) for GitHub settings, the
+one-time Public package setting, and VM prerequisites.
 
 ## Connect a product
 
