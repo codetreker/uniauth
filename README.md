@@ -42,6 +42,15 @@ terminated by a reverse proxy in front of the service. See the
 [configuration reference](docs/reference/configuration.md) for environment
 variables and provider registration callbacks.
 
+## Release with Docker Compose
+
+The Release workflow builds and publishes an image, then copies
+`deploy/docker-compose.yml` to staging and prod and runs `docker compose up -d`
+in each configured deployment directory. Both environments use the same image digest.
+The VM owns `.env`, registry login, and Caddy configuration. See the
+[deployment reference](docs/reference/deployment.md) for GitHub settings and VM
+prerequisites.
+
 ## Connect a product
 
 Create an App in the Console and save its Secret in the product backend. Register

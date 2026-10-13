@@ -32,6 +32,9 @@ enabled `localhost` or loopback IP development addresses. The server listener
 uses HTTP; terminate TLS at a reverse proxy and configure the actual external
 origin. The service does not infer its public origin from forwarded headers.
 
+The [Docker Compose deployment reference](deployment.md) defines image publication,
+environment deployment directories, and VM-owned `.env` configuration.
+
 Console request-origin validation derives the browser-serialized origin from the
 configured URL. Domain names use IDNA ASCII conversion and lowercase; valid IPv6
 literals are serialized canonically. Ports are decimal without leading zeros;
