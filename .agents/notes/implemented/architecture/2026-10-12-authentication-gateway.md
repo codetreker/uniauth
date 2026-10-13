@@ -15,7 +15,10 @@ end-user authentication.
 
 UniAuth is a Go gateway with an embedded React and TypeScript administrator
 Console. SQLite persists App definitions and verification digests of product
-Secrets. Upstream credentials and the Console administrator password come from
+Secrets and their names, descriptions, and lifecycle metadata. The
+[Secret metadata decision](../feature/2026-10-13-secret-metadata.md) owns their
+validation, creation and detail-update APIs, and existing-database migration.
+Upstream credentials and the Console administrator password come from
 deployment configuration. No end-user table or central SSO session is created.
 The Console has its own eight-hour in-memory session and grants no authority to
 product users.
@@ -33,19 +36,26 @@ Origin headers are not normalized. This allows a browser's serialized origin to
 match a configured uppercase host or explicit default port while retaining exact
 checks against foreign, null, or noncanonical request values.
 
-Configuration edits, enabled-state changes, and deletion share per-App operation
-ownership in the Console. Opening an editor or delete confirmation reserves the
-App; synchronous ownership checks prevent overlapping clicks before React renders
-updated disabled controls. Asynchronous operations retain ownership until they
-settle and reconcile successful authoritative responses before allowing another
-operation. Pending updates are shown as `Updating…`. On non-authentication write failure, ownership remains held while
-server configuration is reloaded and only the affected App is reconciled. If the
-reload also fails, the App shows `State unavailable` and new configuration
+Configuration edits, enabled-state changes, deletion, and Secret creation, detail
+updates, and revocation share per-App operation ownership in the Console. Opening
+an editor or confirmation reserves the App; synchronous ownership checks prevent
+overlapping clicks before React renders updated disabled controls. New credentials retain their one-time plaintext
+display and ownership until the operator marks the value saved and closes the
+dialog. Asynchronous operations retain ownership until they settle and reconcile
+successful authoritative responses before allowing another operation. Pending
+updates are shown as `Updating…`. On non-authentication configuration write
+failure, ownership remains held while server configuration is reloaded and only
+the affected App is reconciled. If the reload also fails, the App shows `State unavailable` and new configuration
 actions require an explicit successful Refresh. Existing drafts and delete
 confirmations retain ownership and allow Retry or Cancel; a successful owned
-retry may leave the unavailable marker until Refresh. Session expiry returns to
-administrator login. This prevents a stale edit snapshot from reversing a disable
-that has already committed without pretending a failed response proves the
+retry may leave the unavailable marker until Refresh. A session-invalidating
+`401` returns to administrator login and discards idle drafts, but owners of
+already in-flight operations survive until their handlers settle. Successful
+issuance retains its one-time display through Saved and Done; failed operations
+release the retained owner. The [Secret metadata decision](../feature/2026-10-13-secret-metadata.md)
+records why another request's `401` does not prove pending issuance failed.
+This prevents a stale edit snapshot from reversing a disable that has already
+committed without pretending a failed response proves the
 server rejected the write.
 
 Each login has separate product and provider state, browser binding, PKCE, and
@@ -123,7 +133,9 @@ not establish that capability.
 Products integrate one login-and-retrieval protocol and receive complete
 provider-specific data without managing upstream OAuth credentials. Product
 Secrets remain server-side, are shown at creation only, and can overlap during
-rotation before old credentials are revoked. Console mutation ownership is local
+rotation before old credentials are revoked. Names and descriptions remain
+available and editable after revocation without changing credential validity.
+Console mutation ownership is local
 to one UI instance; it does not establish server-side optimistic concurrency or
 coordinate separate administrator browsers. Those API clients still submit full
 App replacements.

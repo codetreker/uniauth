@@ -97,7 +97,7 @@ func newGateway(t *testing.T) *gateway {
 	g := &gateway{}
 	g.clock.Store(time.Now().UnixNano())
 	for i, destination := range []*apps.CreatedApp{&g.app, &g.other} {
-		*destination, err = store.Create(t.Context(), apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}})
+		*destination, err = store.Create(t.Context(), apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: apps.SecretInput{Name: "SDK fixture"}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -943,6 +943,51 @@ tbody tr:last-child td {
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+.secret-details {
+  min-width: 210px;
+  max-width: 440px;
+}
+.secret-details strong,
+.credential-details strong {
+  display: block;
+  color: #344f39;
+  overflow-wrap: anywhere;
+}
+.secret-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  margin: 7px 0;
+}
+.secret-details code {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.secret-actions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  white-space: nowrap;
+}
+.credential-details {
+  margin: 20px 0;
+}
+.credential-details .field-label {
+  display: block;
+  margin-top: 14px;
+}
+.initial-secret {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #eef1ec;
+}
+.initial-secret h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.initial-secret > .hint {
+  margin: 8px 0 20px;
+}
 .revoked-date {
   font-size: 9px;
   display: block;
@@ -1720,6 +1765,14 @@ tbody tr:last-child td {
   }
   .secrets-panel td code {
     font-size: 9px;
+  }
+  .secret-details {
+    min-width: 0;
+  }
+  .secret-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
   }
   .secrets-panel th:nth-child(2),
   .secrets-panel td:nth-child(2) {

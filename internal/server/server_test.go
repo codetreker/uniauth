@@ -107,7 +107,7 @@ func TestAdministratorProductFlow(t *testing.T) {
 	if !bytes.Contains(data, []byte(`"id":"github","available":true`)) {
 		t.Fatalf("provider status: %s", data)
 	}
-	res = request("POST", "/console/api/apps", `{"name":"Product","enabled":true,"redirect_uris":["https://product.example/callback?context=x"],"providers":["github"]}`, login.CSRF)
+	res = request("POST", "/console/api/apps", `{"name":"Product","enabled":true,"redirect_uris":["https://product.example/callback?context=x"],"providers":["github"],"initial_secret":{"name":"Server test","description":"Protocol fixture"}}`, login.CSRF)
 	if res.StatusCode != 201 {
 		t.Fatalf("create app: %d", res.StatusCode)
 	}

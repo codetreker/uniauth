@@ -25,6 +25,11 @@ test("administrator manages applications and one-time credentials against the se
   context,
 }) => {
   const failures: string[] = [];
+  let secretCreations = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/secrets"))
+      secretCreations += 1;
+  });
   page.on("pageerror", (error) => failures.push(error.message));
   await page.goto("/console/");
   await expect(
@@ -87,6 +92,12 @@ test("administrator manages applications and one-time credentials against the se
   });
   await editor.getByLabel("Application name").fill("Browser product");
   await editor
+    .getByLabel("Secret name", { exact: true })
+    .fill("Production backend");
+  await editor
+    .getByLabel("Description", { exact: true })
+    .fill("  Deployment owner\n生产环境 🔑  ");
+  await editor
     .getByLabel("Callback URLs", { exact: true })
     .fill("https://product.example/auth/callback?code=reserved");
   await editor.getByRole("checkbox", { name: /Google/ }).check();
@@ -100,7 +111,7 @@ test("administrator manages applications and one-time credentials against the se
     .click();
   expect((await invalid).status()).toBe(400);
   await expect(editor.getByRole("alert")).toContainText(
-    "configuration is invalid",
+    "The application configuration or credential metadata is invalid.",
   );
   await expect(editor.getByLabel("Application name")).toHaveValue(
     "Browser product",
@@ -115,6 +126,15 @@ test("administrator manages applications and one-time credentials against the se
   await editor
     .getByRole("button", { name: "Create application", exact: true })
     .click();
+  const firstDialog = page.getByRole("dialog", {
+    name: "Save your app secret",
+  });
+  await expect(
+    firstDialog.getByText("Production backend", { exact: true }),
+  ).toBeVisible();
+  await expect(firstDialog.locator(".secret-description")).toHaveText(
+    "  Deployment owner\n生产环境 🔑  ",
+  );
   const first = await saveCredential(page);
   await expect(
     page.getByRole("heading", { name: "Browser product", exact: true }),
@@ -232,13 +252,101 @@ test("administrator manages applications and one-time credentials against the se
   await page
     .getByRole("button", { name: "Create secret", exact: true })
     .click();
+  const secretEditor = page.getByRole("dialog", {
+    name: "Create secret",
+    exact: true,
+  });
+  await secretEditor
+    .getByLabel("Secret name", { exact: true })
+    .fill("Staging backend");
+  await secretEditor
+    .getByLabel("Description", { exact: true })
+    .fill("  Staging\nOwner: Integration team  ");
+  const secretURL = `${appURL}/secrets`;
+  const issuedCommitted = Promise.withResolvers<void>();
+  const releaseIssuance = Promise.withResolvers<void>();
+  let issuanceRequests = 0;
+  await page.route(secretURL, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    issuanceRequests += 1;
+    try {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      issuedCommitted.resolve();
+      await releaseIssuance.promise;
+      await route.fulfill({ response });
+    } catch (error) {
+      issuedCommitted.reject(error);
+      throw error;
+    }
+  });
+  try {
+    await secretEditor
+      .getByRole("button", { name: "Create secret", exact: true })
+      .click();
+    await issuedCommitted.promise;
+    await expect(
+      secretEditor.getByRole("button", { name: "Saving…" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Sign out", exact: true }),
+    ).toBeDisabled();
+    await page
+      .getByRole("button", { name: "Delete application", exact: true })
+      .evaluate((button) => (button as HTMLButtonElement).click());
+    await page
+      .getByRole("button", { name: "← All applications" })
+      .evaluate((button) => (button as HTMLButtonElement).click());
+    await expect(
+      page.getByRole("dialog", { name: "Delete application?" }),
+    ).not.toBeVisible();
+    expect(issuanceRequests).toBe(1);
+  } finally {
+    releaseIssuance.resolve();
+  }
   const replacement = await saveCredential(page);
+  await page.unroute(secretURL);
+  await page
+    .getByRole("button", {
+      name: `Edit details for secret ${replacement.id}`,
+      exact: true,
+    })
+    .click();
+  const details = page.getByRole("dialog", { name: "Edit secret details" });
+  await expect(details.getByLabel("Description", { exact: true })).toHaveValue(
+    "  Staging\nOwner: Integration team  ",
+  );
+  await details
+    .getByLabel("Secret name", { exact: true })
+    .fill("Production replacement");
+  await details.getByLabel("Description", { exact: true }).fill("");
+  const metadataResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${secretURL}/${replacement.id}` &&
+      response.request().method() === "PUT",
+  );
+  await details.getByRole("button", { name: "Save details" }).click();
+  const metadata = await (await metadataResponse).json();
+  expect(metadata).toMatchObject({
+    id: replacement.id,
+    name: "Production replacement",
+    description: "",
+  });
+  expect(metadata).not.toHaveProperty("secret");
+  await expect(details).not.toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("No description");
   expect(replacement.secret).not.toBe(first.secret);
   expect(replacement.id).not.toBe(first.id);
   await page
     .getByRole("button", { name: `Revoke secret ${first.id}`, exact: true })
     .click();
   const revoke = page.getByRole("dialog", { name: "Revoke this secret?" });
+  await expect(revoke).toContainText("Production backend");
   await revoke
     .getByRole("button", { name: "Revoke secret", exact: true })
     .click();
@@ -249,6 +357,24 @@ test("administrator manages applications and one-time credentials against the se
   await expect(
     page.getByRole("row").filter({ hasText: replacement.id }),
   ).toContainText("Active");
+  await page
+    .getByRole("button", {
+      name: `Edit details for secret ${first.id}`,
+      exact: true,
+    })
+    .click();
+  await details
+    .getByLabel("Secret name", { exact: true })
+    .fill("Retired production");
+  await details
+    .getByLabel("Description", { exact: true })
+    .fill("  Retained for audit\n替换记录  ");
+  await details.getByRole("button", { name: "Save details" }).click();
+  await expect(details).not.toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: first.id }),
+  ).toContainText("Retired production");
+  expect(secretCreations).toBe(1);
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "Applications", exact: true }),
@@ -267,7 +393,30 @@ test("administrator manages applications and one-time credentials against the se
     `/console/api/apps/${first.appID}/secrets`,
   );
   expect(listed.ok()).toBe(true);
-  const listing = await listed.text();
+  const listedBody = await listed.json();
+  expect(listedBody.secrets).toHaveLength(2);
+  expect(listedBody.secrets).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: first.id,
+        name: "Retired production",
+        description: "  Retained for audit\n替换记录  ",
+        revoked_at: expect.any(String),
+      }),
+      expect.objectContaining({
+        id: replacement.id,
+        name: "Production replacement",
+        description: "",
+      }),
+    ]),
+  );
+  await expect(
+    page.getByRole("row").filter({ hasText: first.id }),
+  ).toContainText("Retired production");
+  await expect(
+    page.getByRole("row").filter({ hasText: replacement.id }),
+  ).toContainText("No description");
+  const listing = JSON.stringify(listedBody);
   expect(listing).not.toContain(first.secret);
   expect(listing).not.toContain(replacement.secret);
 

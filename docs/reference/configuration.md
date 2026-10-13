@@ -43,17 +43,25 @@ headers: Console mutations still require exactly one canonical Origin matching
 the expected string. Registered product callback matching remains exact.
 
 The Console reserves an App during configuration editing, enable/disable updates,
-and deletion. A failed non-authentication write retains ownership through a
-server-state reload; only that App is reconciled into the current UI snapshot.
+deletion, and Secret creation, detail updates, and revocation. A new Secret keeps
+its one-time plaintext display and ownership until the operator marks the value
+saved and closes the dialog. A failed non-authentication write retains ownership
+through a server-state reload; only that App is reconciled into the current UI snapshot.
 If the reload fails, `State unavailable` blocks new configuration actions until
 explicit Refresh succeeds. An existing draft or delete confirmation may Retry or
 Cancel under its retained owner, and a successful retry may conservatively leave
-the unavailable marker until Refresh. Session expiry returns to administrator
-login. These controls do not coordinate separate Console browsers or API clients.
+the unavailable marker until Refresh. A session-invalidating `401` returns to
+administrator login and discards idle drafts. Operations already in flight keep
+their owners until their handlers settle: successful App or Secret issuance
+retains its plaintext display through Saved and Done, and a failed operation
+releases its retained owner. An unrelated request losing administrator authority
+does not prove that pending issuance failed. These controls do not coordinate
+separate Console browsers or API clients.
 
 Protect runtime credentials and the database using deployment access controls.
 The database contains application definitions and SHA-256 digests of randomly
-generated 256-bit product Secrets. It contains no end-user records, provider
+generated 256-bit product Secrets, their names and descriptions, and lifecycle
+metadata. It contains no end-user records, provider
 tokens, identity results, login transactions, or administrator sessions.
 
 The administrator password is read directly from `UNIAUTH_ADMIN_PASSWORD` and
@@ -139,8 +147,17 @@ The [API reference](api.md) owns the response fields, selection rules, and error
 
 SQLite uses embedded Goose migrations, one database connection, WAL journaling,
 full synchronous writes, and a five-second busy timeout. Application and Secret
-configuration survives restarts. Back up the live SQLite database with a
-SQLite-aware backup method or stop the process before copying its files.
+configuration survives restarts. Embedded migration 2 adds Secret names and
+descriptions to existing databases. Every existing row, active or revoked,
+receives `Secret <id>` as its name and an empty description; IDs, verification
+digests, creation and revocation times, and the App lookup index are retained.
+Existing credentials continue authenticating without reissue. The service reads
+the migrated schema directly. Operators can replace these generated labels in
+the Console without changing credential validity. Back up the live SQLite
+database with a SQLite-aware backup method or stop the process before copying
+its files. The [Secret metadata decision](../../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md)
+owns this upgrade and its metadata limits; the [API reference](api.md) owns
+creation and detail-update requests.
 
 The following limits are fixed by service composition:
 
@@ -191,10 +208,11 @@ Cleanup logs report aggregate expired-entry counts.
 Authorized management mutations emit `console management operation` events with
 `operation_id`, `request_id`, `action`, `affected_app_id`, `phase=completed`,
 `outcome`, `error_category`, and HTTP `status`. Supported actions are `app.create`,
-`app.update`, `app.delete`, `secret.create`, and `secret.revoke`. The response
-header `X-Operation-ID` correlates the completed operation with its request;
+`app.update`, `app.delete`, `secret.create`, `secret.update`, and `secret.revoke`.
+The response header `X-Operation-ID` correlates the completed operation with its request;
 successful creation logs the generated App ID. Failed mutations retain safe
-status and error-category information without Secrets or display values.
+status and error-category information without Secrets, App display values, or
+Secret names and descriptions.
 
 Identity payloads, account identifiers, email addresses, Secrets, tokens, result
 codes, states, and full URLs with sensitive query parameters are excluded from

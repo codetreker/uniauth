@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,7 +10,13 @@ import {
 } from "@testing-library/react";
 import { Console } from "./Console";
 import { APIError } from "./api";
-import type { Application, ConsoleAPI } from "./api";
+import type {
+  Application,
+  ConsoleAPI,
+  CreatedApp,
+  IssuedSecret,
+  Secret,
+} from "./api";
 
 const example: Application = {
   id: "app_example",
@@ -39,16 +46,26 @@ const apiFixture = (overrides: Partial<ConsoleAPI> = {}): ConsoleAPI => ({
     .fn()
     .mockImplementation(async (id, input) => ({ ...example, ...input, id })),
   deleteApp: vi.fn().mockResolvedValue(undefined),
-  listSecrets: vi
-    .fn()
-    .mockResolvedValue([
-      { id: "sec_original", created_at: example.created_at },
-    ]),
+  listSecrets: vi.fn().mockResolvedValue([
+    {
+      id: "sec_original",
+      name: "Production",
+      description: "Owner: Operations\nProduction service.",
+      created_at: example.created_at,
+    },
+  ]),
   createSecret: vi.fn().mockResolvedValue({
     id: "sec_rotated",
+    name: "Replacement",
+    description: "",
     secret: "rotated-only-once",
     created_at: example.created_at,
   }),
+  updateSecret: vi.fn().mockImplementation(async (_id, secretID, input) => ({
+    id: secretID,
+    ...input,
+    created_at: example.created_at,
+  })),
   revokeSecret: vi.fn().mockResolvedValue(undefined),
   ...overrides,
 });
@@ -70,6 +87,102 @@ const openApp = async () => {
   await screen.findByText("sec_original");
 };
 
+const pendingIssuanceAfterUnrelatedRefresh = async (initialSecret: boolean) => {
+  const other = { ...example, id: "app_other", name: "Other" };
+  const created = { ...example, id: "app_created", name: "Created" };
+  const applications = [example, other];
+  const refresh = Promise.withResolvers<Application[]>();
+  const creation = Promise.withResolvers<CreatedApp>();
+  const issuance = Promise.withResolvers<IssuedSecret>();
+  const issued: IssuedSecret = {
+    id: "sec_pending",
+    name: "Pending production",
+    description: "",
+    secret: "committed-only-once",
+    created_at: example.created_at,
+  };
+  const api = apiFixture({
+    listApps: vi
+      .fn()
+      .mockImplementation(async () => [...applications])
+      .mockResolvedValueOnce([...applications])
+      .mockRejectedValueOnce(new Error("Reconciliation unavailable."))
+      .mockReturnValueOnce(refresh.promise),
+    updateApp: vi.fn().mockRejectedValue(new Error("Write response lost.")),
+    createApp: vi.fn().mockImplementation(() => {
+      applications.push(created);
+      return creation.promise;
+    }),
+    createSecret: vi.fn().mockReturnValue(issuance.promise),
+  });
+  render(<Console api={api} />);
+  await openApp();
+  fireEvent.click(screen.getByRole("button", { name: "Disable app" }));
+  await screen.findByText("State unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Refresh application" }));
+  await waitFor(() => expect(api.listApps).toHaveBeenCalledTimes(3));
+  fireEvent.click(screen.getByRole("button", { name: "← All applications" }));
+  if (initialSecret) {
+    fireEvent.click(screen.getByRole("button", { name: "New application" }));
+    const editor = screen.getByRole("dialog", { name: "Create application" });
+    fireEvent.change(within(editor).getByLabelText("Application name"), {
+      target: { value: created.name },
+    });
+    fireEvent.change(within(editor).getByLabelText("Callback URLs"), {
+      target: { value: created.redirect_uris[0] },
+    });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: issued.name },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Create application" }),
+    );
+    await waitFor(() => expect(api.createApp).toHaveBeenCalledTimes(1));
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
+    await screen.findByText("sec_original");
+    fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
+    const editor = screen.getByRole("dialog", { name: "Create secret" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: issued.name },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Create secret" }),
+    );
+    await waitFor(() => expect(api.createSecret).toHaveBeenCalledTimes(1));
+  }
+  return {
+    api,
+    refresh,
+    issued,
+    creation,
+    issuance,
+    finish: () =>
+      initialSecret
+        ? creation.resolve({
+            app: created,
+            secret: issued.secret,
+            secret_id: issued.id,
+          })
+        : issuance.resolve(issued),
+    fail: (cause: Error) =>
+      initialSecret ? creation.reject(cause) : issuance.reject(cause),
+  };
+};
+const signInAgain = async () => {
+  fireEvent.change(await screen.findByLabelText("Administrator password"), {
+    target: { value: "password" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  await screen.findByRole("button", { name: "Sign out" });
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "New application" }) ??
+        screen.queryByRole("button", { name: "← All applications" }),
+    ).not.toBeNull(),
+  );
+};
+
 describe("Administrator Console", () => {
   it("keeps a newly created secret visible until the administrator explicitly saves it", async () => {
     const api = apiFixture({
@@ -87,6 +200,12 @@ describe("Administrator Console", () => {
     });
     fireEvent.change(within(editor).getByLabelText("Callback URLs"), {
       target: { value: "https://created.test/callback" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Production" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Description"), {
+      target: { value: "  Deployment owner\nPlatform  " },
     });
     fireEvent.click(
       within(editor).getByRole("button", { name: "Create application" }),
@@ -197,11 +316,18 @@ describe("Administrator Console", () => {
     const listSecrets = vi
       .fn()
       .mockResolvedValueOnce([
-        { id: "sec_original", created_at: example.created_at },
+        {
+          id: "sec_original",
+          name: "Production",
+          description: "Owner: Operations\nProduction service.",
+          created_at: example.created_at,
+        },
       ])
       .mockResolvedValueOnce([
         {
           id: "sec_original",
+          name: "Production",
+          description: "Owner: Operations\nProduction service.",
           created_at: example.created_at,
           revoked_at: example.created_at,
         },
@@ -223,4 +349,495 @@ describe("Administrator Console", () => {
       screen.queryByRole("button", { name: "Revoke secret sec_original" }),
     ).toBeNull();
   });
+  it("edits active and revoked metadata without issuing a credential and clears descriptions verbatim", async () => {
+    let secrets: Secret[] = [
+      {
+        id: "sec_original",
+        name: "Production",
+        description: "  Owner: Operations\nKeep these spaces.  ",
+        created_at: example.created_at,
+      },
+      {
+        id: "sec_retired",
+        name: "Retired",
+        description: "Old deployment",
+        created_at: example.created_at,
+        revoked_at: example.updated_at,
+      },
+    ];
+    const api = apiFixture({
+      listSecrets: vi
+        .fn()
+        .mockImplementation(async () => structuredClone(secrets)),
+      updateSecret: vi.fn().mockImplementation(async (_appID, id, input) => {
+        const original = secrets.find((secret) => secret.id === id);
+        if (original === undefined) throw new Error("Missing fixture secret");
+        const updated = { ...original, ...input };
+        secrets = secrets.map((secret) =>
+          secret.id === id ? updated : secret,
+        );
+        return updated;
+      }),
+    });
+    render(<Console api={api} />);
+    await openApp();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Edit details for secret sec_original",
+      }),
+    );
+    let editor = screen.getByRole("dialog", { name: "Edit secret details" });
+    expect(
+      (within(editor).getByLabelText("Description") as HTMLTextAreaElement)
+        .value,
+    ).toBe(secrets[0].description);
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Production API" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Description"), {
+      target: { value: "" },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Save details" }),
+    );
+    await screen.findByText("Production API");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Edit details for secret sec_retired",
+      }),
+    );
+    editor = screen.getByRole("dialog", { name: "Edit secret details" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Retired production" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Description"), {
+      target: { value: "  Replaced\nOwner: 开发团队  " },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Save details" }),
+    );
+    await screen.findByText("Retired production");
+    expect(secrets[0].description).toBe("");
+    expect(secrets[1]).toMatchObject({
+      revoked_at: example.updated_at,
+      description: "  Replaced\nOwner: 开发团队  ",
+    });
+    expect(api.createSecret).not.toHaveBeenCalled();
+    expect(api.revokeSecret).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: "Save your app secret" }),
+    ).toBeNull();
+    expect(api.updateSecret).toHaveBeenCalledWith(example.id, "sec_original", {
+      name: "Production API",
+      description: "",
+    });
+  });
+
+  it("retains metadata drafts and errors after a failed save and releases the App only on cancellation", async () => {
+    const api = apiFixture({
+      updateSecret: vi
+        .fn()
+        .mockRejectedValue(new Error("Metadata write failed.")),
+    });
+    render(<Console api={api} />);
+    await openApp();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Edit details for secret sec_original",
+      }),
+    );
+    const editor = screen.getByRole("dialog", { name: "Edit secret details" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Draft production" },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Save details" }),
+    );
+    await within(editor).findByText("Metadata write failed.");
+    expect(
+      (within(editor).getByLabelText("Secret name") as HTMLInputElement).value,
+    ).toBe("Draft production");
+    expect(
+      (screen.getByRole("button", { name: "Disable app" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
+    expect(
+      (screen.getByRole("button", { name: "Disable app" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("owns Secret creation synchronously through the one-time acknowledgement despite duplicate events and session expiry", async () => {
+    let resolveIssue!: (issued: IssuedSecret) => void;
+    const issuance = new Promise<IssuedSecret>((resolve) => {
+      resolveIssue = resolve;
+    });
+    const api = apiFixture({
+      createSecret: vi.fn().mockReturnValue(issuance),
+      listSecrets: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            id: "sec_original",
+            name: "Production",
+            description: "",
+            created_at: example.created_at,
+          },
+        ])
+        .mockRejectedValue(
+          new APIError(401, "unauthorized", "Session expired after issuance."),
+        ),
+    });
+    render(<Console api={api} />);
+    await openApp();
+    const create = screen.getByRole("button", { name: "Create secret" });
+    const remove = screen.getByRole("button", { name: "Delete application" });
+    const logout = screen.getByRole("button", { name: "Sign out" });
+    const navigation = screen.getByRole("button", {
+      name: "← All applications",
+    });
+    act(() => {
+      create.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      remove.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      logout.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      navigation.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const editor = screen.getByRole("dialog", { name: "Create secret" });
+    expect(
+      screen.queryByRole("dialog", { name: "Delete application?" }),
+    ).toBeNull();
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Staging backend" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Description"), {
+      target: { value: "  Owner\nStaging  " },
+    });
+    const submit = within(editor).getByRole("button", {
+      name: "Create secret",
+    });
+    act(() => {
+      submit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      submit.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      remove.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      logout.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      navigation.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(api.createSecret).toHaveBeenCalledTimes(1);
+    expect(api.deleteApp).not.toHaveBeenCalled();
+    expect(api.logout).not.toHaveBeenCalled();
+    await act(async () =>
+      resolveIssue({
+        id: "sec_new",
+        name: "Staging backend",
+        description: "  Owner\nStaging  ",
+        secret: "never-discard-this-value",
+        created_at: example.created_at,
+      }),
+    );
+    const credential = await screen.findByRole("dialog", {
+      name: "Save your app secret",
+    });
+    expect(
+      within(credential).getByText("never-discard-this-value"),
+    ).toBeDefined();
+    expect(within(credential).getByText("Staging backend")).toBeDefined();
+    await screen.findByLabelText("Administrator password");
+    expect(
+      within(credential).getByText("never-discard-this-value"),
+    ).toBeDefined();
+    fireEvent(
+      credential,
+      new Event("cancel", { cancelable: true, bubbles: true }),
+    );
+    expect(screen.getByText("never-discard-this-value")).toBeDefined();
+    expect(
+      (
+        within(credential).getByRole("button", {
+          name: "Done",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(within(credential).getByRole("checkbox"));
+    fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
+    expect(screen.queryByText("never-discard-this-value")).toBeNull();
+  });
+
+  it("validates UTF-8 metadata limits without changing the draft or issuing a secret", async () => {
+    const api = apiFixture();
+    render(<Console api={api} />);
+    await openApp();
+    fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
+    const editor = screen.getByRole("dialog", { name: "Create secret" });
+    for (const name of [" Surrounding ", "🔑".repeat(33), "\u0085Production"]) {
+      fireEvent.change(within(editor).getByLabelText("Secret name"), {
+        target: { value: name },
+      });
+      fireEvent.submit(
+        within(editor)
+          .getByRole("button", { name: "Create secret" })
+          .closest("form")!,
+      );
+      expect(within(editor).getByRole("alert").textContent).toContain(
+        "UTF-8 bytes",
+      );
+    }
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Valid" },
+    });
+    fireEvent.change(within(editor).getByLabelText("Description"), {
+      target: { value: "🔑".repeat(1025) },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Create secret" }),
+    );
+    expect(within(editor).getByRole("alert").textContent).toContain(
+      "4096 UTF-8 bytes",
+    );
+    expect(api.createSecret).not.toHaveBeenCalled();
+  });
+  it("serializes an in-flight metadata edit against revocation and App deletion", async () => {
+    const original: Secret = {
+      id: "sec_original",
+      name: "Production",
+      description: "",
+      created_at: example.created_at,
+    };
+    let persisted = original;
+    let resolveUpdate!: (secret: Secret) => void;
+    const update = new Promise<Secret>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    const api = apiFixture({
+      listSecrets: vi.fn().mockImplementation(async () => [persisted]),
+      updateSecret: vi.fn().mockImplementation((_appID, _secretID, input) => {
+        persisted = { ...original, ...input };
+        return update;
+      }),
+    });
+    render(<Console api={api} />);
+    await openApp();
+    const revoke = screen.getByRole("button", {
+      name: "Revoke secret sec_original",
+    });
+    const remove = screen.getByRole("button", { name: "Delete application" });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Edit details for secret sec_original",
+      }),
+    );
+    const editor = screen.getByRole("dialog", { name: "Edit secret details" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Production API" },
+    });
+    const save = within(editor).getByRole("button", { name: "Save details" });
+    act(() => {
+      save.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      save.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      revoke.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      remove.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(api.updateSecret).toHaveBeenCalledTimes(1);
+    expect(api.createSecret).not.toHaveBeenCalled();
+    expect(api.revokeSecret).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: "Revoke this secret?" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("dialog", { name: "Delete application?" }),
+    ).toBeNull();
+    await act(async () => resolveUpdate(persisted));
+    await screen.findByText("Production API");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Delete application",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("ignores a stale credential listing after an issuance begins", async () => {
+    let resolveListing!: (secrets: Secret[]) => void;
+    const listing = new Promise<Secret[]>((resolve) => {
+      resolveListing = resolve;
+    });
+    let resolveIssue!: (issued: IssuedSecret) => void;
+    const issuance = new Promise<IssuedSecret>((resolve) => {
+      resolveIssue = resolve;
+    });
+    const issued = {
+      id: "sec_current",
+      name: "Current",
+      description: "",
+      secret: "latest-only-once",
+      created_at: example.created_at,
+    };
+    const api = apiFixture({
+      listSecrets: vi
+        .fn()
+        .mockReturnValueOnce(listing)
+        .mockResolvedValue([issued]),
+      createSecret: vi.fn().mockReturnValue(issuance),
+    });
+    render(<Console api={api} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Manage Example" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Create secret" }),
+    );
+    const editor = screen.getByRole("dialog", { name: "Create secret" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Current" },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Create secret" }),
+    );
+    await act(async () =>
+      resolveListing([
+        {
+          id: "sec_stale",
+          name: "Stale",
+          description: "",
+          created_at: example.created_at,
+        },
+      ]),
+    );
+    expect(screen.queryByText("sec_stale")).toBeNull();
+    await act(async () => resolveIssue(issued));
+    const credential = await screen.findByRole("dialog", {
+      name: "Save your app secret",
+    });
+    expect(within(credential).getByText("latest-only-once")).toBeDefined();
+    fireEvent.click(within(credential).getByRole("checkbox"));
+    fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
+    await screen.findByText("sec_current");
+    expect(screen.queryByText("sec_stale")).toBeNull();
+  });
+  it.each([
+    { initialSecret: true, earlyLogin: false },
+    { initialSecret: false, earlyLogin: false },
+    { initialSecret: true, earlyLogin: true },
+    { initialSecret: false, earlyLogin: true },
+  ])(
+    "preserves an issued value through an unrelated401 and acknowledgement (initial=$initialSecret, early login=$earlyLogin)",
+    async ({ initialSecret, earlyLogin }) => {
+      const operation =
+        await pendingIssuanceAfterUnrelatedRefresh(initialSecret);
+      await act(async () =>
+        operation.refresh.reject(
+          new APIError(
+            401,
+            "unauthorized",
+            "Unrelated refresh requires authentication.",
+          ),
+        ),
+      );
+      await screen.findByLabelText("Administrator password");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      if (earlyLogin) {
+        await signInAgain();
+        fireEvent.click(
+          screen.getByRole("button", {
+            name: initialSecret ? "New application" : "Create secret",
+          }),
+        );
+        expect(screen.queryByRole("dialog")).toBeNull();
+      }
+      await act(async () => operation.finish());
+      const credential = await screen.findByRole("dialog", {
+        name: "Save your app secret",
+      });
+      expect(
+        within(credential).getByText(operation.issued.secret),
+      ).toBeDefined();
+      fireEvent.click(
+        within(credential).getByRole("button", { name: "Copy App secret" }),
+      );
+      await within(credential).findByText(
+        "Clipboard unavailable. Select and copy the value above.",
+      );
+      expect(
+        (
+          within(credential).getByRole("button", {
+            name: "Done",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      fireEvent.click(
+        within(credential).getByRole("checkbox", {
+          name: "I have saved this secret securely.",
+        }),
+      );
+      fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(screen.queryByText(operation.issued.secret)).toBeNull();
+      if (!earlyLogin) await signInAgain();
+      const back = screen.queryByRole("button", { name: "← All applications" });
+      if (back !== null) fireEvent.click(back);
+      fireEvent.click(screen.getByRole("button", { name: "New application" }));
+      const editor = screen.getByRole("dialog", { name: "Create application" });
+      fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
+      expect(
+        (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+      expect(operation.api.createApp).toHaveBeenCalledTimes(
+        initialSecret ? 1 : 0,
+      );
+      expect(operation.api.createSecret).toHaveBeenCalledTimes(
+        initialSecret ? 0 : 1,
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "releases detached issuance ownership after a request failure (initial=%s)",
+    async (initialSecret) => {
+      const operation =
+        await pendingIssuanceAfterUnrelatedRefresh(initialSecret);
+      await act(async () =>
+        operation.refresh.reject(
+          new APIError(
+            401,
+            "unauthorized",
+            "Unrelated refresh requires authentication.",
+          ),
+        ),
+      );
+      await screen.findByLabelText("Administrator password");
+      await act(async () =>
+        operation.fail(new Error("Issuance response lost.")),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await signInAgain();
+      const back = screen.queryByRole("button", { name: "← All applications" });
+      if (back !== null) fireEvent.click(back);
+      fireEvent.click(screen.getByRole("button", { name: "New application" }));
+      const editor = screen.getByRole("dialog", { name: "Create application" });
+      fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
+      await screen.findByText("sec_original");
+      fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
+      const secretEditor = screen.getByRole("dialog", {
+        name: "Create secret",
+      });
+      fireEvent.click(
+        within(secretEditor).getByRole("button", { name: "Cancel" }),
+      );
+      expect(
+        (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false);
+      expect(operation.api.createApp).toHaveBeenCalledTimes(
+        initialSecret ? 1 : 0,
+      );
+      expect(operation.api.createSecret).toHaveBeenCalledTimes(
+        initialSecret ? 0 : 1,
+      );
+    },
+  );
 });

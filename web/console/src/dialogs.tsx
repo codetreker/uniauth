@@ -1,12 +1,14 @@
 import { useId, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { APIError } from "./api";
+import { APIError, secretInputSchema } from "./api";
 import type {
   Application,
   AppInput,
+  CreateAppInput,
   ConsoleAPI,
   Provider,
   ProviderID,
+  SecretInput,
 } from "./api";
 import {
   Brand,
@@ -18,7 +20,11 @@ import {
   providerNames,
 } from "./ui";
 
-export type Credential = { app: Application; secret: string; id: string };
+export type Credential = SecretInput & {
+  app: Application;
+  secret: string;
+  id: string;
+};
 export type Confirmation = {
   title: string;
   description: string;
@@ -131,7 +137,7 @@ export const AppEditor = ({
   app: Application | "new";
   providers: Provider[];
   onClose: () => void;
-  onSave: (input: AppInput) => Promise<void>;
+  onSave: (input: AppInput | CreateAppInput) => Promise<void>;
   onUnauthorized: (cause: unknown) => void;
 }) => {
   const callbackHintID = useId();
@@ -140,6 +146,10 @@ export const AppEditor = ({
     app === "new" ? "" : app.redirect_uris.join("\n"),
   );
   const [enabled, setEnabled] = useState(app === "new" ? true : app.enabled);
+  const [secret, setSecret] = useState<SecretInput>({
+    name: "",
+    description: "",
+  });
   const [selected, setSelected] = useState<ProviderID[]>(
     app === "new"
       ? providers
@@ -184,15 +194,25 @@ export const AppEditor = ({
       setError("Each callback URL must be unique.");
       return;
     }
+    if (app === "new") {
+      const validation = secretInputSchema.safeParse(secret);
+      if (!validation.success) {
+        setError(validation.error.issues[0].message);
+        return;
+      }
+    }
     submitting.current = true;
     setPending(true);
     try {
-      await onSave({
+      const input: AppInput = {
         name: name.trim(),
         enabled,
         redirect_uris: redirectURIs,
         providers: selected,
-      });
+      };
+      await onSave(
+        app === "new" ? { ...input, initial_secret: secret } : input,
+      );
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401)
         onUnauthorized(cause);
@@ -286,6 +306,16 @@ export const AppEditor = ({
               <small>Allow new login requests and identity retrieval.</small>
             </span>
           </label>
+          {app === "new" && (
+            <section className="initial-secret">
+              <h3>Initial secret</h3>
+              <p className="hint">
+                Give the first credential a name and a note about where it will
+                be used.
+              </p>
+              <SecretFields value={secret} onChange={setSecret} />
+            </section>
+          )}
         </div>
         <div className="modal-actions">
           <button
@@ -302,6 +332,122 @@ export const AppEditor = ({
               : app === "new"
                 ? "Create application"
                 : "Save changes"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+const SecretFields = ({
+  value,
+  onChange,
+  autoFocus = false,
+}: {
+  value: SecretInput;
+  onChange: (value: SecretInput) => void;
+  autoFocus?: boolean;
+}) => (
+  <>
+    <label className="field">
+      Secret name
+      <input
+        aria-label="Secret name"
+        required
+        autoFocus={autoFocus}
+        value={value.name}
+        placeholder="e.g. Production backend"
+        onChange={(event) => onChange({ ...value, name: event.target.value })}
+      />
+      <span className="hint">
+        1–128 UTF-8 bytes. No surrounding whitespace or line breaks.
+      </span>
+    </label>
+    <label className="field">
+      Description
+      <textarea
+        aria-label="Description"
+        rows={4}
+        value={value.description}
+        placeholder="Where this credential is used, who owns it, or why it exists."
+        onChange={(event) =>
+          onChange({ ...value, description: event.target.value })
+        }
+      />
+      <span className="hint">
+        Optional. Up to 4096 UTF-8 bytes; line breaks and spaces are kept.
+      </span>
+    </label>
+  </>
+);
+export const SecretEditor = ({
+  value,
+  creating,
+  onClose,
+  onSave,
+  onUnauthorized,
+}: {
+  value: SecretInput;
+  creating: boolean;
+  onClose: () => void;
+  onSave: (input: SecretInput) => Promise<void>;
+  onUnauthorized: (cause: unknown) => void;
+}) => {
+  const [draft, setDraft] = useState<SecretInput>({
+    name: value.name,
+    description: value.description,
+  });
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
+  const [error, setError] = useState<string>();
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (submitting.current) return;
+    const validation = secretInputSchema.safeParse(draft);
+    if (!validation.success) {
+      setError(validation.error.issues[0].message);
+      return;
+    }
+    submitting.current = true;
+    setPending(true);
+    setError(undefined);
+    try {
+      await onSave(validation.data);
+    } catch (cause) {
+      if (cause instanceof APIError && cause.status === 401)
+        onUnauthorized(cause);
+      else setError(describeError(cause));
+    } finally {
+      submitting.current = false;
+      setPending(false);
+    }
+  };
+  return (
+    <Modal
+      title={creating ? "Create secret" : "Edit secret details"}
+      onClose={onClose}
+      locked={pending}
+    >
+      <form onSubmit={submit}>
+        <div className="modal-body">
+          <p className="modal-description">
+            {creating
+              ? "Create a credential for this product backend. Save its value when it is shown."
+              : "Update this credential's name and description. Its value and status stay the same."}
+          </p>
+          {error !== undefined && <ErrorNotice message={error} />}
+          <SecretFields value={draft} onChange={setDraft} autoFocus />
+        </div>
+        <div className="modal-actions">
+          <button
+            className="button secondary"
+            type="button"
+            disabled={pending}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button className="button" type="submit" disabled={pending}>
+            {pending ? "Saving…" : creating ? "Create secret" : "Save details"}
           </button>
         </div>
       </form>
@@ -335,6 +481,16 @@ export const CredentialDialog = ({
         <CopyValue label="App ID" value={credential.app.id} />
         <CopyValue label="App secret" value={credential.secret} />
         <CopyValue label="Secret ID" value={credential.id} />
+        <div className="credential-details">
+          <span className="field-label">Secret name</span>
+          <strong>{credential.name}</strong>
+          <span className="field-label">Description</span>
+          <p className="secret-description">
+            {credential.description === ""
+              ? "No description"
+              : credential.description}
+          </p>
+        </div>
         <p className="hint">
           Keep this secret out of frontend code and source control. It cannot be
           retrieved again.

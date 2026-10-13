@@ -36,7 +36,7 @@ func TestBrowserOriginFromConfiguredURL(t *testing.T) {
 			requireStatus(t, response, http.StatusOK)
 			e.cookie = response.Result().Cookies()[0]
 			e.csrf = decodeResponse[map[string]string](t, response)["csrf_token"]
-			response = e.request("POST", "/console/api/apps", appBody, map[string]string{"Origin": tt.origin})
+			response = e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": tt.origin})
 			requireStatus(t, response, http.StatusCreated)
 			created := decodeResponse[apps.CreatedApp](t, response)
 			path := "/console/api/apps/" + created.App.ID
@@ -49,9 +49,9 @@ func TestBrowserOriginFromConfiguredURL(t *testing.T) {
 			}
 			for _, origin := range wrongOrigins {
 				requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, map[string]string{"Origin": origin}), http.StatusForbidden)
-				requireStatus(t, e.request("POST", "/console/api/apps", appBody, map[string]string{"Origin": origin}), http.StatusForbidden)
+				requireStatus(t, e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": origin}), http.StatusForbidden)
 			}
-			requireStatus(t, e.request("POST", "/console/api/apps", appBody, map[string]string{"Origin": tt.origin, "X-CSRF-Token": "invalid"}), http.StatusForbidden)
+			requireStatus(t, e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": tt.origin, "X-CSRF-Token": "invalid"}), http.StatusForbidden)
 			for _, port := range []string{":8443", ":4430"} {
 				if strings.HasSuffix(tt.origin, port) {
 					requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, map[string]string{"Origin": strings.TrimSuffix(tt.origin, port)}), http.StatusForbidden)
