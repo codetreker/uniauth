@@ -36,7 +36,3 @@ jobs:
       - run: pnpm test:browser
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.tmp/browsers
-      - name: Test release container
-        run: |
-          docker build --tag uniauth-release-test:local .
-          bash scripts/test-release.sh uniauth-release-test:local

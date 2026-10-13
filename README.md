@@ -13,7 +13,7 @@ owning application. There is no end-user database or central SSO session.
 
 Install the Go version declared in [go.mod](go.mod), Node.js 24 or later, and the
 pnpm version pinned in [package.json](package.json).
-Python 3 and ShellCheck are used by the repository checks.
+Python 3 is used by the documentation check.
 
 ```sh
 make setup
@@ -44,16 +44,12 @@ variables and provider registration callbacks.
 
 ## Release with Docker Compose
 
-The Release workflow validates and publishes one image, then deploys its immutable
-digest to staging and prod on `OC_VM_HOST`. Each environment has its own SQLite
-volume and VM-local runtime configuration. Production can require approval through
-the GitHub `prod` Environment.
-
-Configure organization `REGISTRY` access, Harbor and SSH credentials, the two
-environment ports, VM runtime files, and HTTPS routing using the
-[deployment reference](docs/reference/deployment.md). Pushes to `main` and manual
-runs on `main` start the release. `make test-release` validates the container and
-persistent-state behavior with local Docker Engine and Compose.
+The Release workflow builds and publishes an image, then copies
+`docker-compose.yml` to staging and prod and runs `docker compose up -d` in each
+configured deployment directory. Both environments use the same image digest.
+The VM owns `.env`, registry login, and Caddy configuration. See the
+[deployment reference](docs/reference/deployment.md) for GitHub settings and VM
+prerequisites.
 
 ## Connect a product
 
@@ -84,7 +80,6 @@ and error handling.
 | `make coverage` | Run the authoritative go-cov policy. |
 | `make browser` | Build and run Playwright Console and mockup scenarios. |
 | `make mockup` | Open the interactive Console preview using production components and styles. |
-| `make test-release` | Build the container and verify readiness, restart persistence, and environment isolation with Docker Compose. |
 
 The mockup starts authenticated with representative fixture applications. After
 signing out, use the fixture password `preview`. Its state resets on reload and

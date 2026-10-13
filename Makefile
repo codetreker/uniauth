@@ -8,7 +8,7 @@ export TMPDIR := $(CURDIR)/.tmp/tmp
 export XDG_CACHE_HOME := $(CURDIR)/.tmp/pnpm-cache
 export XDG_DATA_HOME := $(CURDIR)/.tmp/pnpm-data
 
-.PHONY: setup dirs frontend build test coverage check browser mockup test-release
+.PHONY: setup dirs frontend build test coverage check browser mockup
 
 dirs:
 	mkdir -p .tmp/bin .tmp/go-tmp .tmp/tmp
@@ -32,8 +32,6 @@ coverage: frontend
 
 check: frontend
 	python3 scripts/check-docs.py
-	bash -n scripts/deploy.sh scripts/deploy-remote.sh scripts/test-release.sh
-	shellcheck scripts/deploy.sh scripts/deploy-remote.sh scripts/test-release.sh
 	git diff --check
 	test -z "$$(gofmt -l cmd internal web/console/*.go)"
 	go vet ./...
@@ -44,7 +42,3 @@ browser: build
 
 mockup:
 	cd web/console && pnpm mockup
-
-test-release:
-	docker build --tag uniauth-release-test:local .
-	bash scripts/test-release.sh uniauth-release-test:local
