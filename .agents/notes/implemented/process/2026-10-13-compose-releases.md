@@ -24,9 +24,14 @@ deployment across release runs. The
 [tag-reference decision](2026-10-13-tag-image-references.md) supersedes the
 original selection of the build digest and owns image-reference selection.
 Deployment copies `deploy/docker-compose.yml` as `docker-compose.yml` to the
-environment's `DEPLOY_PATH` and runs `docker compose up -d` there. GitHub owns
-image publication and file transfer. The VM owns `.env`, persistent volumes,
-and Caddy configuration. The [public GHCR decision](2026-10-13-public-ghcr-images.md)
+environment's `DEPLOY_PATH` and runs `docker compose up -d` there. The template
+declares `container_name: uniauth`; prod retains that name, and staging renders
+`container_name: uniauth-staging`. The Compose projects are `uniauth-prod` and
+`uniauth-staging`, with respective SQLite volumes `uniauth-prod_data` and
+`uniauth-staging_data`. Distinct container names let operators address both
+services directly on the same VM. GitHub owns image publication and file
+transfer. The VM owns `.env`, persistent volumes, and Caddy configuration.
+The [public GHCR decision](2026-10-13-public-ghcr-images.md)
 replaces the original VM registry-login prerequisite and owns image access.
 The [deployment reference](../../../../docs/reference/deployment.md) owns the
 manual startup command and deployment prerequisites.

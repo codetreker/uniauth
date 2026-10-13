@@ -49,6 +49,15 @@ to `DEPLOY_PATH` as `docker-compose.yml`, and runs
 succeeds. Startup success does not establish application readiness.
 GitHub Environment protection rules can require approval for prod.
 
+The Compose template declares `container_name: uniauth`, which prod retains.
+Staging renders that line as `container_name: uniauth-staging`. Each environment
+has its own container name, Compose project, and persistent SQLite volume:
+
+| Environment | Container name | Compose project | SQLite volume |
+| --- | --- | --- | --- |
+| staging | `uniauth-staging` | `uniauth-staging` | `uniauth-staging_data` |
+| prod | `uniauth` | `uniauth-prod` | `uniauth-prod_data` |
+
 ## Public GHCR package
 
 GitHub creates a new container package as private, even when its linked repository
@@ -95,9 +104,9 @@ See [runtime configuration](configuration.md) for the complete service settings.
 
 The workflow replaces only `docker-compose.yml`; `.env` remains VM-owned. Caddy
 configuration is operator-owned. The service listens on
-`127.0.0.1:UNIAUTH_HOST_PORT`, and SQLite persists in separate
-`uniauth-staging_data` and `uniauth-prod_data` volumes. Service restarts invalidate
-pending logins, results, and administrator sessions.
+`127.0.0.1:UNIAUTH_HOST_PORT`, and SQLite persists in the environment's named
+volume. Service restarts invalidate pending logins, results, and administrator
+sessions.
 
 The [Compose release decision](../../.agents/notes/implemented/process/2026-10-13-compose-releases.md)
 records manual initiation and deployment ownership, and the

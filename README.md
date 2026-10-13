@@ -51,9 +51,10 @@ as `261013-3-a1b2c3d4`. The allocation step uses the current UTC date, the next
 sequence from that date's published registry tags, and the first eight source
 commit characters. Anonymous pull verification and both staging and prod use
 that same tag reference. The workflow copies `deploy/docker-compose.yml` to each
-deployment directory and runs `docker compose up -d` there. The VM owns `.env`
-and Caddy configuration; public images need no registry login. See the
-[deployment reference](docs/reference/deployment.md) for tag allocation, GitHub
+deployment directory and runs `docker compose up -d` there. The prod container
+is named `uniauth`, and the staging container is named `uniauth-staging`.
+The VM owns `.env` and Caddy configuration; public images need no registry login.
+See the [deployment reference](docs/reference/deployment.md) for tag allocation, GitHub
 settings, the one-time Public package setting, and VM prerequisites.
 
 ## Connect a product

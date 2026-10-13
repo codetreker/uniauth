@@ -2,6 +2,7 @@ name: uniauth-__ENVIRONMENT__
 
 services:
   uniauth:
+    container_name: uniauth
     image: __IMAGE__
     env_file: .env
     environment:

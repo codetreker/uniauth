@@ -60,7 +60,8 @@ jobs:
       - name: Set release image
         env:
           UNIAUTH_IMAGE: ${{ needs.build.outputs.image }}
-        run: sed -i -e "s|__IMAGE__|$UNIAUTH_IMAGE|" -e 's|__ENVIRONMENT__|staging|' deploy/docker-compose.yml
+        run: |
+          sed -i -e "s|__IMAGE__|$UNIAUTH_IMAGE|" -e 's|__ENVIRONMENT__|staging|' -e 's|container_name: uniauth$|container_name: uniauth-staging|' deploy/docker-compose.yml
       - name: Copy Compose file
         uses: appleboy/scp-action@v1.0.0
         with:
