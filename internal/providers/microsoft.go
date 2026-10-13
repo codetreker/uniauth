@@ -77,8 +77,31 @@ func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Iden
 	if _, err := jsonObject(profile); err != nil {
 		return Identity{}, failure("profile retrieval", err)
 	}
+	var graphProfile struct {
+		Mail        *string `json:"mail"`
+		DisplayName *string `json:"displayName"`
+	}
+	if err := json.Unmarshal(profile, &graphProfile); err != nil {
+		return Identity{}, failure("identity normalization", err)
+	}
+	var tokenProfile struct {
+		Email *string `json:"email"`
+		Name  *string `json:"name"`
+	}
+	if err := json.Unmarshal(claims, &tokenProfile); err != nil {
+		return Identity{}, failure("identity normalization", err)
+	}
+	email := nilIfEmpty(graphProfile.Mail)
+	if email == nil {
+		email = nilIfEmpty(tokenProfile.Email)
+	}
+	name := nilIfEmpty(graphProfile.DisplayName)
+	if name == nil {
+		name = nilIfEmpty(tokenProfile.Name)
+	}
 	photo, contentType, status, err := fetchWithAccept(ctx, p.client, p.photoURL, token.AccessToken, "image/*")
 	encodedPhoto := json.RawMessage("null")
+	var avatarURL *string
 	if err != nil && status != http.StatusNotFound {
 		return Identity{}, failure("photo retrieval", err)
 	}
@@ -87,14 +110,18 @@ func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Iden
 		if err != nil || len(mediaType) < 6 || mediaType[:6] != "image/" || len(photo) == 0 {
 			return Identity{}, failure("photo retrieval", errors.New("provider photo has invalid content"))
 		}
+		base64Photo := base64.StdEncoding.EncodeToString(photo)
+		dataURL := "data:" + mediaType + ";base64," + base64Photo
+		avatarURL = &dataURL
 		encodedPhoto, err = json.Marshal(struct {
 			ContentType string `json:"content_type"`
 			DataBase64  string `json:"data_base64"`
-		}{ContentType: contentType, DataBase64: base64.StdEncoding.EncodeToString(photo)})
+		}{ContentType: contentType, DataBase64: base64Photo})
 		if err != nil {
 			return Identity{}, failure("photo encoding", err)
 		}
 	}
-	return Identity{Provider: p.Name(), Subject: p.Name() + ":" + microsoftTenant + ":" + objectID,
-		Sources: map[string]json.RawMessage{"id_token_claims": claims, "profile": profile, "photo": encodedPhoto}}, nil
+	return Identity{Provider: p.Name(), ID: p.Name() + ":" + microsoftTenant + ":" + objectID,
+		Email: email, Name: name, AvatarURL: avatarURL,
+		Origin: map[string]json.RawMessage{"id_token_claims": claims, "profile": profile, "photo": encodedPhoto}}, nil
 }

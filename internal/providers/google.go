@@ -69,6 +69,17 @@ func (p *Google) Exchange(ctx context.Context, request ExchangeRequest) (Identit
 	if err != nil || subject != idToken.Subject {
 		return Identity{}, failure("identity verification", errors.New("userinfo subject does not match ID token"))
 	}
-	return Identity{Provider: p.Name(), Subject: p.Name() + ":" + idToken.Subject,
-		Sources: map[string]json.RawMessage{"id_token_claims": claims, "userinfo": userinfo}}, nil
+	var profile struct {
+		Email         *string `json:"email"`
+		EmailVerified *bool   `json:"email_verified"`
+		Name          *string `json:"name"`
+		Picture       *string `json:"picture"`
+	}
+	if err := json.Unmarshal(userinfo, &profile); err != nil {
+		return Identity{}, failure("identity normalization", err)
+	}
+	return Identity{Provider: p.Name(), ID: p.Name() + ":" + idToken.Subject,
+		Email: nilIfEmpty(profile.Email), EmailVerified: profile.EmailVerified,
+		Name: nilIfEmpty(profile.Name), AvatarURL: nilIfEmpty(profile.Picture),
+		Origin: map[string]json.RawMessage{"id_token_claims": claims, "userinfo": userinfo}}, nil
 }

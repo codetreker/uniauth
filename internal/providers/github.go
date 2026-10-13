@@ -71,8 +71,48 @@ func (p *GitHub) Exchange(ctx context.Context, request ExchangeRequest) (Identit
 	if err != nil {
 		return Identity{}, failure("email retrieval", err)
 	}
-	return Identity{Provider: p.Name(), Subject: p.Name() + ":" + strconv.FormatInt(id, 10),
-		Sources: map[string]json.RawMessage{"profile": profile, "emails": emails}}, nil
+	var githubProfile struct {
+		Email     *string `json:"email"`
+		Name      *string `json:"name"`
+		AvatarURL *string `json:"avatar_url"`
+	}
+	if err := json.Unmarshal(profile, &githubProfile); err != nil {
+		return Identity{}, failure("identity normalization", err)
+	}
+	email, verified, err := githubEmail(emails, nilIfEmpty(githubProfile.Email))
+	if err != nil {
+		return Identity{}, failure("identity normalization", err)
+	}
+	return Identity{Provider: p.Name(), ID: p.Name() + ":" + strconv.FormatInt(id, 10),
+		Email: email, EmailVerified: verified, Name: nilIfEmpty(githubProfile.Name), AvatarURL: nilIfEmpty(githubProfile.AvatarURL),
+		Origin: map[string]json.RawMessage{"profile": profile, "emails": emails}}, nil
+}
+
+func githubEmail(emails json.RawMessage, profileEmail *string) (*string, *bool, error) {
+	var records []struct {
+		Email    *string `json:"email"`
+		Primary  *bool   `json:"primary"`
+		Verified *bool   `json:"verified"`
+	}
+	if err := json.Unmarshal(emails, &records); err != nil {
+		return nil, nil, err
+	}
+	for _, record := range records {
+		if record.Primary != nil && *record.Primary {
+			email := nilIfEmpty(record.Email)
+			if email != nil {
+				return email, record.Verified, nil
+			}
+		}
+	}
+	if profileEmail != nil {
+		for _, record := range records {
+			if record.Email != nil && *record.Email == *profileEmail {
+				return profileEmail, record.Verified, nil
+			}
+		}
+	}
+	return profileEmail, nil, nil
 }
 
 func (p *GitHub) emails(ctx context.Context, accessToken string) (json.RawMessage, error) {
