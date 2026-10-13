@@ -44,6 +44,9 @@ authorized implementation task.
 | `internal/auth/` | Login transactions and one-time identity-result handover |
 | `internal/console/` | Administrator authentication and management API |
 | `web/console/` | React and TypeScript administrator interface |
+| `sdk/go/` | Standalone Go product-backend client module |
+| `sdk/js/` | ESM JavaScript product-backend package with TypeScript declarations |
+| `e2e/sdk/` | Isolated module verifying both SDKs against the gateway protocol |
 | `docs/blueprint/` | Agreed architecture and requirements |
 | `docs/reference/` | Implemented APIs, configuration, and observable behavior |
 | `docs/plans/` | Gitignored execution plans for authorized tasks |
@@ -57,7 +60,11 @@ records, account linking, authorization, and login sessions. Identity handover
 uses an App-bound result kept only in process memory for five minutes, then
 atomically consumed once. SQLite stores application configuration; upstream
 provider credentials come from deployment configuration. Console administrator
-authority is independent of product credentials.
+authority is independent of product credentials. Product SDKs use the same HTTP
+handover protocol, retain complete identity JSON, and provide no state, user, or
+session storage. Products atomically validate and consume browser-bound pending
+login state before retrieving a result. SDK package contracts are documented in
+[the SDK reference](docs/reference/sdks.md).
 
 [Agent Notes](.agents/notes/README.md) owns the decision-record lifecycle and
 [its local instructions](.agents/notes/AGENTS.md) govern note editing. Plans

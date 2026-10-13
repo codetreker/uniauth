@@ -63,6 +63,26 @@ parallelism 1–16, salt 16–64 bytes, and key 32–64 bytes. Malformed or unsu
 hashes fail startup. Changing the deployment password requires a restart, which
 also invalidates administrator sessions and all pending product logins.
 
+## Product SDK configuration
+
+The product SDKs run in confidential product backends with a UniAuth base origin,
+App ID, and App Secret from the Console. They do not use upstream provider Client
+IDs or Secrets and do not load service environment configuration automatically.
+Products choose how to inject these three values into their client constructors.
+
+Both clients require HTTPS unless loopback HTTP is explicitly enabled. Go uses
+`AllowLoopbackHTTP`; JavaScript uses `allowLoopbackHTTP`. The default request
+deadline is 30 seconds. A Go caller-provided HTTP client controls its timeout;
+JavaScript uses `timeoutMs` and composes the per-request caller AbortSignal with
+its deadline. The SDK performs no automatic result retry or redirect following.
+A failed response may mean the server already consumed the code, so the product
+starts a new login rather than treating a repeated request as recovery.
+
+[The SDK reference](sdks.md) describes constructor fields, callback validation,
+raw identity fidelity, and local Go/packed JavaScript use. Packages are delivered
+as source and locally validated artifacts; no registry publication or Go release
+tag is established by this task.
+
 ## Provider registration
 
 Register these exact callbacks at each upstream provider, replacing the origin
@@ -166,13 +186,21 @@ pinned in [go.mod](../../go.mod), [root package.json](../../package.json), and
 [Console package.json](../../web/console/package.json). Build caches, dependency
 stores, test artifacts, and temporary browser data belong under `.tmp/`.
 
-`make coverage` invokes go-cov `v0.1.0` using [.go-cov.toml](../../.go-cov.toml).
+`make coverage` invokes go-cov `v0.1.0` using [.go-cov.toml](../../.go-cov.toml)
+separately for the service module and standalone Go SDK module, with `GOWORK=off`.
+The profiles are `.tmp/coverage.out` and `.tmp/sdk-go-coverage.out`.
 It enforces 90% total, 85% package, and 80% function coverage, requires critical
 blocks covered, and enables race detection with a three-minute test timeout.
 No packages, files, or functions are excluded; inherited policy override
-variables are cleared by the coverage script. `make test` also runs Console unit
-tests. `make check` validates active documents and skill metadata, formatting,
-Go vet, frontend types, and frontend formatting.
+variables are cleared by the coverage script. `make test` also runs Console and
+JavaScript SDK tests, a packed JavaScript consumer and declaration check, and a
+standalone external Go consumer. The isolated `e2e/sdk/` module then runs both
+clients against the Go authentication handler and SQLite configuration with a
+fixture provider, race detection, and a two-minute timeout. `make sdks` builds the Go module and JavaScript
+output independently; `make build` includes those builds. `make check` validates
+active documents and skill metadata, formatting, Go vet for service, SDK, and
+integration modules,
+frontend/SDK types, and frontend/SDK formatting.
 
 `make browser` runs Playwright against a fresh local service and the interactive
 mockup. Use an existing Chromium executable with

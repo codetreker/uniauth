@@ -19,7 +19,10 @@ detection enabled. There are no package, file, or function exclusions.
 [The coverage script](../../../../scripts/coverage.sh) pins go-cov `v0.1.0`, clears
 inherited policy override variables, uses repository-local Go caches, and writes
 coverage artifacts under `.tmp/`. `make coverage` runs that gate with a
-three-minute test timeout. `make test` includes the gate and Console unit tests.
+three-minute test timeout. Coverage runs separately for the service and standalone
+Go SDK modules with the same policy and `GOWORK=off`, writing distinct profiles.
+`make test` includes both gates, Console tests, JavaScript SDK tests, and consumers
+of the external Go module and packed JavaScript package.
 
 Go tests exercise HTTP and store behavior for provider validation, complete raw
 identity fields, separate state and browser binding, expiry, failed and wrong-App
@@ -34,13 +37,35 @@ noncanonical, and multiple Origin values and invalid CSRF remain rejected.
 Frontend configuration regressions hold mutation responses open after the
 simulated backend commits. They verify that Edit, enable/disable, and deletion
 cannot overlap for one App, repeated submissions start one request, and a later
-editor uses the committed configuration. Failure cases hold ownership through server-state reconciliation and
-verify that only the affected App changes, preserving other accepted mutations.
+editor uses the committed configuration. Failure cases hold ownership through
+server-state reconciliation and verify that only the affected App changes, preserving other accepted mutations.
 If reconciliation fails, new actions remain blocked under `State unavailable`;
 already-owned drafts or confirmations may Retry or Cancel. Successful owned
 retries may leave that marker until explicit Refresh. Assertions distinguish
 server commit, response delivery, and verified current state rather than treating
 a failed response as proof that no write occurred.
+
+SDK assertions exercise callback ambiguity, state mismatches, exact callback
+string preservation, HTTP Basic and JSON request construction, redirect rejection,
+request deadlines and cancellation, typed errors, lost-response behavior, and
+complete unknown source JSON. Go raw source values and JavaScript `rawJSON`
+retain numeric representations that ordinary parsed JavaScript numbers cannot.
+Consumers import the standalone Go module with `GOWORK=off` and install the
+packed JavaScript tarball, then check bare-import runtime behavior and exported
+TypeScript declarations. These checks validate distributable content, not an
+unreleased registry version. The
+[SDK decision](../feature/2026-10-13-product-sdks.md) owns the client package
+contracts.
+
+The isolated `e2e/sdk/` module exercises Go and JavaScript clients against the
+real authentication handler, SQLite App registry, browser-bound login transaction,
+and fixture provider. Wrong Secrets and wrong-App claims leave results claimable;
+replay is rejected, concurrent valid claims produce one success, and raw unknown
+fields, nulls, false values, and unsafe JavaScript integers remain available. Go
+integration assertions also reach the exact five-minute expiry boundary. The
+module runs with race detection and a bounded two-minute deadline after the
+JavaScript output has been built. It verifies client/gateway integration without
+claiming live provider authentication.
 
 Playwright uses one worker and no automatic retries. It starts a fresh local Go
 service with isolated SQLite data and the production Console, and a separate
@@ -51,10 +76,11 @@ browser installations prevent task tooling from leaving a permanent installation
 
 The [configuration reference](../../../../docs/reference/configuration.md) owns
 validation commands and limits. The
-[initial implementation receipt](../../../../docs/tasks/2026-10-12-authentication-gateway.md)
-and [Console correction receipt](../../../../docs/tasks/2026-10-12-console-review-fixes.md)
-retain their respective observed outcomes and distinguish fixture coverage from
-live provider checks.
+[initial implementation receipt](../../../../docs/tasks/2026-10-12-authentication-gateway.md),
+[Console correction receipt](../../../../docs/tasks/2026-10-12-console-review-fixes.md),
+and [SDK receipt](../../../../docs/tasks/2026-10-13-product-sdks.md) retain their
+respective observed outcomes and distinguish fixture coverage from live provider
+checks.
 
 ## Alternatives
 

@@ -33,6 +33,7 @@ from live upstream verification.
 | R6 | Atomically consume an owning App's authenticated result once. |
 | R7 | Leave users, linking, authorization, and login sessions to each product. |
 | R8 | Return a callback code, then let the product backend retrieve identity JSON. |
+| R9 | Provide Go and JavaScript product-backend SDKs for the existing protocol while retaining complete raw identity data and product-owned state/session persistence. |
 
 ## Architecture
 
@@ -66,6 +67,8 @@ callback URL size limits and shared encryption-key lifecycle complexity.
 | `internal/auth/` | Browser-bound transactions, result expiry and atomic handover. |
 | `internal/console/` | Administrator password verification, sessions, management API. |
 | `web/console/` | React/TypeScript UI and embedded production assets. |
+| `sdk/go/` | Standalone standard-library Go product client module. |
+| `sdk/js/` | Node.js ESM product client package and TypeScript declarations. |
 
 The provider interface represents three actual adapters. SQLite is a concrete
 store. Source JSON is retained as `json.RawMessage` rather than reduced to a
@@ -148,6 +151,40 @@ bindings. HTTPS is required in production; loopback HTTP is an explicit local
 configuration. Callback parameters contain no identity payload or credentials.
 Responses are not cacheable. The [API reference](../reference/api.md) defines
 exact request limits, callback errors, and HTTP statuses.
+
+## Product SDKs
+
+Go and JavaScript SDKs implement the existing product login-and-retrieval
+protocol. Their clients build validated authorization URLs, generate random state,
+parse callback parameters against expected state, and issue one authenticated
+result request. They have no administrator helpers, user store, product session,
+or pending-login persistence. A product must atomically validate and consume its
+browser-bound pending state before starting result retrieval.
+
+The Go module is `github.com/codetreker/uniauth/sdk/go`, package `uniauth`, with
+Go 1.27.1 and standard-library dependencies only. The JavaScript package is
+`@codetreker/uniauth`, with ESM output and TypeScript declarations for Node.js 24
+or later and no runtime dependencies. Both reject callback ambiguity and invalid
+origins, require HTTPS except explicitly enabled loopback HTTP, and keep Secrets
+out of authorization URLs.
+
+Result retrieval uses HTTP Basic authentication and JSON over a single POST;
+the SDKs do not follow redirects or retry consumption. Typed API errors retain
+HTTP status, machine code, message, and request ID; malformed responses are
+protocol errors, and transport causes remain available. A lost, aborted, or
+invalid response may follow successful server consumption and requires a fresh
+login. Default request deadlines are 30 seconds; Go accepts a configured HTTP
+client, and JavaScript accepts a timeout and caller AbortSignal.
+
+Go identities preserve source fields as `json.RawMessage` and the entire body as
+`RawJSON`. JavaScript returns unknown source values plus authoritative `rawJSON`;
+ordinary parsed JavaScript numbers cannot preserve every JSON integer or decimal
+exactly. Identity fields are not projected into a common-profile model. The
+[SDK reference](../reference/sdks.md) owns examples and exact API contracts, and
+the [SDK decision](../../.agents/notes/implemented/feature/2026-10-13-product-sdks.md)
+records these responsibilities. Local package consumers validate Go imports and
+packed JavaScript code and types; package metadata alone does not establish a
+registry release.
 
 ## Complete provider sources
 

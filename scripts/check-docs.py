@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 paths = [ROOT / "AGENTS.md", *ROOT.glob("*.md")]
 paths += list((ROOT / "docs").rglob("*.md"))
 paths += list((ROOT / ".agents").rglob("*.md"))
+paths += list((ROOT / "sdk").glob("*/README.md"))
 checked = set()
 
 for path in paths:
