@@ -65,7 +65,7 @@ const finishLogin = async (request: ProductRequest): Promise<void> => {
   // State has already been consumed on success and provider-error callbacks.
   const code = parseCallback(query, pending.state);
   const identity = await client.retrieve(code, { signal: request.signal });
-  const user = await productUsers.findOrCreateBySubject(identity.subject);
+  const user = await productUsers.findOrCreateByIdentityID(identity.id);
   await productSessions.create(request.browserSessionID, user.id);
 };
 ```
@@ -130,22 +130,38 @@ login after an unavailable result or an uncertain retrieval outcome.
 import type { Identity } from "@codetreker/uniauth";
 
 const useIdentity = (identity: Identity): void => {
-  console.log(identity.provider, identity.subject);
+  console.log(identity.provider, identity.id);
   // Parse this exact text with a chosen numeric representation when needed.
   persistIdentityJSON(identity.rawJSON);
-  inspectProviderSources(identity.sources);
+  inspectProviderOrigin(identity.origin);
 };
 ```
 
-`Identity` contains `provider`, `subject`, `sources: Record<string, unknown>`, and
-`rawJSON`. Only the stable envelope is validated. All unknown source fields,
-nulls, false values, arrays, and nested objects remain available. `rawJSON` is the
-complete exact UTF-8 JSON response, including whitespace and unknown envelope
-fields; it is authoritative when numeric fidelity matters. `sources` is a native
-JavaScript convenience view: JSON numbers use ordinary `number` precision, so an
-integer such as `9007199254740993` may round. The SDK does not project provider
-profiles into a fixed account schema or choose an email-verification policy.
-Treat identity data as sensitive and avoid logging it indiscriminately.
+`Identity` includes every normalized wire field and the original response text:
+
+| Field            | Type                                  |
+| ---------------- | ------------------------------------- |
+| `provider`       | `"microsoft" \| "google" \| "github"` |
+| `id`             | Nonempty `string`                     |
+| `email`          | `string \| null`                      |
+| `email_verified` | `boolean \| null`                     |
+| `name`           | `string \| null`                      |
+| `avatar_url`     | `string \| null`                      |
+| `origin`         | `Record<string, unknown>`             |
+| `rawJSON`        | `string`                              |
+
+All seven wire fields must be present with these types. Missing or invalid fields
+raise `ProtocolError`; explicit `null` and `false` remain unchanged. The SDK
+copies the service's normalized values verbatim, without deriving an ID or
+profile from `origin`. Products own account-linking and email-verification policy.
+
+All unknown fields, nulls, false values, arrays, and nested objects inside
+`origin` remain available. `rawJSON` is the complete exact UTF-8 JSON response,
+including whitespace and unknown envelope fields; it is authoritative when
+numeric fidelity matters. `origin` is a native JavaScript convenience view:
+JSON numbers use ordinary `number` precision, so an integer such as
+`9007199254740993` may round. Treat identity data as sensitive and avoid logging
+it indiscriminately.
 
 | Error                        | Meaning                                                                                                                                                                                        |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

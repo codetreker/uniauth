@@ -94,8 +94,10 @@ const state: string = generateState();
 const url: string = client.authorizationURL({ provider, redirectURI: "https://product.example/callback", state });
 const code: string = parseCallback(new URLSearchParams({ state, code: "code" }), state);
 const result: Promise<Identity> = client.retrieve(code, { signal: new AbortController().signal });
+const identity: Identity = { provider, id: "github:1", email: null, email_verified: false, name: null, avatar_url: null, origin: { future: false }, rawJSON: "{}" };
+const fields: [string, string | null, boolean | null, string | null, string | null, Record<string, unknown>] = [identity.id, identity.email, identity.email_verified, identity.name, identity.avatar_url, identity.origin];
 const errors: readonly Error[] = [new APIError(410, "result_unavailable", "Unavailable.", null), new CallbackError("state_mismatch"), new ProtocolError("Invalid JSON.", 200, null)];
-void [url, result, errors];
+void [url, result, fields, errors];
 `,
   );
   await writeFile(
@@ -105,14 +107,19 @@ import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createClient, generateState, parseCallback } from "@codetreker/uniauth";
 assert.equal(await realpath(fileURLToPath(import.meta.resolve("@codetreker/uniauth"))), await realpath(fileURLToPath(new URL("./node_modules/@codetreker/uniauth/dist/index.js", import.meta.url))));
-const rawJSON = '{ "provider":"github", "subject":"github:1", "sources":{"future":false,"large":9007199254740993} }';
+const rawJSON = '{ "provider":"github", "id":"github:1", "email":null, "email_verified":false, "name":null, "avatar_url":null, "origin":{"future":false,"large":9007199254740993} }';
 const client = createClient({ baseURL: "https://auth.example", appID: "product", appSecret: "secret", fetch: async () => new Response(rawJSON, { headers: { "Content-Type": "application/json" } }) });
 const state = generateState();
 assert.equal(parseCallback(new URLSearchParams({ state, code: "code" }), state), "code");
 assert.equal(new URL(client.authorizationURL({ provider: "github", redirectURI: "https://product.example/callback", state })).searchParams.get("state"), state);
 const identity = await client.retrieve("code");
 assert.equal(identity.rawJSON, rawJSON);
-assert.equal(identity.sources.future, false);
+assert.equal(identity.id, "github:1");
+assert.equal(identity.email, null);
+assert.equal(identity.email_verified, false);
+assert.equal(identity.name, null);
+assert.equal(identity.avatar_url, null);
+assert.equal(identity.origin.future, false);
 console.log("Packed SDK ESM consumer passed.");
 `,
   );

@@ -32,6 +32,9 @@ enabled `localhost` or loopback IP development addresses. The server listener
 uses HTTP; terminate TLS at a reverse proxy and configure the actual external
 origin. The service does not infer its public origin from forwarded headers.
 
+The [Docker Compose deployment reference](deployment.md) defines image publication,
+environment deployment directories, and VM-owned `.env` configuration.
+
 Console request-origin validation derives the browser-serialized origin from the
 configured URL. Domain names use IDNA ASCII conversion and lowercase; valid IPv6
 literals are serialized canonically. Ports are decimal without leading zeros;
@@ -79,7 +82,8 @@ A failed response may mean the server already consumed the code, so the product
 starts a new login rather than treating a repeated request as recovery.
 
 [The SDK reference](sdks.md) describes constructor fields, callback validation,
-raw identity fidelity, and local Go/packed JavaScript use. Packages are delivered
+the mandatory normalized identity fields, nullable values, complete `origin` and
+raw JSON fidelity, and local Go/packed JavaScript use. Packages are delivered
 as source and locally validated artifacts; no registry publication or Go release
 tag is established by this task.
 
@@ -107,10 +111,13 @@ endpoint. Microsoft and Google fetch signing keys when verification needs them.
 Products do not register their callback URLs with the upstream providers;
 product callbacks are registered in the UniAuth Console.
 
-Provider scopes define which identity information can be obtained. Raw source
-JSON is retained, while tokens and authorization codes remain internal to the
-authentication flow. Missing upstream attributes remain missing. Details of
-the returned sources are in the [API reference](api.md).
+Provider scopes define which identity information can be obtained. Adapters
+return standard identity fields alongside complete raw source objects in
+`origin`; tokens and authorization codes remain internal to the authentication
+flow. Missing source attributes stay missing in `origin`, while unavailable
+standard strings and unknown verification values are `null`. Microsoft photo
+bytes also supply the standard avatar data URL without an additional request.
+The [API reference](api.md) owns the response fields, selection rules, and errors.
 
 ## State, limits, and failure behavior
 
@@ -141,8 +148,10 @@ The following limits are fixed by service composition:
 
 Accounted cache bytes include retained token strings and payloads, not all Go
 allocator overhead. Count and byte limits reject new work explicitly rather than
-evicting accepted live entries. No truncation or partial identity package is
-returned when upstream or cache size limits are exceeded.
+evicting accepted live entries. Standard fields and complete `origin` sources
+both count toward result size, including the Microsoft avatar data URL and its
+retained source photo. No truncation or partial identity package is returned
+when upstream or cache size limits are exceeded.
 
 Deploy a single UniAuth instance. Authorization, provider callbacks, and result
 retrieval must reach the process holding the transient state. Multiple replicas

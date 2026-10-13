@@ -41,11 +41,20 @@ ID; protocol errors identify malformed responses; transport causes remain
 available. Lost, aborted, or unparseable replies may already have consumed the
 result, requiring a new login.
 
-Go returns complete source JSON as `json.RawMessage` and the entire response as
-`RawJSON`. JavaScript returns parsed unknown source values with authoritative
-`rawJSON`, because ordinary JavaScript numeric parsing cannot retain every JSON
-integer or decimal exactly. There is no common-profile projection, missing-field
-fallback, or replacement identity identifier.
+The clients expose all seven server-normalized fields: `provider`, `id`, `email`,
+`email_verified`, `name`, `avatar_url`, and `origin`. Every field is required in a
+response; nullable strings and nullable verification remain distinct from missing
+fields, and explicit `false` remains `false`. Missing fields or incompatible types
+are protocol errors. The clients do not map provider source fields themselves,
+add profile fallbacks, replace identity keys, or expose old wire-field aliases.
+The [normalized identity decision](../architecture/2026-10-13-normalized-identity.md)
+owns the server mapping and wire format.
+
+Go returns normalized scalar values using `ID`, nullable profile pointers, and
+complete `Origin` as `json.RawMessage`, with the entire response in `RawJSON`.
+JavaScript returns the exact snake-case fields and parsed unknown original data
+under `origin`, with authoritative `rawJSON`, because ordinary numeric parsing
+cannot retain every JSON integer or decimal exactly.
 
 The [SDK reference](../../../../docs/reference/sdks.md) owns client configuration,
 usage, and error contracts. Validation uses a separate Go consumer and the packed
@@ -71,8 +80,10 @@ nested-module release path. A future release uses a tag such as
 **Project JavaScript numbers into BigInt or strings.** Rewriting large integers
 could preserve some values but changes source field types, and it does not solve
 exact decimal representation. Keeping the entire raw JSON preserves the original
-representations without projecting provider fields. Native parsed sources remain
-a convenience view, and each product chooses an exact parser if it needs one.
+representations inside `origin` without changing its field types. Native parsed
+original data remains a convenience view, and each product chooses an exact
+parser if it needs one. The SDK exposes the server's standard profile independently
+of that raw-data representation.
 
 The handover alternatives in the gateway decision remain unchanged.
 

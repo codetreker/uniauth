@@ -61,8 +61,9 @@ uses an App-bound result kept only in process memory for five minutes, then
 atomically consumed once. SQLite stores application configuration; upstream
 provider credentials come from deployment configuration. Console administrator
 authority is independent of product credentials. Product SDKs use the same HTTP
-handover protocol, retain complete identity JSON, and provide no state, user, or
-session storage. Products atomically validate and consume browser-bound pending
+handover protocol, expose all seven normalized identity fields and complete
+`origin`, require field presence and nullable types, and provide no state, user,
+or session storage. They do not derive profile values or retain old wire aliases. Products atomically validate and consume browser-bound pending
 login state before retrieving a result. SDK package contracts are documented in
 [the SDK reference](docs/reference/sdks.md).
 

@@ -70,22 +70,34 @@ const apiError = (status, code) => (error) => {
 
 const identityMatches = (identity) => {
   assert.equal(identity.provider, "google");
-  assert.equal(identity.subject, "google:integration-user");
-  assert.deepEqual(identity.sources, {
+  assert.equal(identity.id, "integration-user");
+  assert.equal(identity.email, null);
+  assert.equal(identity.email_verified, false);
+  assert.equal(identity.name, "Integration User");
+  assert.equal(identity.avatar_url, null);
+  assert.deepEqual(identity.origin, {
     profile: JSON.parse(fixture.profileJSON),
     optional: null,
     enabled: false,
   });
-  assert.equal(identity.sources.profile.email, null);
-  assert.equal(identity.sources.profile.verified, false);
-  assert.deepEqual(identity.sources.profile.unknown.nested, [
+  assert.equal(identity.origin.profile.email, null);
+  assert.equal(identity.origin.profile.verified, false);
+  assert.deepEqual(identity.origin.profile.unknown.nested, [
     null,
     false,
     { text: "original" },
   ]);
   assert.ok(identity.rawJSON.includes(fixture.profileJSON));
   assert.ok(identity.rawJSON.includes('"id":9007199254740993'));
-  assert.deepEqual(JSON.parse(identity.rawJSON).sources, identity.sources);
+  assert.deepEqual(JSON.parse(identity.rawJSON), {
+    provider: "google",
+    id: "integration-user",
+    email: null,
+    email_verified: false,
+    name: "Integration User",
+    avatar_url: null,
+    origin: identity.origin,
+  });
 };
 
 let code = await login();

@@ -66,8 +66,8 @@ func TestExternalProduct(t *testing.T) {
 	}
 	var retrieve func(context.Context, string) (*uniauth.Identity, error) = client.Retrieve
 	_ = retrieve
-	identity := uniauth.Identity{Provider: uniauth.GitHub, Subject: "github:123", Sources: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":9007199254740993}`)}}
-	if string(identity.Sources["profile"]) != `{"id":9007199254740993}` {
+	identity := uniauth.Identity{Provider: uniauth.GitHub, ID: "github:123", Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":9007199254740993}`)}}
+	if string(identity.Origin["profile"]) != `{"id":9007199254740993}` {
 		t.Fatal("source JSON lost precision")
 	}
 }

@@ -54,9 +54,15 @@ func (p *controlledProvider) Exchange(ctx context.Context, request providers.Exc
 	if !found || request.ExpectedNonce != authorization.Nonce || request.CodeVerifier != authorization.CodeVerifier {
 		return providers.Identity{}, errors.New("callback did not retain its authorization nonce and verifier")
 	}
-	return providers.Identity{Provider: "google", Subject: "google:integration-user", Sources: map[string]json.RawMessage{
-		"profile": json.RawMessage(profileJSON), "optional": json.RawMessage(`null`), "enabled": json.RawMessage(`false`),
-	}}, nil
+	verified := false
+	name := "Integration User"
+	return providers.Identity{
+		Provider: "google", ID: "integration-user", Email: nil, EmailVerified: &verified,
+		Name: &name, AvatarURL: nil,
+		Origin: map[string]json.RawMessage{
+			"profile": json.RawMessage(profileJSON), "optional": json.RawMessage(`null`), "enabled": json.RawMessage(`false`),
+		},
+	}, nil
 }
 
 type gateway struct {
@@ -197,12 +203,35 @@ func assertAPIError(t *testing.T, err error, status int, code string) {
 
 func assertIdentity(t *testing.T, identity *uniauth.Identity) {
 	t.Helper()
-	if identity.Provider != uniauth.Google || identity.Subject != "google:integration-user" || string(identity.Sources["profile"]) != profileJSON || string(identity.Sources["optional"]) != "null" || string(identity.Sources["enabled"]) != "false" {
-		t.Fatalf("identity or source JSON changed: %#v", identity)
+	if identity.Provider != uniauth.Google || identity.ID != "integration-user" || identity.Email != nil || identity.EmailVerified == nil || *identity.EmailVerified || identity.Name == nil || *identity.Name != "Integration User" || identity.AvatarURL != nil {
+		t.Fatalf("normalized identity changed: %#v", identity)
 	}
-	var wire providers.Identity
-	if err := json.Unmarshal(identity.RawJSON, &wire); err != nil || wire.Provider != string(identity.Provider) || wire.Subject != identity.Subject || !bytes.Equal(wire.Sources["profile"], identity.Sources["profile"]) {
-		t.Fatalf("complete identity JSON changed: %s", identity.RawJSON)
+	if len(identity.Origin) != 3 || string(identity.Origin["profile"]) != profileJSON || string(identity.Origin["optional"]) != "null" || string(identity.Origin["enabled"]) != "false" {
+		t.Fatalf("origin JSON changed: %#v", identity.Origin)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(identity.RawJSON, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) != 7 {
+		t.Fatalf("identity envelope has %d fields, want seven: %s", len(wire), identity.RawJSON)
+	}
+	for field, expected := range map[string]string{
+		"provider": `"google"`, "id": `"integration-user"`, "email": `null`,
+		"email_verified": `false`, "name": `"Integration User"`, "avatar_url": `null`,
+	} {
+		if string(wire[field]) != expected {
+			t.Fatalf("raw identity %s = %s, want %s", field, wire[field], expected)
+		}
+	}
+	var origin map[string]json.RawMessage
+	if err := json.Unmarshal(wire["origin"], &origin); err != nil || len(origin) != len(identity.Origin) {
+		t.Fatalf("complete origin JSON changed: %s", wire["origin"])
+	}
+	for name, source := range identity.Origin {
+		if !bytes.Equal(origin[name], source) {
+			t.Fatalf("raw origin %s differs from decoded identity", name)
+		}
 	}
 }
 

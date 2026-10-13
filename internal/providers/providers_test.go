@@ -44,6 +44,7 @@ type fixture struct {
 	emails     string
 	emailPages map[string]string
 	photo      []byte
+	photoType  string
 	status     map[string]int
 	tokenExtra map[string]any
 	omitID     bool
@@ -58,7 +59,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{key: signingKey(t), status: map[string]int{}, tokenExtra: map[string]any{},
 		profile:  `{"id":123,"email":null,"unknown":{"false":false},"login":"someone"}`,
-		userinfo: `{"sub":"user-123","unknown":null,"email_verified":false}`, emails: `[{"email":"a@example.test","verified":false,"primary":true,"unknown":null}]`, photo: []byte{0, 1, 2, 3}}
+		userinfo: `{"sub":"user-123","unknown":null,"email_verified":false}`, emails: `[{"email":"a@example.test","verified":false,"primary":true,"unknown":null}]`, photo: []byte{0, 1, 2, 3}, photoType: "image/jpeg"}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requests = append(f.requests, r.URL.Path)
 		if status := f.status[r.URL.Path]; status != 0 {
@@ -111,7 +112,7 @@ func newFixture(t *testing.T) *fixture {
 				if r.Header.Get("Accept") != "image/*" {
 					t.Errorf("wrong photo Accept header")
 				}
-				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Content-Type", f.photoType)
 				w.Write(f.photo)
 				return
 			}
@@ -198,14 +199,14 @@ func TestProvidersCompleteIdentityAndAuthorization(t *testing.T) {
 			}
 			switch name {
 			case "microsoft":
-				if identity.Subject != "microsoft:"+microsoftTenant+":object-123" || string(identity.Sources["profile"]) != f.profile {
+				if identity.ID != "microsoft:"+microsoftTenant+":object-123" || string(identity.Origin["profile"]) != f.profile {
 					t.Fatalf("identity: %+v", identity)
 				}
 				var photo struct {
 					ContentType string `json:"content_type"`
 					DataBase64  string `json:"data_base64"`
 				}
-				if err := json.Unmarshal(identity.Sources["photo"], &photo); err != nil {
+				if err := json.Unmarshal(identity.Origin["photo"], &photo); err != nil {
 					t.Fatal(err)
 				}
 				if photo.ContentType != "image/jpeg" || photo.DataBase64 != base64.StdEncoding.EncodeToString(f.photo) {
@@ -215,11 +216,11 @@ func TestProvidersCompleteIdentityAndAuthorization(t *testing.T) {
 					t.Fatal("missing Microsoft User.Read")
 				}
 			case "google":
-				if identity.Subject != "google:user-123" || string(identity.Sources["userinfo"]) != f.userinfo {
+				if identity.ID != "google:user-123" || string(identity.Origin["userinfo"]) != f.userinfo {
 					t.Fatalf("identity: %+v", identity)
 				}
 			case "github":
-				if identity.Subject != "github:123" || string(identity.Sources["profile"]) != f.profile || string(identity.Sources["emails"]) != f.emails {
+				if identity.ID != "github:123" || string(identity.Origin["profile"]) != f.profile || string(identity.Origin["emails"]) != f.emails {
 					t.Fatalf("identity: %+v", identity)
 				}
 				if query.Get("scope") != "read:user user:email" {
@@ -227,12 +228,12 @@ func TestProvidersCompleteIdentityAndAuthorization(t *testing.T) {
 				}
 			}
 			if name != "github" {
-				fields, err := jsonObject(identity.Sources["id_token_claims"])
+				fields, err := jsonObject(identity.Origin["id_token_claims"])
 				if err != nil {
 					t.Fatal(err)
 				}
 				if string(fields["optional"]) != "null" || string(fields["unknown"]) != "{\"value\":false}" {
-					t.Fatalf("claims lost fields: %s", identity.Sources["id_token_claims"])
+					t.Fatalf("claims lost fields: %s", identity.Origin["id_token_claims"])
 				}
 			}
 		})
@@ -330,7 +331,7 @@ func TestMicrosoftPhotoAbsenceAndGoogleMultipleAudiences(t *testing.T) {
 	f := newFixture(t)
 	f.status["/photo"] = 404
 	identity, err := f.provider(t, "microsoft").Exchange(context.Background(), exchangeRequest())
-	if err != nil || string(identity.Sources["photo"]) != "null" {
+	if err != nil || string(identity.Origin["photo"]) != "null" || identity.AvatarURL != nil {
 		t.Fatalf("missing photo: %+v, %v", identity, err)
 	}
 	f2 := newFixture(t)
@@ -406,17 +407,20 @@ func TestGitHubPreservesCompleteEmailPagination(t *testing.T) {
 		batch[i] = json.RawMessage(fmt.Sprintf(`{"email":"%d@example.test","verified":false,"extra":null}`, i))
 	}
 	first, _ := json.Marshal(batch)
-	f.emailPages = map[string]string{"1": string(first), "2": `[{"email":"last@example.test","primary":true,"unknown":false}]`}
+	f.emailPages = map[string]string{"1": string(first), "2": `[{"email":"last@example.test","primary":true,"verified":true,"unknown":false}]`}
 	identity, err := f.provider(t, "github").Exchange(context.Background(), exchangeRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if identity.ID != "github:123" || identity.Email == nil || *identity.Email != "last@example.test" || identity.EmailVerified == nil || !*identity.EmailVerified {
+		t.Fatalf("primary email from later page not selected: %+v", identity)
+	}
 	var emails []map[string]json.RawMessage
-	if err := json.Unmarshal(identity.Sources["emails"], &emails); err != nil {
+	if err := json.Unmarshal(identity.Origin["emails"], &emails); err != nil {
 		t.Fatal(err)
 	}
 	if len(emails) != 101 || string(emails[100]["unknown"]) != "false" || string(emails[0]["extra"]) != "null" {
-		t.Fatalf("incomplete email pages: %s", identity.Sources["emails"])
+		t.Fatalf("incomplete email pages: %s", identity.Origin["emails"])
 	}
 }
 

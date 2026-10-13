@@ -17,7 +17,7 @@ const config = {
   appSecret: "secret",
 };
 const identityJSON =
-  '{ "provider":"github", "subject":"github:123", "sources":{"profile":{"id":9007199254740993,"email":null,"enabled":false,"nested":{"new":[1,null,false]}},"emails":[],"future":null},"future_envelope":true }\n';
+  '{ "provider":"github", "id":"github:123", "email":"Chosen@Example.COM", "email_verified":false, "name":null, "avatar_url":"https://images.example/avatar", "origin":{"profile":{"id":9007199254740993,"email":null,"enabled":false,"nested":{"new":[1,null,false]}},"emails":[],"future":null},"future_envelope":true }\n';
 const jsonResponse = (body = identityJSON, status = 200) =>
   new Response(body, {
     status,
@@ -264,8 +264,12 @@ test("retrieval sends exact Basic JSON request and preserves the full raw identi
   assert.equal(calls, 1);
   assert.equal(identity.rawJSON, identityJSON);
   assert.equal(identity.provider, "github");
-  assert.equal(identity.subject, "github:123");
-  assert.deepEqual(identity.sources, {
+  assert.equal(identity.id, "github:123");
+  assert.equal(identity.email, "Chosen@Example.COM");
+  assert.equal(identity.email_verified, false);
+  assert.equal(identity.name, null);
+  assert.equal(identity.avatar_url, "https://images.example/avatar");
+  assert.deepEqual(identity.origin, {
     profile: {
       id: 9007199254740992,
       email: null,
@@ -279,12 +283,93 @@ test("retrieval sends exact Basic JSON request and preserves the full raw identi
   assert.match(identity.rawJSON, /future_envelope/);
 });
 
+test("all nullable fields, verification values, and wire strings are preserved", async () => {
+  for (const provider of ["microsoft", "google", "github"]) {
+    for (const email_verified of [null, false, true]) {
+      const payload = {
+        provider,
+        id: "opaque-wire-id",
+        email: null,
+        email_verified,
+        name: null,
+        avatar_url: null,
+        origin: { optional: null, enabled: false, unknown: [null, false, {}] },
+      };
+      const rawJSON = JSON.stringify(payload);
+      const client = createClient({
+        ...config,
+        fetch: async () => jsonResponse(rawJSON),
+      });
+      assert.deepEqual(await client.retrieve("code"), { ...payload, rawJSON });
+    }
+  }
+  const payload = {
+    provider: "google",
+    id: "server-selected-id",
+    email: "  Mixed@Example.COM  ",
+    email_verified: false,
+    name: "",
+    avatar_url: "verbatim-image-value",
+    origin: {
+      userinfo: { sub: "different-origin-id", name: "Ignored source name" },
+    },
+  };
+  const rawJSON = JSON.stringify(payload);
+  const client = createClient({
+    ...config,
+    fetch: async () => jsonResponse(rawJSON),
+  });
+  assert.deepEqual(await client.retrieve("code"), { ...payload, rawJSON });
+});
+
+test("every identity field is required and invalid field types fail validation", async () => {
+  const baseline = JSON.parse(identityJSON);
+  const invalid = {
+    provider: [null, false, 1, {}, [], "unknown"],
+    id: [null, false, 1, {}, [], "", "\ud800"],
+    email: [false, 1, {}, [], "\ud800"],
+    email_verified: ["false", 0, {}, []],
+    name: [false, 1, {}, [], "\ud800"],
+    avatar_url: [false, 1, {}, [], "\ud800"],
+    origin: [null, false, 1, "data", []],
+  };
+  for (const [field, values] of Object.entries(invalid)) {
+    const missing = { ...baseline };
+    delete missing[field];
+    for (const payload of [
+      missing,
+      ...values.map((value) => ({ ...baseline, [field]: value })),
+    ]) {
+      const client = createClient({
+        ...config,
+        fetch: async () => jsonResponse(JSON.stringify(payload)),
+      });
+      await assert.rejects(client.retrieve("code"), ProtocolError);
+    }
+  }
+});
+
+test("the obsolete subject and sources envelope is rejected", async () => {
+  const client = createClient({
+    ...config,
+    fetch: async () =>
+      jsonResponse(
+        '{"provider":"github","subject":"github:123","sources":{"profile":{"id":123}}}',
+      ),
+  });
+  await assert.rejects(client.retrieve("code"), ProtocolError);
+});
+
 test("identity responses larger than 8 MiB are supported", async () => {
   const photo = "a".repeat(9 * 1024 * 1024);
   const raw = JSON.stringify({
     provider: "microsoft",
-    subject: "microsoft:tenant:oid",
-    sources: { photo: { content_type: "image/jpeg", data_base64: photo } },
+    id: "microsoft:tenant:oid",
+    email: null,
+    email_verified: null,
+    name: null,
+    avatar_url: `data:image/jpeg;base64,${photo}`,
+    origin: { photo: { content_type: "image/jpeg", data_base64: photo } },
   });
   const client = createClient({
     ...config,
@@ -292,7 +377,8 @@ test("identity responses larger than 8 MiB are supported", async () => {
   });
   const identity = await client.retrieve("code");
   assert.equal(identity.rawJSON, raw);
-  assert.equal(identity.sources.photo.data_base64.length, photo.length);
+  assert.equal(identity.origin.photo.data_base64.length, photo.length);
+  assert.equal(identity.avatar_url, `data:image/jpeg;base64,${photo}`);
 });
 
 test("structured API errors preserve status, future codes, message, and request ID", async () => {
@@ -332,10 +418,10 @@ test("protocol errors omit private request and response values", async () => {
         status: 302,
         headers: { Location: "https://other.example" },
       }),
-    () => jsonResponse('{"provider":"github","subject":"id","sources":[] }'),
-    () => jsonResponse('{"provider":"unknown","subject":"id","sources":{}}'),
-    () => jsonResponse('{"provider":"github","subject":"","sources":{}}'),
-    () => jsonResponse('{"provider":"github","subject":"id","sources":null}'),
+    () =>
+      jsonResponse(
+        '{"provider":"github","id":"id","email":null,"email_verified":false,"name":null,"avatar_url":null,"origin":[]}',
+      ),
     () => jsonResponse('{"error":{"code":"invalid_app"}}', 401),
     () => jsonResponse('{"error":{"code":"","message":"x"}}', 400),
     () => jsonResponse('{"error":{"code":"x","message":false}}', 500),

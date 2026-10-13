@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,7 +54,7 @@ func (p *testProvider) Exchange(ctx context.Context, request providers.ExchangeR
 	if p.exchange != nil {
 		return p.exchange(ctx, request)
 	}
-	return providers.Identity{Provider: p.name, Subject: p.name + ":123", Sources: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":123,"unknown":{"nested":true},"email":null,"verified":false}`)}}, nil
+	return providers.Identity{Provider: p.name, ID: p.name + ":123", Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":123,"unknown":{"nested":true},"email":null,"verified":false}`)}}, nil
 }
 
 type fixture struct {
@@ -220,12 +221,57 @@ func TestBrowserBindingsAndProductHandover(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &identity); err != nil {
 		t.Fatal(err)
 	}
-	if identity.Subject != "google:123" || !bytes.Contains(identity.Sources["profile"], []byte(`"verified":false`)) || !bytes.Contains(identity.Sources["profile"], []byte(`"email":null`)) || !bytes.Contains(identity.Sources["profile"], []byte(`"unknown"`)) {
+	if identity.ID != "google:123" || !bytes.Contains(identity.Origin["profile"], []byte(`"verified":false`)) || !bytes.Contains(identity.Origin["profile"], []byte(`"email":null`)) || !bytes.Contains(identity.Origin["profile"], []byte(`"unknown"`)) {
 		t.Fatalf("identity fields lost: %s", response.Body)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 7 {
+		t.Fatalf("unexpected identity keys: %s", response.Body)
+	}
+	for _, key := range []string{"email", "email_verified", "name", "avatar_url"} {
+		if string(fields[key]) != "null" {
+			t.Fatalf("missing %s must be explicit null: %s", key, response.Body)
+		}
 	}
 	assertCode(t, f.retrieve(code, &f.app), 410, "result_unavailable")
 	if f.retrieve(secondCode, &f.app).Code != 200 {
 		t.Fatal("second tab result disappeared")
+	}
+}
+
+func TestNormalizedAttributesSurviveHandover(t *testing.T) {
+	for _, verified := range []bool{false, true} {
+		t.Run(fmt.Sprint(verified), func(t *testing.T) {
+			f := newFixture(t, nil)
+			email, name, avatar := "person@example.test", "Example Person", "https://images.example.test/avatar"
+			f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
+				return providers.Identity{
+					Provider: "google", ID: "google:123", Email: &email, EmailVerified: &verified, Name: &name, AvatarURL: &avatar,
+					Origin: map[string]json.RawMessage{"userinfo": json.RawMessage(`{"sub":"123","unknown":{"false":false,"null":null,"array":[1,2]}}`)},
+				}, nil
+			}
+			code := f.complete(f.start("normalized-attributes"))
+			response := f.retrieve(code, &f.app)
+			if response.Code != http.StatusOK {
+				t.Fatalf("result = %d: %s", response.Code, response.Body)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
+				t.Fatal(err)
+			}
+			if len(fields) != 7 || string(fields["id"]) != `"google:123"` || string(fields["provider"]) != `"google"` ||
+				string(fields["email"]) != `"person@example.test"` || string(fields["name"]) != `"Example Person"` ||
+				string(fields["avatar_url"]) != `"https://images.example.test/avatar"` || string(fields["email_verified"]) != fmt.Sprint(verified) {
+				t.Fatalf("normalized fields lost: %s", response.Body)
+			}
+			if string(fields["origin"]) != `{"userinfo":{"sub":"123","unknown":{"false":false,"null":null,"array":[1,2]}}}` {
+				t.Fatalf("origin lost data: %s", response.Body)
+			}
+			assertCode(t, f.retrieve(code, &f.app), http.StatusGone, "result_unavailable")
+		})
 	}
 }
 
@@ -276,7 +322,7 @@ func TestCallbackSingleClaimAndActiveCapacity(t *testing.T) {
 		started <- request
 		select {
 		case <-release:
-			return providers.Identity{Provider: "google", Subject: "google:123", Sources: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
+			return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
 		case <-ctx.Done():
 			return providers.Identity{}, ctx.Err()
 		}
@@ -305,7 +351,7 @@ func TestCallbackSingleClaimAndActiveCapacity(t *testing.T) {
 }
 
 func TestProviderErrorsAndSerialization(t *testing.T) {
-	for _, kind := range []string{"denied", "exchange", "invalid-source", "invalid-identity"} {
+	for _, kind := range []string{"denied", "exchange", "invalid-origin", "invalid-identity", "missing-id", "missing-origin"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t, nil)
 			flow := f.start("product-state")
@@ -319,13 +365,21 @@ func TestProviderErrorsAndSerialization(t *testing.T) {
 				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
 					return providers.Identity{}, errors.New("upstream-private-message")
 				}
-			case "invalid-source":
+			case "invalid-origin":
 				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
-					return providers.Identity{Provider: "google", Subject: "google:123", Sources: map[string]json.RawMessage{"claims": json.RawMessage("invalid")}}, nil
+					return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"claims": json.RawMessage("invalid")}}, nil
 				}
 			case "invalid-identity":
 				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
-					return providers.Identity{Provider: "github", Subject: "github:123", Sources: map[string]json.RawMessage{}}, nil
+					return providers.Identity{Provider: "github", ID: "github:123", Origin: map[string]json.RawMessage{}}, nil
+				}
+			case "missing-id":
+				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
+					return providers.Identity{Provider: "google", Origin: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
+				}
+			case "missing-origin":
+				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
+					return providers.Identity{Provider: "google", ID: "google:123"}, nil
 				}
 			}
 			response := f.call("GET", "/auth/callback/google?"+query.Encode(), nil, []*http.Cookie{flow.cookie}, nil)
@@ -351,7 +405,7 @@ func TestLargeUnknownSourceAndCapacity(t *testing.T) {
 	f := newFixture(t, func(c *Config) { c.MaxResults = 1; c.MaxResultBytes = 2 << 20 })
 	large := `{"unknown":"` + strings.Repeat("z", 1<<20) + `","null":null,"flag":false}`
 	f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
-		return providers.Identity{Provider: "google", Subject: "google:123", Sources: map[string]json.RawMessage{"profile": json.RawMessage(large)}}, nil
+		return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"profile": json.RawMessage(large)}}, nil
 	}
 	code := f.complete(f.start("first"))
 	second := f.start("second")
@@ -513,7 +567,7 @@ func TestAppChangedDuringProviderWork(t *testing.T) {
 		if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
 			t.Error(err)
 		}
-		return providers.Identity{Provider: "google", Subject: "google:123", Sources: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
+		return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
 	}
 	flow := f.start("product-state")
 	assertCode(t, f.call("GET", "/auth/callback/google?"+url.Values{"state": {flow.state}, "code": {"code"}}.Encode(), nil, []*http.Cookie{flow.cookie}, nil), 410, "transaction_unavailable")
@@ -645,7 +699,7 @@ func TestMissingAndUnavailableAppStorage(t *testing.T) {
 					if err != nil {
 						t.Error(err)
 					}
-					return providers.Identity{Provider: "google", Subject: "google:123", Sources: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
+					return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
 				}
 			}
 			response := f.call("GET", "/auth/callback/google?"+url.Values{"state": {flow.state}, "code": {"provider-code"}}.Encode(), nil, []*http.Cookie{flow.cookie}, nil)
@@ -716,6 +770,7 @@ func TestProviderCauseCategoriesAreSanitized(t *testing.T) {
 	}{
 		{"network", &providers.Error{Operation: "profile retrieval", Cause: timeoutError{}}, "network_timeout", "profile retrieval"},
 		{"deadline", &providers.Error{Operation: "token exchange", Cause: context.DeadlineExceeded}, "deadline_exceeded", "token exchange"},
+		{"normalization", &providers.Error{Operation: "identity normalization", Cause: errors.New("PRIVATE_DETAIL")}, "operation_failed", "identity normalization"},
 		{"canceled", context.Canceled, "canceled", "provider_exchange"},
 		{"invalid-operation", &providers.Error{Operation: "PRIVATE_OPERATION", Cause: errors.New("PRIVATE_DETAIL")}, "operation_failed", "provider_exchange"},
 	} {
@@ -799,7 +854,7 @@ func TestShutdownAdmissionInterleavings(t *testing.T) {
 			} else {
 				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
 					trigger.Store(true)
-					return providers.Identity{Provider: "google", Subject: "google:123", Sources: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
+					return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
 				}
 			}
 			response := f.call("GET", "/auth/callback/google?"+url.Values{"state": {flow.state}, "code": {"code"}}.Encode(), nil, []*http.Cookie{flow.cookie}, nil)

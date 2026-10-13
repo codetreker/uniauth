@@ -75,16 +75,20 @@ func parseResponse(status int, header http.Header, body []byte) (*Identity, erro
 		}
 		return nil, &APIError{StatusCode: status, Code: code, Message: message, RequestID: header.Get("X-Request-ID")}
 	}
-	var provider Provider
-	var subject string
-	if json.Unmarshal(fields["provider"], &provider) != nil || !supportedProvider(provider) || json.Unmarshal(fields["subject"], &subject) != nil || subject == "" {
-		return failure("identity_schema", nil)
+	for _, field := range []string{"provider", "id", "email", "email_verified", "name", "avatar_url", "origin"} {
+		if _, exists := fields[field]; !exists {
+			return failure("identity_schema", nil)
+		}
 	}
-	sources, err := objectFields(fields["sources"])
-	if err != nil {
+	var identity Identity
+	if err := json.Unmarshal(body, &identity); err != nil {
 		return failure("identity_schema", err)
 	}
-	return &Identity{Provider: provider, Subject: subject, Sources: sources, RawJSON: json.RawMessage(body)}, nil
+	if !supportedProvider(identity.Provider) || identity.ID == "" || identity.Origin == nil {
+		return failure("identity_schema", nil)
+	}
+	identity.RawJSON = json.RawMessage(body)
+	return &identity, nil
 }
 
 func objectFields(raw []byte) (map[string]json.RawMessage, error) {

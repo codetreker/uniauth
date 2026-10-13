@@ -42,6 +42,15 @@ terminated by a reverse proxy in front of the service. See the
 [configuration reference](docs/reference/configuration.md) for environment
 variables and provider registration callbacks.
 
+## Release with Docker Compose
+
+The Release workflow publishes to `ghcr.io/codetreker/uniauth` and verifies
+anonymous pull before copying `deploy/docker-compose.yml` to staging and prod.
+It runs `docker compose up -d` in each deployment directory using the same image
+digest. The VM owns `.env` and Caddy configuration; public images need no registry
+login. See the [deployment reference](docs/reference/deployment.md) for GitHub
+settings, the one-time Public package setting, and VM prerequisites.
+
 ## Connect a product
 
 Create an App in the Console and save its Secret in the product backend. Register
@@ -52,14 +61,19 @@ bound to that browser's pending product login.
 The product callback receives `code` and the original `state`. Validate and
 consume the pending product login before the backend sends an authenticated
 `POST /auth/result` with `{"code":"RECEIVED_CODE"}`. Use HTTP Basic authentication
-with App ID and Secret. The response contains `provider`, a stable
-provider-qualified `subject`, and complete source-specific identity JSON.
+with App ID and Secret. Every successful response contains `provider`, a stable
+provider-qualified `id`, standard `email`, `email_verified`, `name`, and
+`avatar_url` fields, and complete provider source objects under `origin`.
+Unavailable standard profile fields are `null`; an explicit verification value
+of `false` remains `false`. Products control account linking and email policy.
 
 Product backends can use the [Go SDK](sdk/go/README.md) or
 [JavaScript SDK](sdk/js/README.md) to create authorization URLs, validate callback
 parameters, and retrieve complete identity results. The JavaScript package emits
 ESM and TypeScript declarations for Node.js 24 or later. Both use the existing
-HTTP protocol and leave pending state, users, and sessions with the product.
+HTTP protocol, expose the server's seven-field normalized identity and complete
+`origin`, and leave pending state, users, and sessions with the product. Missing
+standard fields or incompatible response types are SDK protocol errors.
 
 Keep Secrets and result retrieval server-side. Atomically validate and consume the
 browser-bound pending login state before the one-time result request. A lost,

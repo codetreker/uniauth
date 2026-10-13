@@ -10,9 +10,13 @@ export type Provider = "microsoft" | "google" | "github";
 
 export interface Identity {
   readonly provider: Provider;
-  readonly subject: string;
+  readonly id: string;
+  readonly email: string | null;
+  readonly email_verified: boolean | null;
+  readonly name: string | null;
+  readonly avatar_url: string | null;
   /** Native JavaScript numbers can lose precision; rawJSON is authoritative. */
-  readonly sources: Record<string, unknown>;
+  readonly origin: Record<string, unknown>;
   /** The entire exact UTF-8 JSON response, including unknown envelope fields. */
   readonly rawJSON: string;
 }
@@ -48,6 +52,12 @@ const provider = (value: unknown): value is Provider =>
 
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const nullableText = (value: unknown): value is string | null =>
+  value === null || (typeof value === "string" && value.isWellFormed());
+
+const nullableBoolean = (value: unknown): value is boolean | null =>
+  value === null || typeof value === "boolean";
 
 export const generateState = (): string =>
   randomBytes(32).toString("base64url");
@@ -144,17 +154,25 @@ const decodeResponse = async (response: Response): Promise<Identity> => {
   if (
     !object(parsed) ||
     !provider(parsed.provider) ||
-    typeof parsed.subject !== "string" ||
-    !parsed.subject.isWellFormed() ||
-    parsed.subject.length === 0 ||
-    !object(parsed.sources)
+    typeof parsed.id !== "string" ||
+    !parsed.id.isWellFormed() ||
+    parsed.id.length === 0 ||
+    !nullableText(parsed.email) ||
+    !nullableBoolean(parsed.email_verified) ||
+    !nullableText(parsed.name) ||
+    !nullableText(parsed.avatar_url) ||
+    !object(parsed.origin)
   ) {
     return fail("The result endpoint returned an invalid identity envelope.");
   }
   return {
     provider: parsed.provider,
-    subject: parsed.subject,
-    sources: parsed.sources,
+    id: parsed.id,
+    email: parsed.email,
+    email_verified: parsed.email_verified,
+    name: parsed.name,
+    avatar_url: parsed.avatar_url,
+    origin: parsed.origin,
     rawJSON,
   };
 };

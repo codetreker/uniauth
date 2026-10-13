@@ -97,12 +97,17 @@ func (c *Client) AuthorizationURL(request AuthorizationRequest) (string, error) 
 	return u.String(), nil
 }
 
-// Identity validates only the stable envelope. Sources retain each source's JSON
-// without converting numbers or imposing provider-specific field requirements.
+// Identity requires all seven gateway fields. Nullable profile values remain
+// nil when null; non-null values are preserved without normalization. Origin
+// retains source JSON without imposing provider-specific field requirements.
 type Identity struct {
-	Provider Provider                   `json:"provider"`
-	Subject  string                     `json:"subject"`
-	Sources  map[string]json.RawMessage `json:"sources"`
+	Provider      Provider                   `json:"provider"`
+	ID            string                     `json:"id"`
+	Email         *string                    `json:"email"`
+	EmailVerified *bool                      `json:"email_verified"`
+	Name          *string                    `json:"name"`
+	AvatarURL     *string                    `json:"avatar_url"`
+	Origin        map[string]json.RawMessage `json:"origin"`
 	// RawJSON contains the complete response bytes, including unknown envelope fields.
 	RawJSON json.RawMessage `json:"-"`
 }

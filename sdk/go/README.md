@@ -82,7 +82,7 @@ identity, err := client.Retrieve(r.Context(), code)
 if err != nil {
     return err
 }
-// Resolve identity.Provider + identity.Subject to a product account and create
+// Resolve identity.Provider + identity.ID to a product account and create
 // the product's own login session according to its account-linking policy.
 ```
 
@@ -91,8 +91,7 @@ product. It verifies the browser binding and pending deadline, runs the callback
 validator with the stored expected state, and consumes the pending login within
 one atomic operation when callback state matches, including a provider failure.
 Invalid or mismatched callback state does not claim the pending login. It rejects
-a missing,
-expired, or already consumed login before returning a result code. `browserBinding`
+a missing, expired, or already consumed login before returning a result code. `browserBinding`
 comes from the product's trusted browser-session mechanism.
 
 `ParseCallback` requires exactly one nonempty matching `state`, then exactly one
@@ -109,13 +108,36 @@ requires a fresh login; retrying cannot recover a consumed identity.
 
 ## Identity and errors
 
-`Identity.Provider` and `Identity.Subject` identify the stable envelope.
-`Identity.Sources` maps source names to `json.RawMessage`; arbitrary upstream
-fields, large integers, decimal precision, arrays, nested objects, nulls, and
-false values survive decoding. `Identity.RawJSON` retains the complete response
-bytes, including unknown envelope fields. Provider source schemas are not
-validated or filled with fallback values. The response has no fixed size cap;
-Microsoft photo data and other complete sources may exceed 8 MiB.
+Every successful identity response must include all seven gateway fields:
+
+| Go field | Type | JSON field |
+| --- | --- | --- |
+| `Provider` | `Provider` | `provider` |
+| `ID` | `string` | `id` |
+| `Email` | `*string` | `email` |
+| `EmailVerified` | `*bool` | `email_verified` |
+| `Name` | `*string` | `name` |
+| `AvatarURL` | `*string` | `avatar_url` |
+| `Origin` | `map[string]json.RawMessage` | `origin` |
+
+`Provider` must be supported, `ID` must be nonempty, and `Origin` must be an
+object. `Email`, `EmailVerified`, `Name`, and `AvatarURL` may be JSON `null`,
+represented by nil pointers. A non-null verification value remains a boolean
+pointer, including explicit `false`; an unknown value remains nil. Non-null
+string values remain exactly as received, including empty strings and whitespace.
+Missing fields and incorrect types are protocol failures. The SDK performs no
+normalization, fallback mapping, or support for `subject`/`sources` aliases.
+
+Use the gateway's provider-qualified `ID` as the stable identity key. Email,
+verification, display name, and avatar values are attributes; products choose
+their own account-linking and permission policies.
+
+`Origin` maps source names to `json.RawMessage`; arbitrary upstream fields, large
+integers, decimal precision, arrays, nested objects, nulls, and false values
+survive decoding. `Identity.RawJSON` retains the complete response bytes,
+including unknown envelope fields. Provider source schemas are not validated or
+filled with fallback values. The response has no fixed size cap; Microsoft photo
+and avatar data and other complete sources may exceed 8 MiB.
 
 Use `errors.As` to inspect `*APIError` (`StatusCode`, `Code`, `Message`,
 `RequestID`) for valid JSON gateway failures, including future error codes.

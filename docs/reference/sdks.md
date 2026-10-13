@@ -121,11 +121,29 @@ A supplied `HTTPClient` is copied so redirects can be disabled without modifying
 the caller's client. Its timeout, transport, and cookie jar remain in use. Clients
 are safe for concurrent use when those supplied components are also safe.
 
-`Identity` exposes provider and qualified subject, `Sources` containing
-`json.RawMessage` source values, and `RawJSON` containing the complete response
-bytes. Keep raw values when exact integer or decimal representation matters.
-There is no common profile projection or fallback identity key. The SDK validates
-the envelope while retaining unknown source fields, nulls, and false values.
+`Identity` exposes the server's seven-field normalized identity:
+
+| Go field | Wire field | Go type |
+| --- | --- | --- |
+| `Provider` | `provider` | `Provider` |
+| `ID` | `id` | `string` |
+| `Email` | `email` | `*string` |
+| `EmailVerified` | `email_verified` | `*bool` |
+| `Name` | `name` | `*string` |
+| `AvatarURL` | `avatar_url` | `*string` |
+| `Origin` | `origin` | `map[string]json.RawMessage` |
+
+All seven fields must be present in the response. The provider must be supported,
+ID must be nonempty, `origin` must be an object, and profile values must have the
+expected nullable types; missing or incompatible fields produce `ProtocolError`.
+A JSON `null` profile value becomes a nil pointer, while `email_verified: false`
+becomes a non-nil pointer to `false`. The SDK does not derive profile values from
+`origin`, replace IDs, or add aliases for the previous wire shape.
+
+`Origin` retains the complete original source object and `RawJSON` the entire
+response bytes, including unknown envelope fields. Keep those raw values when
+exact integer or decimal representation matters. Original fields, nulls, and
+false values are preserved without projection.
 
 ## JavaScript and TypeScript
 
@@ -160,10 +178,17 @@ product's atomic pending-login consumption before calling
 combined with the configured deadline. The package is intended for Node.js product
 backends, not browser Secret storage.
 
-Returned identities contain `provider`, `subject`, `sources`, and `rawJSON`.
-Source values are unknown JSON values, with no guessed common fields. JavaScript
-parsing retains field presence, nested data, nulls, and false booleans, but JSON
-numbers become JavaScript numbers. Integers beyond the safe range or exact decimal
+Returned identities contain `provider`, `id`, `email`, `email_verified`, `name`,
+`avatar_url`, `origin`, and the additional `rawJSON` field. The seven wire fields
+are mandatory. `provider` is a supported provider, `id` is a nonempty string,
+`email`, `name`, and `avatar_url` are strings or `null`, `email_verified` is a
+boolean or `null`, and `origin` is an object. Missing fields or incompatible types
+throw `ProtocolError`. Null values and explicit `false` remain unchanged.
+
+These are the server's normalized values; the SDK does not derive profile data
+from `origin`, invent missing fields, or return previous-shape aliases. Original
+values inside `origin` remain unknown JSON values. JavaScript parsing retains
+nested data, nulls, and false booleans, but JSON numbers become JavaScript numbers. Integers beyond the safe range or exact decimal
 values can lose precision in that parsed view. The complete `rawJSON` string is
 authoritative for numeric fidelity; preserve it or use an appropriate exact JSON
 parser when the product needs that representation.
@@ -224,5 +249,7 @@ Integration tests run both clients against the actual Go authentication handler,
 SQLite App registry, and browser-bound provider callback using a fixture provider.
 They check wrong credentials and App ownership without consumption, one-time
 replay rejection, concurrent claims, expiry, and complete raw identity sources.
-See the [SDK task receipt](../tasks/2026-10-13-product-sdks.md) for observed results.
+See the [original SDK task receipt](../tasks/2026-10-13-product-sdks.md) and
+[current SDK/main integration receipt](../tasks/2026-10-13-sdk-main-integration.md)
+for their respective observed results.
 Local checks do not prove a registry release or a live third-party login.

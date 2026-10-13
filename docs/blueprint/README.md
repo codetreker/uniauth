@@ -1,7 +1,7 @@
 # UniAuth Blueprint
 
 - Status: Agreed architecture, implemented by the authentication gateway delivery
-- Date: 2026-10-12
+- Date: 2026-10-13
 - Backend language: Go
 
 ## Purpose and ownership
@@ -28,7 +28,7 @@ from live upstream verification.
 | R1 | Implement the service and management API in Go. |
 | R2 | Support personal Microsoft accounts, Google, and GitHub. |
 | R3 | Provide a Console to register Apps and generate, rotate, and revoke Secrets. |
-| R4 | Hand over every identity field obtained under the configured and granted scopes. |
+| R4 | Return a standard identity profile and every obtained provider identity field under `origin`, within configured and granted scopes. |
 | R5 | Retain complete identity results only in process memory for five minutes from creation. |
 | R6 | Atomically consume an owning App's authenticated result once. |
 | R7 | Leave users, linking, authorization, and login sessions to each product. |
@@ -63,7 +63,7 @@ callback URL size limits and shared encryption-key lifecycle complexity.
 | `cmd/uniauth/` | Configuration, password-hash command, startup, signals. |
 | `internal/server/` | Provider composition, HTTP routing, request logging, shutdown. |
 | `internal/apps/` | SQLite migrations, App configuration, credential lifecycle. |
-| `internal/providers/` | Three real provider adapters and identity-source collection. |
+| `internal/providers/` | Three real provider adapters, source collection, and standard identity-field mapping. |
 | `internal/auth/` | Browser-bound transactions, result expiry and atomic handover. |
 | `internal/console/` | Administrator password verification, sessions, management API. |
 | `web/console/` | React/TypeScript UI and embedded production assets. |
@@ -71,8 +71,11 @@ callback URL size limits and shared encryption-key lifecycle complexity.
 | `sdk/js/` | Node.js ESM product client package and TypeScript declarations. |
 
 The provider interface represents three actual adapters. SQLite is a concrete
-store. Source JSON is retained as `json.RawMessage` rather than reduced to a
-common profile model, preserving upstream-specific data.
+store. Each adapter maps its validated provider data into the standard profile.
+The complete source JSON remains in `origin` as `json.RawMessage`, preserving
+upstream-specific data alongside that profile. Provider mapping belongs in the
+adapters, which know each upstream field's meaning; the handover service handles
+App ownership, serialization, expiry, and single consumption.
 
 ## Application registry and Console
 
@@ -134,9 +137,9 @@ excluded from production assets.
 3. The provider callback must match state, provider, and its unique flow cookie.
    Claiming consumes that transaction atomically. Provider exchange and source
    collection have bounded request-context deadlines.
-4. UniAuth validates identity claims and collects complete provider sources.
-   It rechecks App eligibility after upstream work and serializes the full result
-   before publishing a code.
+4. UniAuth validates identity claims, collects complete provider sources, and
+   maps standard identity fields. It rechecks App eligibility after upstream work
+   and serializes the full result before publishing a code.
 5. The App-bound result receives a random code and a deadline exactly five minutes
    after creation. UniAuth redirects to the registered product callback with
    `code` and the original product `state`.
@@ -176,26 +179,51 @@ invalid response may follow successful server consumption and requires a fresh
 login. Default request deadlines are 30 seconds; Go accepts a configured HTTP
 client, and JavaScript accepts a timeout and caller AbortSignal.
 
-Go identities preserve source fields as `json.RawMessage` and the entire body as
-`RawJSON`. JavaScript returns unknown source values plus authoritative `rawJSON`;
-ordinary parsed JavaScript numbers cannot preserve every JSON integer or decimal
-exactly. Identity fields are not projected into a common-profile model. The
+The SDKs require all seven standard identity fields from the server. Missing
+fields or incompatible JSON types produce protocol errors; nullable strings,
+nullable verification, and explicit `false` are returned without substitution.
+The SDKs expose the server's normalized profile without deriving fields from
+`origin` or retaining old response aliases. Go exposes `ID`, nullable profile
+pointers, `Origin` as `json.RawMessage`, and the entire body as `RawJSON`.
+JavaScript exposes the exact snake-case wire fields with unknown original data
+under `origin` and authoritative `rawJSON`; ordinary parsed JavaScript numbers
+cannot preserve every integer or decimal exactly. The
 [SDK reference](../reference/sdks.md) owns examples and exact API contracts, and
 the [SDK decision](../../.agents/notes/implemented/feature/2026-10-13-product-sdks.md)
 records these responsibilities. Local package consumers validate Go imports and
 packed JavaScript code and types; package metadata alone does not establish a
 registry release.
 
-## Complete provider sources
+## Standard identity and complete provider sources
 
-The envelope contains `provider`, a provider-qualified `subject`, and nested
-`sources`. Unknown source fields, nulls, false values, full email lists, and nested
-objects remain available to the product. Completeness covers obtained information
-under granted scopes; it does not fabricate absent attributes or extend access
-beyond those scopes. Missing verification information remains unknown. Provider
-failures stop authentication rather than producing an empty profile.
+The envelope always contains `provider`, `id`, `email`, `email_verified`, `name`,
+`avatar_url`, and `origin`. The provider-qualified `id` is required and preserves
+the stable upstream identity. Optional strings are `null` when missing, null,
+or empty. Verification is `true`, `false`, or `null`; unknown verification is
+never converted to `false`. A known normalization field with an incompatible
+non-null JSON type fails authentication. Products can read common attributes
+without interpreting each provider's source layout.
 
-| Provider | Validation and sources | Subject |
+Each adapter defines the selection of standard fields. Google uses canonical
+UserInfo fields. Microsoft selects Graph `mail`, then the ID-token `email`, and
+Graph `displayName`, then the ID-token `name`; verification remains unknown.
+Its fetched photo becomes a data URL in `avatar_url`, with `null` for photo
+`404`. GitHub selects a nonempty primary email from the complete email list,
+then public profile `email` if no usable primary email exists. GitHub email
+verification comes only from an exact matching email-list entry, while its
+name and avatar come from the profile. The [API reference](../reference/api.md)
+owns the exact field mappings and absence rules.
+
+`origin` retains complete source objects, including unknown fields, explicit
+nulls, false values, full email lists, and nested objects. Missing source fields
+remain missing. Completeness covers obtained information under granted scopes;
+it does not fabricate absent attributes or extend access beyond those scopes.
+Provider failures stop authentication rather than producing an empty profile.
+The [normalization decision](../../.agents/notes/implemented/architecture/2026-10-13-normalized-identity.md)
+owns the response format, provider mapping responsibilities, and compatibility
+costs; the gateway decision continues to own authentication and handover.
+
+| Provider | Validation and `origin` sources | Stable `id` |
 | --- | --- | --- |
 | Microsoft | Personal-account `consumers` authorization and token endpoints; RS256 signature, fixed personal issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require personal `tid` and `oid`; retain ID claims, Graph `/me`, and photo bytes. | `microsoft:9188040d-6c67-4c5b-b112-36a304b66dad:<oid>` |
 | Google | OIDC discovery and token validation; UserInfo `sub` must match the token. Retain complete ID claims and UserInfo. | `google:<sub>` |
@@ -204,16 +232,19 @@ failures stop authentication rather than producing an empty profile.
 Microsoft requests `openid profile email` and delegated Graph `User.Read`.
 Its App registration supports `PersonalMicrosoftAccount`; organization accounts
 fail the fixed personal-tenant and issuer validation. Graph photo `404` is an
-explicit `null`; successful photos include content type and standard Base64
-bytes. Other photo/profile retrieval failures stop authentication. Google requests
-`openid profile email`; GitHub requests `read:user user:email`. Google and GitHub
-image URLs remain source attributes without downloading the image.
+explicit `null` in `origin`; successful photos include content type and standard
+Base64 bytes. The avatar data URL uses those same bytes and the parsed image
+media type, requiring no additional fetch. Other photo/profile retrieval
+failures stop authentication. Google requests `openid profile email`; GitHub
+requests `read:user user:email`. Google and GitHub image URLs appear in the
+standard profile and remain source attributes without downloading the image.
 
-Emails and mutable usernames are not identity keys. Subject generation does not
-use App Secrets. Cross-provider subjects remain distinct; changing their format
-requires an explicit product identity migration. Tokens, raw signed ID tokens,
-refresh tokens, upstream authorization codes, and Secrets are outside the
-identity-data package.
+Emails and mutable usernames are not identity keys. ID generation does not use
+App Secrets. Cross-provider IDs remain distinct; changing their values requires
+an explicit product identity migration. Tokens, raw signed ID tokens, refresh
+tokens, upstream authorization codes, and Secrets are outside the identity-data
+package. The response does not expose `subject` or `sources` compatibility
+aliases.
 
 ## Transient state and durability
 
@@ -227,7 +258,8 @@ before caching, so serialization failure cannot consume a published result.
   of periodic cleanup.
 - Count and accounted-byte limits explicitly reject new work. Active callbacks
   keep their transaction reservation until provider work completes; accepted live
-  results are not silently evicted or truncated.
+  results are not silently evicted or truncated. Accounted payload bytes include
+  standard fields and `origin`, including both copies of Microsoft photo data.
 - Unknown, consumed, expired, and other-App result codes return an unavailable
   result without retained code history.
 

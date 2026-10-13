@@ -48,8 +48,12 @@ a failed response as proof that no write occurred.
 SDK assertions exercise callback ambiguity, state mismatches, exact callback
 string preservation, HTTP Basic and JSON request construction, redirect rejection,
 request deadlines and cancellation, typed errors, lost-response behavior, and
-complete unknown source JSON. Go raw source values and JavaScript `rawJSON`
-retain numeric representations that ordinary parsed JavaScript numbers cannot.
+the mandatory seven-field normalized identity envelope and complete `origin`
+JSON. Missing standard fields and incompatible types fail as protocol errors;
+nullable profile values and explicit verification `false` survive decoding. Go
+`Origin`/`RawJSON` and JavaScript `rawJSON` retain numeric representations that
+ordinary parsed JavaScript numbers cannot. SDKs expose server values without
+recomputing provider mappings or filling absent fields.
 Consumers import the standalone Go module with `GOWORK=off` and install the
 packed JavaScript tarball, then check bare-import runtime behavior and exported
 TypeScript declarations. The temporary JavaScript consumer installs only the
@@ -82,9 +86,10 @@ The [configuration reference](../../../../docs/reference/configuration.md) owns
 validation commands and limits. The
 [initial implementation receipt](../../../../docs/tasks/2026-10-12-authentication-gateway.md),
 [Console correction receipt](../../../../docs/tasks/2026-10-12-console-review-fixes.md),
-and [SDK receipt](../../../../docs/tasks/2026-10-13-product-sdks.md) retain their
-respective observed outcomes and distinguish fixture coverage from live provider
-checks.
+[original SDK receipt](../../../../docs/tasks/2026-10-13-product-sdks.md), and
+[SDK/main integration receipt](../../../../docs/tasks/2026-10-13-sdk-main-integration.md)
+retain their respective observed outcomes and distinguish fixture coverage from
+live provider checks.
 
 ## Alternatives
 

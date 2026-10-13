@@ -19,7 +19,7 @@ import (
 	"github.com/codetreker/uniauth/sdk/go"
 )
 
-const identityJSON = `{"provider":"github","subject":"github:1","sources":{"profile":{"id":1}}}`
+const identityJSON = `{"provider":"github","id":"github:1","email":null,"email_verified":null,"name":null,"avatar_url":null,"origin":{"profile":{"id":1}}}`
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
@@ -39,7 +39,7 @@ func response(status int, contentType, body string) *http.Response {
 }
 
 func TestRetrieveRequestAndLosslessIdentity(t *testing.T) {
-	body := " \n" + `{"provider":"github","subject":"github:9007199254740993","sources":{"profile":{"id":9007199254740993,"unknown":{"nested":[null,false,1.234567890123456789]}},"emails":[{"verified":false}],"photo":null},"future":false}` + "\n"
+	body := " \n" + `{"provider":"github","id":"github:9007199254740993","email":"  Person@Example.COM  ","email_verified":false,"name":"","avatar_url":"data:image/png;base64,AQID","origin":{"profile":{"id":9007199254740993,"unknown":{"nested":[null,false,1.234567890123456789]}},"emails":[{"verified":false}],"photo":null},"future":false}` + "\n"
 	var calls atomic.Int32
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls.Add(1)
@@ -61,21 +61,110 @@ func TestRetrieveRequestAndLosslessIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 || identity.Provider != uniauth.GitHub || identity.Subject != "github:9007199254740993" || string(identity.RawJSON) != body {
+	if calls.Load() != 1 || identity.Provider != uniauth.GitHub || identity.ID != "github:9007199254740993" || string(identity.RawJSON) != body {
 		t.Fatal("identity envelope or complete response changed")
 	}
-	if string(identity.Sources["photo"]) != "null" || string(identity.Sources["emails"]) != `[{"verified":false}]` || !strings.Contains(string(identity.Sources["profile"]), "9007199254740993") || !strings.Contains(string(identity.Sources["profile"]), "1.234567890123456789") {
+	if identity.Email == nil || *identity.Email != "  Person@Example.COM  " || identity.EmailVerified == nil || *identity.EmailVerified || identity.Name == nil || *identity.Name != "" || identity.AvatarURL == nil || *identity.AvatarURL != "data:image/png;base64,AQID" {
+		t.Fatal("normalized fields were rewritten or explicit false was lost")
+	}
+	if string(identity.Origin["photo"]) != "null" || string(identity.Origin["emails"]) != `[{"verified":false}]` || !strings.Contains(string(identity.Origin["profile"]), "9007199254740993") || !strings.Contains(string(identity.Origin["profile"]), "1.234567890123456789") {
 		t.Fatal("source JSON lost numeric precision, null, false, or nested values")
 	}
 }
 
 func TestRetrieveLargeIdentity(t *testing.T) {
-	body := `{"provider":"microsoft","subject":"microsoft:tenant:oid","sources":{"photo":{"data_base64":"` + strings.Repeat("A", 9<<20) + `"}}}`
+	body := `{"provider":"microsoft","id":"microsoft:tenant:oid","email":null,"email_verified":null,"name":null,"avatar_url":null,"origin":{"photo":{"data_base64":"` + strings.Repeat("A", 9<<20) + `"}}}`
 	c := clientFor(t, "https://auth.example", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return response(200, "application/json", body), nil })})
 	identity, err := c.Retrieve(context.Background(), "code")
 	if err != nil || identity == nil || len(identity.RawJSON) != len(body) {
 		t.Fatalf("complete identity above 8 MiB was rejected: %v", err)
 	}
+}
+
+func TestRetrieveNullableProfileFields(t *testing.T) {
+	for _, verified := range []string{"null", "false", "true"} {
+		t.Run(verified, func(t *testing.T) {
+			body := `{"provider":"google","id":"google:1","email":null,"email_verified":` + verified + `,"name":null,"avatar_url":null,"origin":{}}`
+			c := clientFor(t, "https://auth.example", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return response(200, "application/json", body), nil
+			})})
+			identity, err := c.Retrieve(context.Background(), "code")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if identity.Email != nil || identity.Name != nil || identity.AvatarURL != nil || identity.Origin == nil || len(identity.Origin) != 0 || string(identity.RawJSON) != body {
+				t.Fatal("null profile values or empty origin object changed")
+			}
+			if verified == "null" {
+				if identity.EmailVerified != nil {
+					t.Fatal("unknown verification became a boolean")
+				}
+			} else if identity.EmailVerified == nil || *identity.EmailVerified != (verified == "true") {
+				t.Fatal("explicit verification value changed when email was null")
+			}
+		})
+	}
+}
+
+func TestRetrieveRequiresCurrentIdentityEnvelope(t *testing.T) {
+	assertInvalid := func(t *testing.T, body string) {
+		t.Helper()
+		c := clientFor(t, "https://auth.example", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return response(200, "application/json", body), nil
+		})})
+		_, err := c.Retrieve(context.Background(), "private-code")
+		var protocolErr *uniauth.ProtocolError
+		if !errors.As(err, &protocolErr) || protocolErr.Reason != "identity_schema" || strings.Contains(err.Error(), "private") {
+			t.Fatalf("malformed identity was not rejected safely: %v", err)
+		}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(identityJSON), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for field := range fields {
+		t.Run("missing-"+field, func(t *testing.T) {
+			missing := make(map[string]json.RawMessage, len(fields)-1)
+			for key, value := range fields {
+				if key != field {
+					missing[key] = value
+				}
+			}
+			body, err := json.Marshal(missing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertInvalid(t, string(body))
+		})
+	}
+	invalid := map[string][]string{
+		"provider":       {`null`, `"future"`, `1`, `false`, `[]`, `{}`},
+		"id":             {`null`, `""`, `1`, `false`, `[]`, `{}`},
+		"email":          {`1`, `false`, `[]`, `{}`},
+		"email_verified": {`"false"`, `0`, `[]`, `{}`},
+		"name":           {`1`, `false`, `[]`, `{}`},
+		"avatar_url":     {`1`, `false`, `[]`, `{}`},
+		"origin":         {`null`, `"private-data"`, `1`, `false`, `[]`},
+	}
+	for field, values := range invalid {
+		for _, value := range values {
+			t.Run(field+"="+value, func(t *testing.T) {
+				malformed := make(map[string]json.RawMessage, len(fields))
+				for key, raw := range fields {
+					malformed[key] = raw
+				}
+				malformed[field] = json.RawMessage(value)
+				body, err := json.Marshal(malformed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertInvalid(t, string(body))
+			})
+		}
+	}
+	t.Run("old-envelope", func(t *testing.T) {
+		assertInvalid(t, `{"provider":"github","subject":"github:1","sources":{"profile":{"id":1}}}`)
+	})
 }
 
 func TestRetrieveFailureResponses(t *testing.T) {
@@ -108,14 +197,6 @@ func TestRetrieveFailureResponses(t *testing.T) {
 		{"invalid-utf8", "application/json", string([]byte{'{', '"', 255, '"', ':', '0', '}'}), "json", 200},
 		{"array", "application/json", `[]`, "json", 200},
 		{"null", "application/json", `null`, "json", 200},
-		{"missing-provider", "application/json", `{"subject":"github:1","sources":{}}`, "identity_schema", 200},
-		{"unknown-provider", "application/json", `{"provider":"future","subject":"future:1","sources":{}}`, "identity_schema", 200},
-		{"bad-provider", "application/json", `{"provider":1,"subject":"github:1","sources":{}}`, "identity_schema", 200},
-		{"empty-subject", "application/json", `{"provider":"github","subject":"","sources":{}}`, "identity_schema", 200},
-		{"bad-subject", "application/json", `{"provider":"github","subject":1,"sources":{}}`, "identity_schema", 200},
-		{"missing-sources", "application/json", `{"provider":"github","subject":"github:1"}`, "identity_schema", 200},
-		{"null-sources", "application/json", `{"provider":"github","subject":"github:1","sources":null}`, "identity_schema", 200},
-		{"array-sources", "application/json", `{"provider":"github","subject":"github:1","sources":[]}`, "identity_schema", 200},
 		{"missing-error", "application/json", `{}`, "error_schema", 410},
 		{"null-error", "application/json", `{"error":null}`, "error_schema", 410},
 		{"empty-error-code", "application/json", `{"error":{"code":"","message":"x"}}`, "error_schema", 410},

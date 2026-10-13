@@ -1,0 +1,18 @@
+name: uniauth-__ENVIRONMENT__
+
+services:
+  uniauth:
+    image: __IMAGE__
+    env_file: .env
+    environment:
+      UNIAUTH_LISTEN_ADDR: :8080
+      UNIAUTH_DATABASE_PATH: /data/uniauth.db
+    ports:
+      - "127.0.0.1:${UNIAUTH_HOST_PORT:?UNIAUTH_HOST_PORT is required}:8080"
+    volumes:
+      - data:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  data:
