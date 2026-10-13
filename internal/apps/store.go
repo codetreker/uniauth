@@ -65,15 +65,18 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) Create(ctx context.Context, input AppInput) (CreatedApp, error) {
-	if err := validateInput(input, s.allowLoopbackHTTP); err != nil {
+func (s *Store) Create(ctx context.Context, input CreateAppInput) (CreatedApp, error) {
+	if err := validateInput(input.AppInput, s.allowLoopbackHTTP); err != nil {
+		return CreatedApp{}, err
+	}
+	if err := validateSecretInput(input.InitialSecret); err != nil {
 		return CreatedApp{}, err
 	}
 	id := randomToken(16)
-	issued, digest := newCredential()
+	issued, digest := newCredential(input.InitialSecret)
 	now := issued.CreatedAt
 	app := App{ID: id, Name: input.Name, Enabled: input.Enabled, RedirectURIs: slices.Clone(input.RedirectURIs), Providers: slices.Clone(input.Providers), CreatedAt: now, UpdatedAt: now}
-	redirects, providers := encodeLists(input)
+	redirects, providers := encodeLists(input.AppInput)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return CreatedApp{}, fmt.Errorf("begin app creation: %w", err)
@@ -165,6 +168,8 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+const secretColumns = "id, name, description, created_at, revoked_at"
+
 func (s *Store) ListSecrets(ctx context.Context, appID string) ([]Secret, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -174,23 +179,16 @@ func (s *Store) ListSecrets(ctx context.Context, appID string) ([]Secret, error)
 	if err := requireApp(ctx, tx, appID); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id, created_at, revoked_at FROM app_secrets WHERE app_id = ? ORDER BY created_at, id", appID)
+	rows, err := tx.QueryContext(ctx, "SELECT "+secretColumns+" FROM app_secrets WHERE app_id = ? ORDER BY created_at, id", appID)
 	if err != nil {
 		return nil, fmt.Errorf("list app credentials: %w", err)
 	}
 	defer rows.Close()
 	secrets := make([]Secret, 0)
 	for rows.Next() {
-		var secret Secret
-		var created int64
-		var revoked sql.NullInt64
-		if err := rows.Scan(&secret.ID, &created, &revoked); err != nil {
-			return nil, fmt.Errorf("scan app credential metadata: %w", err)
-		}
-		secret.CreatedAt = time.Unix(0, created).UTC()
-		if revoked.Valid {
-			timestamp := time.Unix(0, revoked.Int64).UTC()
-			secret.RevokedAt = &timestamp
+		secret, err := scanSecret(rows)
+		if err != nil {
+			return nil, err
 		}
 		secrets = append(secrets, secret)
 	}
@@ -200,8 +198,11 @@ func (s *Store) ListSecrets(ctx context.Context, appID string) ([]Secret, error)
 	return secrets, nil
 }
 
-func (s *Store) CreateSecret(ctx context.Context, appID string) (IssuedSecret, error) {
-	issued, digest := newCredential()
+func (s *Store) CreateSecret(ctx context.Context, appID string, input SecretInput) (IssuedSecret, error) {
+	if err := validateSecretInput(input); err != nil {
+		return IssuedSecret{}, err
+	}
+	issued, digest := newCredential(input)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return IssuedSecret{}, fmt.Errorf("begin credential creation: %w", err)
@@ -219,6 +220,35 @@ func (s *Store) CreateSecret(ctx context.Context, appID string) (IssuedSecret, e
 	return issued, nil
 }
 
+func (s *Store) UpdateSecret(ctx context.Context, appID, secretID string, input SecretInput) (Secret, error) {
+	if err := validateSecretInput(input); err != nil {
+		return Secret{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Secret{}, fmt.Errorf("begin credential metadata update: %w", err)
+	}
+	defer tx.Rollback()
+	if err := requireApp(ctx, tx, appID); err != nil {
+		return Secret{}, err
+	}
+	result, err := tx.ExecContext(ctx, "UPDATE app_secrets SET name = ?, description = ? WHERE app_id = ? AND id = ?", input.Name, input.Description, appID, secretID)
+	if err != nil {
+		return Secret{}, fmt.Errorf("update app credential metadata: %w", err)
+	}
+	if err := requireAffected(result); err != nil {
+		return Secret{}, err
+	}
+	secret, err := scanSecret(tx.QueryRowContext(ctx, "SELECT "+secretColumns+" FROM app_secrets WHERE app_id = ? AND id = ?", appID, secretID))
+	if err != nil {
+		return Secret{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Secret{}, fmt.Errorf("commit credential metadata update: %w", err)
+	}
+	return secret, nil
+}
+
 func (s *Store) RevokeSecret(ctx context.Context, appID, secretID string) error {
 	result, err := s.db.ExecContext(ctx, "UPDATE app_secrets SET revoked_at = COALESCE(revoked_at, ?) WHERE app_id = ? AND id = ?", time.Now().UTC().UnixNano(), appID, secretID)
 	if err != nil {
@@ -228,23 +258,16 @@ func (s *Store) RevokeSecret(ctx context.Context, appID, secretID string) error 
 }
 
 func (s *Store) ResetSecret(ctx context.Context, appID, secretID string) (IssuedSecret, error) {
-	issued, digest := newCredential()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return IssuedSecret{}, fmt.Errorf("begin credential reset: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "UPDATE app_secrets SET revoked_at = ? WHERE app_id = ? AND id = ? AND revoked_at IS NULL", issued.CreatedAt.UnixNano(), appID, secretID)
-	if err != nil {
-		return IssuedSecret{}, fmt.Errorf("revoke app credential for reset: %w", err)
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return IssuedSecret{}, fmt.Errorf("count credentials revoked for reset: %w", err)
-	}
-	if count == 0 {
+	var metadata SecretInput
+	err = tx.QueryRowContext(ctx, "UPDATE app_secrets SET revoked_at = ? WHERE app_id = ? AND id = ? AND revoked_at IS NULL RETURNING name, description", time.Now().UTC().UnixNano(), appID, secretID).Scan(&metadata.Name, &metadata.Description)
+	if errors.Is(err, sql.ErrNoRows) {
 		var found int
-		err := tx.QueryRowContext(ctx, "SELECT 1 FROM app_secrets WHERE app_id = ? AND id = ?", appID, secretID).Scan(&found)
+		err = tx.QueryRowContext(ctx, "SELECT 1 FROM app_secrets WHERE app_id = ? AND id = ?", appID, secretID).Scan(&found)
 		if errors.Is(err, sql.ErrNoRows) {
 			return IssuedSecret{}, ErrNotFound
 		}
@@ -253,6 +276,10 @@ func (s *Store) ResetSecret(ctx context.Context, appID, secretID string) (Issued
 		}
 		return IssuedSecret{}, ErrRevoked
 	}
+	if err != nil {
+		return IssuedSecret{}, fmt.Errorf("revoke app credential for reset: %w", err)
+	}
+	issued, digest := newCredential(metadata)
 	if err := insertCredential(ctx, tx, appID, issued, digest); err != nil {
 		return IssuedSecret{}, err
 	}
@@ -303,6 +330,21 @@ func (s *Store) Authenticate(ctx context.Context, appID, plaintext string) (App,
 
 type rowScanner interface {
 	Scan(...any) error
+}
+
+func scanSecret(row rowScanner) (Secret, error) {
+	var secret Secret
+	var created int64
+	var revoked sql.NullInt64
+	if err := row.Scan(&secret.ID, &secret.Name, &secret.Description, &created, &revoked); err != nil {
+		return Secret{}, fmt.Errorf("read app credential metadata: %w", err)
+	}
+	secret.CreatedAt = time.Unix(0, created).UTC()
+	if revoked.Valid {
+		timestamp := time.Unix(0, revoked.Int64).UTC()
+		secret.RevokedAt = &timestamp
+	}
+	return secret, nil
 }
 
 func scanApp(row rowScanner) (App, error) {
@@ -359,15 +401,15 @@ func randomToken(bytes int) string {
 	return base64.RawURLEncoding.EncodeToString(value)
 }
 
-func newCredential() (IssuedSecret, []byte) {
+func newCredential(input SecretInput) (IssuedSecret, []byte) {
 	id := randomToken(16)
 	secret := randomToken(32)
 	digest := sha256.Sum256([]byte(secret))
-	return IssuedSecret{ID: id, Secret: secret, CreatedAt: time.Now().UTC()}, digest[:]
+	return IssuedSecret{ID: id, Name: input.Name, Description: input.Description, Secret: secret, CreatedAt: time.Now().UTC()}, digest[:]
 }
 
 func insertCredential(ctx context.Context, tx *sql.Tx, appID string, issued IssuedSecret, digest []byte) error {
-	if _, err := tx.ExecContext(ctx, "INSERT INTO app_secrets (id, app_id, digest, created_at) VALUES (?, ?, ?, ?)", issued.ID, appID, digest, issued.CreatedAt.UnixNano()); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO app_secrets (id, app_id, name, description, digest, created_at) VALUES (?, ?, ?, ?, ?, ?)", issued.ID, appID, issued.Name, issued.Description, digest, issued.CreatedAt.UnixNano()); err != nil {
 		return fmt.Errorf("create app credential: %w", err)
 	}
 	return nil

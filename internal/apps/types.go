@@ -26,6 +26,16 @@ type AppInput struct {
 
 type Input = AppInput
 
+type SecretInput struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type CreateAppInput struct {
+	AppInput
+	InitialSecret SecretInput `json:"initial_secret"`
+}
+
 type App struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
@@ -37,9 +47,11 @@ type App struct {
 }
 
 type Secret struct {
-	ID        string     `json:"id"`
-	CreatedAt time.Time  `json:"created_at"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	CreatedAt   time.Time  `json:"created_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 }
 
 type CreatedApp struct {
@@ -49,7 +61,9 @@ type CreatedApp struct {
 }
 
 type IssuedSecret struct {
-	ID        string    `json:"id"`
-	Secret    string    `json:"secret"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Secret      string    `json:"secret"`
+	CreatedAt   time.Time `json:"created_at"`
 }

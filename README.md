@@ -61,15 +61,20 @@ settings, the one-time Public package setting, and VM prerequisites.
 
 ## Connect a product
 
-Create an App in the Console and save its Secret in the product backend. Register
-the exact callback URL and select allowed providers. Start a browser login at
+Create an App in the Console, name its initial Secret, and optionally describe
+its purpose or rotation notes. Save the one-time Secret value in the product
+backend. Later credentials also have names and descriptions; the Console lists
+these details for active and revoked Secrets and lets you edit them without
+changing credential validity. Register the exact callback URL and select allowed
+providers. Start a browser login at
 `/auth/authorize` with `app_id`, `provider`, `redirect_uri`, and a random `state`
 bound to that browser's pending product login.
 
 For planned credential rotation, create a second Secret, update the product,
 then revoke the previous one. Reset an active Secret when its current key must
-stop working immediately. The Console asks for confirmation and shows the new
-key once; save it and update the product.
+stop working immediately. The replacement keeps its name and description. The
+Console asks for confirmation and shows the new key once; save it and update the
+product.
 
 The product callback receives `code` and the original `state`. Validate and
 consume the pending product login before the backend sends an authenticated
@@ -111,7 +116,8 @@ release; this delivery does not publish a Go tag or JavaScript package.
 | `make browser` | Build and run Playwright Console and mockup scenarios. |
 | `make mockup` | Open the interactive Console preview using production components and styles. |
 
-The mockup starts authenticated with representative fixture applications. After
+The mockup starts authenticated with representative fixture applications, named
+active and revoked Secrets, and multiline descriptions. After
 signing out, use the fixture password `preview`. Its state resets on reload and
 its fixtures are excluded from the production build. Browser tests may use an
 existing Chromium executable through `PLAYWRIGHT_CHROMIUM_EXECUTABLE`; temporary

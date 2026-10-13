@@ -251,56 +251,95 @@ Origin or CSRF returns `403 invalid_origin` or `403 invalid_csrf`.
 
 ### Applications and Secrets
 
-App creation and replacement use this input:
+App creation requires application configuration and metadata for its initial
+Secret:
 
 ```json
 {
   "name": "Example product",
   "enabled": true,
   "redirect_uris": ["https://product.example/auth/callback"],
-  "providers": ["microsoft", "google", "github"]
+  "providers": ["microsoft", "google", "github"],
+  "initial_secret": {
+    "name": "Production backend",
+    "description": "Used by the production API.\nRotate after deployment."
+  }
 }
 ```
 
-Names contain 1–128 UTF-8 bytes without surrounding whitespace. Each App has
-1–16 unique callbacks and 1–3 unique supported provider IDs. Callback URLs
-require HTTPS, a host, and no user information or fragment. Explicit loopback
-HTTP is allowed only when enabled by deployment configuration. Callback query
-parameters `code`, `state`, and `error` are reserved and cannot be registered.
-Matching is against the registered string exactly; there are no wildcard rules.
+`PUT /console/api/apps/{id}` accepts only the application configuration fields
+`name`, `enabled`, `redirect_uris`, and `providers`; it does not create or edit a
+Secret. App names contain 1–128 UTF-8 bytes without surrounding whitespace.
+Each App has 1–16 unique callbacks and 1–3 unique supported provider IDs. Callback
+URLs require HTTPS, a host, and no user information or fragment. Explicit
+loopback HTTP is allowed only when enabled by deployment configuration. Callback
+query parameters `code`, `state`, and `error` are reserved and cannot be
+registered. Matching is against the registered string exactly; there are no
+wildcard rules.
+
+Secret creation and detail updates accept this JSON object:
+
+```json
+{
+  "name": "Production backend",
+  "description": "Used by the production API.\nRotate after deployment."
+}
+```
+
+The initial Secret object and every Secret name are required. A Secret name
+contains 1–128 valid UTF-8 bytes, with no surrounding whitespace, CR, or LF.
+`description` is optional: omission stores the empty string; a supplied value
+must be a JSON string containing at most 4096 valid UTF-8 bytes. Empty
+strings, surrounding whitespace, and multiline descriptions are preserved
+exactly. Supplied `null` is invalid for either field. Names may repeat; the
+Secret ID identifies a particular credential.
 
 | Method and path | Success |
 | --- | --- |
 | `GET /console/api/apps` | `200 {"apps":[...]}`. |
-| `POST /console/api/apps` | `201 {"app":{...},"secret":"...","secret_id":"..."}`. |
+| `POST /console/api/apps` | `201 {"app":{...},"secret":"...","secret_id":"..."}`, including the one-time plaintext and its ID. |
 | `GET /console/api/apps/{id}` | `200` App object. |
 | `PUT /console/api/apps/{id}` | `200` replaced App object; App ID and creation time remain unchanged. |
 | `DELETE /console/api/apps/{id}` | `204`, App and its Secrets deleted. |
-| `GET /console/api/apps/{id}/secrets` | `200 {"secrets":[...]}` with metadata only. |
-| `POST /console/api/apps/{id}/secrets` | `201 {"id":"...","secret":"...","created_at":"..."}`. |
-| `POST /console/api/apps/{id}/secrets/{secretID}/reset` | `201 {"id":"...","secret":"...","created_at":"..."}` for a new replacement credential. |
+| `GET /console/api/apps/{id}/secrets` | `200 {"secrets":[...]}` with metadata for active and revoked credentials. |
+| `POST /console/api/apps/{id}/secrets` | `201 {"id":"...","name":"Production backend","description":"...","secret":"...","created_at":"..."}`. |
+| `PUT /console/api/apps/{id}/secrets/{secretID}` | `200` updated Secret metadata, whether active or revoked. |
+| `POST /console/api/apps/{id}/secrets/{secretID}/reset` | `201 {"id":"...","name":"Production backend","description":"...","secret":"...","created_at":"..."}` for a replacement credential. |
 | `DELETE /console/api/apps/{id}/secrets/{secretID}` | `204`, credential revoked; repeating an existing revocation is idempotent. |
 | `GET /console/api/providers` | `200 {"providers":[{"id":"microsoft","available":true},...]}` for all three providers. |
 
-App objects contain `id`, input fields, `created_at`, and `updated_at`. Secret
-metadata contains `id`, `created_at`, and `revoked_at` when revoked. Timestamp
-values use RFC 3339 JSON strings. A new plaintext Secret is returned only by
-creation or reset; subsequent reads return metadata. Planned rotation creates a
-new credential, allows the product to switch, then revokes the previous one.
+App objects contain `id`, configuration fields, `created_at`, and `updated_at`.
+Secret metadata always contains `id`, `name`, `description`, and `created_at`,
+plus `revoked_at` when revoked. Timestamp values use RFC 3339 JSON strings.
+Neither metadata reads nor updates return a plaintext Secret or its verification
+digest. A detail update changes only name and description: it does not reissue
+or revoke the credential, change its creation or revocation timestamp, or modify
+the App. Plaintext is returned only by creation or reset. Planned rotation
+creates a new credential, allows the product to switch, then revokes the previous
+one.
 Multiple unrevoked credentials may coexist. Clients send no request body to
 reset. The service atomically revokes the selected active Secret and creates a
-replacement with a new ID and independently generated key. The old ID remains
-in metadata as revoked; subsequent authentication with its key fails. Other
-active Secrets remain valid. An authentication request admitted before reset
-commits may finish under its earlier snapshot. Disabling an App blocks
+replacement with a new ID and independently generated key. Its name and
+description are copied from the selected record within that transaction. The old
+ID remains in metadata as revoked; subsequent authentication with its key fails.
+Other active Secrets remain valid. An authentication request admitted before
+reset commits may finish under its earlier snapshot. Disabling an App blocks
 authorization and retrieval; deletion also removes its credential records.
 
 Resetting a missing or different App's Secret returns `404 not_found`. Resetting
-an already revoked Secret returns `409 already_revoked`; a concurrent reset of
+an already revoked Secret returns `409 already_revoked`; concurrent resets of
 the same ID cannot issue a second replacement. The new plaintext cannot be
 retrieved after the response. If the response is lost after commit, the operator
 must create another Secret and update the product; retrying the old ID does not
 recover the replacement.
+
+The Console collects initial Secret metadata alongside App configuration. For
+later credentials it provides separate creation and detail-editing forms, and
+shows name, description, ID, creation time, and revocation status. Revocation
+and reset confirmations identify the named credential. Reset requires explicit
+confirmation that its current key stops working immediately. One-time plaintext
+displays include credential metadata so the operator can save the value with its
+purpose; later detail edits cannot recover it.
 
 Invalid input returns `400 invalid_input`, unsupported content type returns
 `415 invalid_content_type`, missing records return `404 not_found`, unsupported
@@ -309,37 +348,42 @@ methods return `405 method_not_allowed`, and storage failures return
 an unavailable provider cannot start authentication even if listed on an App.
 
 The Console UI serializes configuration editing, enable/disable changes, App
-deletion, and Secret reset for the same App. Opening an editor, delete
-confirmation, or reset confirmation reserves that App; conflicting controls
-remain unavailable through completion or cancellation. Reset confirmation
-identifies the selected Secret ID and warns that its key stops working
-immediately. The replacement plaintext remains visible until the administrator
-confirms it has been saved. A pending configuration update shows `Updating…`,
-then adopts the returned App object before another action can start. Opening the
-next editor uses that latest snapshot, so saving a name after a completed disable
-retains the disabled state. Repeated submit attempts do not start a second
-mutation.
+deletion, and Secret creation, detail updates, reset, and revocation for the same
+App.
+Opening an editor or confirmation reserves that App; conflicting controls remain
+unavailable through completion or cancellation. A new plaintext Secret retains
+ownership until the operator marks the value saved and closes the dialog. A
+pending configuration update shows `Updating…`, then adopts the returned App
+object before another action can start. Opening the next editor uses that latest
+snapshot, so saving a name after a completed disable retains the disabled state.
+Repeated submit attempts do not start a second mutation.
 
 After a non-authentication configuration failure, the UI retains ownership while
 reloading server configuration and merges only the affected App into its current
 snapshot. If the reload also fails, `State unavailable` blocks new configuration
 actions until an explicit Refresh succeeds. An already-open editor or delete
 confirmation still owns the App and permits Retry or Cancel. A successful owned
-retry may leave the unavailable marker until Refresh. Administrator session
-expiry returns to login.
-These controls protect one Console instance; API callers and separate browsers
-still send full App replacements without server-side version checks.
+retry may leave the unavailable marker until Refresh. A session-invalidating
+`401` returns to login and discards idle drafts, while already in-flight
+operations retain their owners until their handlers settle. If pending App or
+Secret issuance succeeds, its one-time plaintext display remains available
+through the Saved confirmation and Done action; a failed pending operation
+releases its retained owner. Another request's `401` does not establish that an
+already-authorized issuance failed. These controls protect one Console instance;
+API callers and separate browsers still send full App replacements without
+server-side version checks.
 
 Management mutations that pass Origin, administrator session, and CSRF checks
 receive `X-Operation-ID`. Their completion emits a `console management operation`
 log with `operation_id`, `request_id`, `action`, `affected_app_id`,
 `phase=completed`, `outcome`, `error_category`, and HTTP `status`. Actions are
-`app.create`, `app.update`, `app.delete`, `secret.create`, `secret.reset`, and
-`secret.revoke`.
+`app.create`, `app.update`, `app.delete`, `secret.create`, `secret.update`,
+`secret.reset`, and `secret.revoke`.
 Creation events use the generated App ID; existing-App events use a syntactically
 validated App ID. Invalid input or storage failures are recorded as failed
-operations. Logs exclude credentials and App display data. Authorization failures
-remain observable in HTTP request logs and do not invoke the management handler.
+operations. Logs exclude credentials, App display data, and Secret names and
+descriptions. Authorization failures remain observable in HTTP request logs and
+do not invoke the management handler.
 
 ## Health
 

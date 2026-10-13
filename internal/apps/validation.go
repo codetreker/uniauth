@@ -43,6 +43,16 @@ func validateInput(input AppInput, allowLoopbackHTTP bool) error {
 	return nil
 }
 
+func validateSecretInput(input SecretInput) error {
+	if input.Name == "" || input.Name != strings.TrimSpace(input.Name) || !utf8.ValidString(input.Name) || len(input.Name) > 128 || strings.ContainsAny(input.Name, "\r\n") {
+		return fmt.Errorf("%w: secret name must contain 1 to 128 UTF-8 bytes without surrounding whitespace or line breaks", ErrInvalid)
+	}
+	if !utf8.ValidString(input.Description) || len(input.Description) > 4096 {
+		return fmt.Errorf("%w: secret description must contain at most 4096 UTF-8 bytes", ErrInvalid)
+	}
+	return nil
+}
+
 func validateRedirectURI(raw string, allowLoopbackHTTP bool) error {
 	if raw == "" || len(raw) > 2048 || !utf8.ValidString(raw) {
 		return fmt.Errorf("%w: redirect URI must contain 1 to 2048 UTF-8 bytes", ErrInvalid)

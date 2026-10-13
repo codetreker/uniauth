@@ -17,26 +17,61 @@ const response = (value: unknown, status = 200) =>
   });
 
 describe("Console transport", () => {
-  it("uses the existing session CSRF token for empty-body secret mutations", async () => {
+  it("sends secret metadata with CSRF and encoded application and secret IDs", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(response({ csrf_token: "session-token" }))
       .mockResolvedValueOnce(
         response(
-          { id: "secret", secret: "plaintext", created_at: app.created_at },
+          {
+            id: "secret",
+            name: "Production",
+            description: "  Notes\nOwner  ",
+            secret: "plaintext",
+            created_at: app.created_at,
+          },
           201,
         ),
       );
     const api = createAPI(fetcher);
     await api.session();
-    await api.createSecret("app/with/slash");
+    const metadata = { name: "Production", description: "  Notes\nOwner  " };
+    await api.createSecret("app/with/slash", metadata);
     expect(fetcher).toHaveBeenLastCalledWith(
       "/console/api/apps/app%2Fwith%2Fslash/secrets",
       expect.objectContaining({
         method: "POST",
-        headers: { "X-CSRF-Token": "session-token" },
-        body: undefined,
+        headers: {
+          "X-CSRF-Token": "session-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(metadata),
         credentials: "same-origin",
+      }),
+    );
+    fetcher.mockResolvedValueOnce(
+      response({
+        id: "secret/with/slash",
+        ...metadata,
+        created_at: app.created_at,
+        revoked_at: app.created_at,
+      }),
+    );
+    const updated = await api.updateSecret(
+      "app/with/slash",
+      "secret/with/slash",
+      { name: "Retired", description: "" },
+    );
+    expect(updated.revoked_at).toBe(app.created_at);
+    expect(fetcher).toHaveBeenLastCalledWith(
+      "/console/api/apps/app%2Fwith%2Fslash/secrets/secret%2Fwith%2Fslash",
+      expect.objectContaining({
+        method: "PUT",
+        headers: {
+          "X-CSRF-Token": "session-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "Retired", description: "" }),
       }),
     );
   });
@@ -44,6 +79,8 @@ describe("Console transport", () => {
   it("resets the encoded secret ID with a bodyless POST and validates the new credential", async () => {
     const issued = {
       id: "sec_replacement",
+      name: "Production",
+      description: "Owner: Operations\nProduction service.",
       secret: "new-plaintext",
       created_at: app.created_at,
     };
@@ -123,5 +160,55 @@ describe("Console transport", () => {
     const api = createAPI(fetcher);
     expect((await api.listApps())[0].enabled).toBe(false);
     await expect(api.listApps()).rejects.toThrow();
+  });
+  it("requires explicit metadata in listings, issuance, and updates while preserving empty descriptions", async () => {
+    const valid = {
+      id: "secret",
+      name: "Production",
+      description: "",
+      created_at: app.created_at,
+    };
+    const malformed = [
+      { ...valid, name: undefined },
+      { ...valid, description: undefined },
+      { ...valid, name: null },
+      { ...valid, description: null },
+      { ...valid, name: "" },
+      { ...valid, name: " surrounding " },
+      { ...valid, name: "Line\nbreak" },
+    ];
+    for (const secret of malformed) {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(response({ secrets: [secret] }))
+        .mockResolvedValueOnce(response({ ...secret, secret: "plaintext" }))
+        .mockResolvedValueOnce(response(secret));
+      const api = createAPI(fetcher);
+      await expect(api.listSecrets(app.id)).rejects.toThrow();
+      await expect(
+        api.createSecret(app.id, { name: "New", description: "" }),
+      ).rejects.toThrow();
+      await expect(
+        api.updateSecret(app.id, "secret", { name: "New", description: "" }),
+      ).rejects.toThrow();
+    }
+    const api = createAPI(
+      vi.fn<typeof fetch>().mockResolvedValue(response({ secrets: [valid] })),
+    );
+    expect((await api.listSecrets(app.id))[0].description).toBe("");
+  });
+  it("accepts stored BOM-prefixed names without altering the returned metadata", async () => {
+    const metadata = {
+      id: "secret",
+      name: "\uFEFFProduction",
+      description: "",
+      created_at: app.created_at,
+    };
+    const api = createAPI(
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(response({ secrets: [metadata] })),
+    );
+    expect(await api.listSecrets(app.id)).toEqual([metadata]);
   });
 });

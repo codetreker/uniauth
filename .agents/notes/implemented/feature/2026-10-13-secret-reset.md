@@ -13,19 +13,23 @@ both authenticate and require the operator to coordinate two mutations.
 
 Reset targets one active Secret ID within an App. One SQLite transaction revokes
 that record and inserts a replacement with a new ID, independently generated
-256-bit plaintext, and SHA-256 digest. A committed reset rejects later
+256-bit plaintext, and SHA-256 digest, copying the targeted record's current
+name and description within that transaction. A committed reset rejects later
 authentication with the old value while retaining other active Secrets and the
 revoked record for history. The replacement's creation time records its actual
 issuance. Missing or wrong-App IDs return `404`; already revoked IDs return
 `409`, and concurrent resets of the same ID cannot both issue replacements.
 
 The authenticated Console exposes reset only for active Secrets. It identifies
-the selected ID and requires explicit confirmation that the old key stops
-working immediately. The new plaintext is returned once and remains visible
+the selected name and ID and requires explicit confirmation that the old key
+stops working immediately. The new plaintext is returned once and remains visible
 until the administrator acknowledges saving it. The management endpoint uses
 the existing Origin, session, CSRF, no-store, and audit controls with action
 `secret.reset`. The [API reference](../../../../docs/reference/api.md) owns the
-exact endpoint and response.
+exact endpoint and response. The
+[metadata decision](2026-10-13-secret-metadata.md) owns name and description
+validation and migration. Reset consumes the migrated schema directly and
+preserves multiline text and whitespace exactly.
 
 ## Alternatives
 

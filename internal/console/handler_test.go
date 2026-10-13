@@ -123,6 +123,8 @@ func (e *testConsole) login(t *testing.T) {
 }
 
 const appBody = `{"name":"Product A","enabled":true,"redirect_uris":["https://product.example/callback"],"providers":["microsoft","github"]}`
+const createAppBody = `{"name":"Product A","enabled":true,"redirect_uris":["https://product.example/callback"],"providers":["microsoft","github"],"initial_secret":{"name":"Production server","description":"Primary deployment credential"}}`
+const secretBody = `{"name":"Backup server","description":"Standby deployment credential"}`
 
 func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 	e := newTestConsole(t, nil)
@@ -131,7 +133,7 @@ func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 	if e.cookie.Name != "__Host-uniauth_admin" || !e.cookie.Secure || !e.cookie.HttpOnly || e.cookie.Domain != "" || e.cookie.Path != "/" || e.cookie.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("insecure session cookie: %+v", e.cookie)
 	}
-	response := e.request("POST", "/console/api/apps", appBody, nil)
+	response := e.request("POST", "/console/api/apps", createAppBody, nil)
 	requireStatus(t, response, http.StatusCreated)
 	created := decodeResponse[apps.CreatedApp](t, response)
 	if created.App.ID == "" || created.Secret == "" || created.SecretID == "" {
@@ -152,14 +154,44 @@ func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 	if len(list.Apps) != 1 || list.Apps[0].ID != created.App.ID {
 		t.Fatalf("app list mismatch: %+v", list)
 	}
-	response = e.request("POST", appPath+"/secrets", "", nil)
+	response = e.request("POST", appPath+"/secrets", secretBody, nil)
 	requireStatus(t, response, http.StatusCreated)
 	issued := decodeResponse[apps.IssuedSecret](t, response)
 	if issued.Secret == created.Secret || issued.ID == created.SecretID {
 		t.Fatal("rotation did not issue an independent credential")
 	}
+	if issued.Name != "Backup server" || issued.Description != "Standby deployment credential" {
+		t.Fatalf("issued credential metadata mismatch: %+v", issued)
+	}
+	initial := decodeResponse[struct{ Secrets []apps.Secret }](t, e.request("GET", appPath+"/secrets", "", nil))
+	if len(initial.Secrets) != 2 {
+		t.Fatalf("credential list mismatch: %+v", initial)
+	}
+	for _, secret := range initial.Secrets {
+		if secret.ID == created.SecretID && (secret.Name != "Production server" || secret.Description != "Primary deployment credential") {
+			t.Fatalf("initial credential metadata missing: %+v", secret)
+		}
+	}
+	response = e.request("PUT", appPath+"/secrets/"+issued.ID, `{"name":"Standby east","description":"  Rotation memo\n第二行  "}`, nil)
+	requireStatus(t, response, http.StatusOK)
+	edited := decodeResponse[apps.Secret](t, response)
+	if edited.ID != issued.ID || edited.Name != "Standby east" || edited.Description != "  Rotation memo\n第二行  " || !edited.CreatedAt.Equal(issued.CreatedAt) || edited.RevokedAt != nil {
+		t.Fatalf("metadata edit changed credential lifecycle: %+v", edited)
+	}
+	if strings.Contains(response.Body.String(), issued.Secret) || strings.Contains(response.Body.String(), `"secret":`) || strings.Contains(response.Body.String(), "digest") {
+		t.Fatalf("metadata edit disclosed credential material: %s", response.Body.String())
+	}
+	if _, err := e.store.Authenticate(context.Background(), created.App.ID, issued.Secret); err != nil {
+		t.Fatalf("metadata edit changed authentication: %v", err)
+	}
 	response = e.request("DELETE", appPath+"/secrets/"+created.SecretID, "", nil)
 	requireStatus(t, response, http.StatusNoContent)
+	response = e.request("PUT", appPath+"/secrets/"+created.SecretID, `{"name":"Retired primary"}`, nil)
+	requireStatus(t, response, http.StatusOK)
+	retired := decodeResponse[apps.Secret](t, response)
+	if retired.Name != "Retired primary" || retired.Description != "" || retired.RevokedAt == nil {
+		t.Fatalf("revoked credential metadata edit mismatch: %+v", retired)
+	}
 	if _, err := e.store.Authenticate(context.Background(), created.App.ID, created.Secret); !errors.Is(err, apps.ErrUnauthorized) {
 		t.Fatalf("revoked secret authenticated: %v", err)
 	}
@@ -173,6 +205,9 @@ func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 	var revoked bool
 	for _, secret := range metadata.Secrets {
 		revoked = revoked || (secret.ID == created.SecretID && secret.RevokedAt != nil)
+		if secret.ID == issued.ID && (secret.Name != edited.Name || secret.Description != edited.Description) {
+			t.Fatalf("edited metadata was not persisted: %+v", secret)
+		}
 	}
 	if !revoked {
 		t.Fatal("revocation metadata missing")
@@ -208,16 +243,19 @@ func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 func TestSecretResetEndpoint(t *testing.T) {
 	e := newTestConsole(t, nil)
 	e.login(t)
-	response := e.request("POST", "/console/api/apps", appBody, nil)
+	response := e.request("POST", "/console/api/apps", createAppBody, nil)
 	requireStatus(t, response, http.StatusCreated)
 	created := decodeResponse[apps.CreatedApp](t, response)
-	response = e.request("POST", "/console/api/apps", appBody, nil)
+	response = e.request("POST", "/console/api/apps", createAppBody, nil)
 	requireStatus(t, response, http.StatusCreated)
 	otherApp := decodeResponse[apps.CreatedApp](t, response)
 	appPath := "/console/api/apps/" + created.App.ID
-	response = e.request("POST", appPath+"/secrets", "", nil)
+	response = e.request("POST", appPath+"/secrets", secretBody, nil)
 	requireStatus(t, response, http.StatusCreated)
 	other := decodeResponse[apps.IssuedSecret](t, response)
+	response = e.request("PUT", appPath+"/secrets/"+created.SecretID, `{"name":"Updated primary","description":"Current owner memo"}`, nil)
+	requireStatus(t, response, http.StatusOK)
+	updated := decodeResponse[apps.Secret](t, response)
 	resetPath := appPath + "/secrets/" + created.SecretID + "/reset"
 
 	adminCookie := e.cookie
@@ -247,7 +285,7 @@ func TestSecretResetEndpoint(t *testing.T) {
 	response = e.request("POST", resetPath, "", nil)
 	requireStatus(t, response, http.StatusCreated)
 	replacement := decodeResponse[apps.IssuedSecret](t, response)
-	if replacement.ID == "" || replacement.Secret == "" || replacement.ID == created.SecretID || replacement.Secret == created.Secret || replacement.CreatedAt.IsZero() {
+	if replacement.ID == "" || replacement.Secret == "" || replacement.ID == created.SecretID || replacement.Secret == created.Secret || replacement.CreatedAt.IsZero() || replacement.Name != updated.Name || replacement.Description != updated.Description {
 		t.Fatalf("reset did not issue a fresh credential: %+v", replacement)
 	}
 	if _, err := e.store.Authenticate(t.Context(), created.App.ID, created.Secret); !errors.Is(err, apps.ErrUnauthorized) {
@@ -266,6 +304,17 @@ func TestSecretResetEndpoint(t *testing.T) {
 	metadata := decodeResponse[struct{ Secrets []apps.Secret }](t, metadataResponse)
 	if len(metadata.Secrets) != 3 || strings.Contains(metadataResponse.Body.String(), replacement.Secret) {
 		t.Fatalf("secret metadata leaked or missing: %s", metadataResponse.Body.String())
+	}
+	for _, secret := range metadata.Secrets {
+		if secret.ID == created.SecretID && (secret.Name != updated.Name || secret.Description != updated.Description || secret.RevokedAt == nil) {
+			t.Fatalf("reset target metadata changed: %+v", secret)
+		}
+		if secret.ID == replacement.ID && (secret.Name != updated.Name || secret.Description != updated.Description || secret.RevokedAt != nil) {
+			t.Fatalf("replacement metadata mismatch: %+v", secret)
+		}
+		if secret.ID == other.ID && (secret.Name != other.Name || secret.Description != other.Description || secret.RevokedAt != nil) {
+			t.Fatalf("other credential changed: %+v", secret)
+		}
 	}
 	response = e.request("POST", resetPath, "", nil)
 	requireStatus(t, response, http.StatusConflict)
@@ -305,7 +354,7 @@ func TestOriginCSRFAndStrictInput(t *testing.T) {
 	}
 	requireStatus(t, e.request("PUT", "/console/api/apps/missing", appBody, nil), http.StatusNotFound)
 	requireStatus(t, e.request("DELETE", "/console/api/apps/missing/secrets/missing", "", nil), http.StatusNotFound)
-	requireStatus(t, e.request("POST", "/console/api/apps/missing/secrets", "", nil), http.StatusNotFound)
+	requireStatus(t, e.request("POST", "/console/api/apps/missing/secrets", secretBody, nil), http.StatusNotFound)
 	requireStatus(t, e.request("PATCH", "/console/api/apps", "", nil), http.StatusMethodNotAllowed)
 	requireStatus(t, e.request("GET", "/console/api/unknown", "", nil), http.StatusNotFound)
 	for _, header := range []string{"Origin", "X-CSRF-Token"} {
@@ -318,6 +367,92 @@ func TestOriginCSRFAndStrictInput(t *testing.T) {
 		response := httptest.NewRecorder()
 		e.mux.ServeHTTP(response, req)
 		requireStatus(t, response, http.StatusForbidden)
+	}
+}
+
+func TestCredentialMetadataValidationAndOwnership(t *testing.T) {
+	e := newTestConsole(t, nil)
+	e.login(t)
+	response := e.request("POST", "/console/api/apps", createAppBody, nil)
+	requireStatus(t, response, http.StatusCreated)
+	created := decodeResponse[apps.CreatedApp](t, response)
+	appPath := "/console/api/apps/" + created.App.ID
+	secretPath := appPath + "/secrets/" + created.SecretID
+	invalid := []string{
+		``, `{`, `{}`, `null`, `[]`, `{"name":null}`, `{"name":5}`, `{"name":""}`,
+		`{"name":" Leading"}`, `{"name":"Trailing "}`, `{"name":"\nMultiline"}`, `{"name":"With\rreturn"}`,
+		`{"name":"Allowed","description":null}`, `{"name":"Allowed","description":true}`,
+		`{"name":"Allowed","description":3}`, `{"name":"Allowed","description":[]}`,
+		`{"name":"Allowed","description":{}}`, `{"name":"Allowed","extra":true}`, `{"name":"Allowed"} {}`,
+	}
+	for _, value := range []apps.SecretInput{
+		{Name: strings.Repeat("x", 129)},
+		{Name: strings.Repeat("界", 43)},
+		{Name: "\u2003Leading"},
+		{Name: "Trailing\u2003"},
+		{Name: "Allowed", Description: strings.Repeat("界", 1366)},
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invalid = append(invalid, string(encoded))
+	}
+	for index, body := range invalid {
+		t.Run(fmt.Sprintf("invalid-%d", index), func(t *testing.T) {
+			requireStatus(t, e.request("POST", appPath+"/secrets", body, nil), http.StatusBadRequest)
+			requireStatus(t, e.request("PUT", secretPath, body, nil), http.StatusBadRequest)
+			if body != "" && body != "{" && body != "null" && body != "[]" && body != `{"name":"Allowed"} {}` {
+				createBody := strings.TrimSuffix(appBody, "}") + `,"initial_secret":` + body + `}`
+				requireStatus(t, e.request("POST", "/console/api/apps", createBody, nil), http.StatusBadRequest)
+			}
+		})
+	}
+	for _, body := range []string{appBody, strings.TrimSuffix(appBody, "}") + `,"initial_secret":null}`, strings.TrimSuffix(appBody, "}") + `,"initial_secret":[]}`} {
+		requireStatus(t, e.request("POST", "/console/api/apps", body, nil), http.StatusBadRequest)
+	}
+	requireStatus(t, e.request("PUT", appPath, createAppBody, nil), http.StatusBadRequest)
+	for _, request := range []struct{ method, path string }{{"POST", appPath + "/secrets"}, {"PUT", secretPath}} {
+		requireStatus(t, e.request(request.method, request.path, secretBody, map[string]string{"Content-Type": "text/plain"}), http.StatusUnsupportedMediaType)
+		requireStatus(t, e.request(request.method, request.path, secretBody, map[string]string{"Origin": "https://evil.example"}), http.StatusForbidden)
+		requireStatus(t, e.request(request.method, request.path, secretBody, map[string]string{"X-CSRF-Token": "wrong"}), http.StatusForbidden)
+		cookie := e.cookie
+		e.cookie = nil
+		requireStatus(t, e.request(request.method, request.path, secretBody, nil), http.StatusUnauthorized)
+		e.cookie = cookie
+	}
+	for _, metadata := range []apps.SecretInput{
+		{Name: "x"},
+		{Name: strings.Repeat("界", 42) + "ab", Description: strings.Repeat("界", 1365) + "$"},
+		{Name: "Multiline memo", Description: " \n\r\t Unicode说明 $ "},
+	} {
+		body, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := e.request("PUT", secretPath, string(body), nil)
+		requireStatus(t, response, http.StatusOK)
+		updated := decodeResponse[apps.Secret](t, response)
+		if updated.Name != metadata.Name || updated.Description != metadata.Description {
+			t.Fatalf("valid metadata was altered: %+v want %+v", updated, metadata)
+		}
+	}
+	otherResponse := e.request("POST", "/console/api/apps", createAppBody, nil)
+	requireStatus(t, otherResponse, http.StatusCreated)
+	other := decodeResponse[apps.CreatedApp](t, otherResponse)
+	for _, path := range []string{
+		"/console/api/apps/" + other.App.ID + "/secrets/" + created.SecretID,
+		appPath + "/secrets/missing",
+		"/console/api/apps/missing/secrets/" + created.SecretID,
+	} {
+		requireStatus(t, e.request("PUT", path, secretBody, nil), http.StatusNotFound)
+	}
+	if _, err := e.store.Authenticate(context.Background(), created.App.ID, created.Secret); err != nil {
+		t.Fatalf("invalid edits changed authentication: %v", err)
+	}
+	metadata := decodeResponse[struct{ Secrets []apps.Secret }](t, e.request("GET", appPath+"/secrets", "", nil))
+	if len(metadata.Secrets) != 1 || metadata.Secrets[0].Name != "Multiline memo" || metadata.Secrets[0].Description != " \n\r\t Unicode说明 $ " {
+		t.Fatalf("invalid or wrong-owner requests mutated metadata: %+v", metadata)
 	}
 }
 
@@ -551,12 +686,13 @@ func TestStoreFailureIsSanitized(t *testing.T) {
 	}
 	for _, req := range []struct{ method, path, body string }{
 		{"GET", "/console/api/apps", ""},
-		{"POST", "/console/api/apps", appBody},
+		{"POST", "/console/api/apps", createAppBody},
 		{"GET", "/console/api/apps/missing", ""},
 		{"PUT", "/console/api/apps/missing", appBody},
 		{"DELETE", "/console/api/apps/missing", ""},
 		{"GET", "/console/api/apps/missing/secrets", ""},
-		{"POST", "/console/api/apps/missing/secrets", ""},
+		{"POST", "/console/api/apps/missing/secrets", secretBody},
+		{"PUT", "/console/api/apps/missing/secrets/missing", secretBody},
 		{"DELETE", "/console/api/apps/missing/secrets/missing", ""},
 		{"POST", "/console/api/apps/missing/secrets/missing/reset", ""},
 	} {

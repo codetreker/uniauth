@@ -15,7 +15,10 @@ end-user authentication.
 
 UniAuth is a Go gateway with an embedded React and TypeScript administrator
 Console. SQLite persists App definitions and verification digests of product
-Secrets. Upstream credentials and the Console administrator password come from
+Secrets and their names, descriptions, and lifecycle metadata. The
+[Secret metadata decision](../feature/2026-10-13-secret-metadata.md) owns their
+validation, creation and detail-update APIs, and existing-database migration.
+Upstream credentials and the Console administrator password come from
 deployment configuration. No end-user table or central SSO session is created.
 The Console has its own eight-hour in-memory session and grants no authority to
 product users.
@@ -33,25 +36,35 @@ Origin headers are not normalized. This allows a browser's serialized origin to
 match a configured uppercase host or explicit default port while retaining exact
 checks against foreign, null, or noncanonical request values.
 
-Configuration edits, enabled-state changes, deletion, and Secret reset share
-per-App operation ownership in the Console. Opening an editor, delete
-confirmation, or reset confirmation reserves the App; synchronous ownership
-checks prevent overlapping clicks before React renders updated disabled
-controls. Reset retains ownership through acknowledgement of its one-time
-replacement key. Asynchronous configuration operations retain ownership until
-they settle and reconcile successful authoritative responses before allowing
-another operation. Pending updates are shown as `Updating…`. On
-non-authentication configuration write failure, ownership remains held while
-server configuration is reloaded and only the affected App is reconciled. If
-the reload also fails, the App shows `State unavailable` and new configuration
-actions require an explicit successful Refresh. Existing drafts and
+Configuration edits, enabled-state changes, deletion, and Secret creation, detail
+updates, reset, and revocation share per-App operation ownership in the Console.
+Opening an editor or confirmation reserves the App; synchronous ownership checks
+prevent overlapping clicks before React renders updated disabled controls. New
+credentials retain their one-time plaintext display and ownership until the
+operator marks the value saved and closes the dialog. Asynchronous operations
+retain ownership until they settle and reconcile successful authoritative
+responses before allowing another operation. Pending
+updates are shown as `Updating…`. On non-authentication configuration write
+failure, ownership remains held while server configuration is reloaded and only
+the affected App is reconciled. If the reload also fails, the App shows
+`State unavailable` and new configuration actions require an explicit successful
+Refresh. Existing drafts and delete
 confirmations retain ownership and allow Retry or Cancel; a successful owned
-retry may leave the unavailable marker until Refresh. Session expiry returns to
-administrator login. This prevents a stale edit snapshot from reversing a
-disable that has already committed without pretending a failed response proves
-the server rejected the write. The
-[Secret reset decision](../feature/2026-10-13-secret-reset.md) owns the immediate
-credential replacement contract and its response-loss cost.
+retry may leave the unavailable marker until Refresh. A session-invalidating
+`401` returns to administrator login and discards idle drafts, but owners of
+already in-flight operations survive until their handlers settle. Successful
+issuance retains its one-time display through Saved and Done; failed operations
+release the retained owner. The [Secret metadata decision](../feature/2026-10-13-secret-metadata.md)
+records why another request's `401` does not prove pending issuance failed.
+This prevents a stale edit snapshot from reversing a disable that has already
+committed without pretending a failed response proves the
+server rejected the write.
+
+The [Secret reset decision](../feature/2026-10-13-secret-reset.md) owns immediate
+credential replacement. Reset revokes the selected active row and issues a new
+ID and key in one transaction while copying its name and description. The
+Console requires confirmation and retains the replacement plaintext through
+Saved and Done, including when an unrelated request reports session expiry.
 
 Each login has separate product and provider state, browser binding, PKCE, and
 OIDC nonce where applicable. The gateway validates the provider identity and
@@ -129,10 +142,12 @@ Products integrate one login-and-retrieval protocol and receive complete
 provider-specific data without managing upstream OAuth credentials. Product
 Secrets remain server-side and are shown only when issued. They can overlap
 during planned rotation before old credentials are revoked; reset revokes one
-active Secret in the same transaction that issues its replacement. Console
-mutation ownership is local to one UI instance; it does not establish
-server-side optimistic concurrency or coordinate separate administrator
-browsers. Those API clients still submit full App replacements.
+active credential in the same transaction that issues its replacement. Names and
+descriptions remain available and editable after revocation without changing
+credential validity. Console mutation ownership is local to one UI instance;
+it does not establish server-side optimistic concurrency or coordinate separate
+administrator browsers. Those API clients still submit full
+App replacements.
 
 Transient identity state has bounded count, accounted bytes, and lifetime.
 No long-lived recovery, consumed-code history, token refresh, or central logout
