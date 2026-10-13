@@ -65,6 +65,7 @@ export interface ConsoleAPI {
   deleteApp: (id: string) => Promise<void>;
   listSecrets: (id: string) => Promise<Secret[]>;
   createSecret: (id: string) => Promise<IssuedSecret>;
+  resetSecret: (id: string, secretID: string) => Promise<IssuedSecret>;
   revokeSecret: (id: string, secretID: string) => Promise<void>;
 }
 
@@ -126,6 +127,13 @@ export const createAPI = (fetcher: typeof fetch = fetch): ConsoleAPI => {
         .parse(await request(`${appPath(id)}/secrets`)).secrets,
     createSecret: async (id) =>
       issuedSchema.parse(await request(`${appPath(id)}/secrets`, "POST")),
+    resetSecret: async (id, secretID) =>
+      issuedSchema.parse(
+        await request(
+          `${appPath(id)}/secrets/${encodeURIComponent(secretID)}/reset`,
+          "POST",
+        ),
+      ),
     revokeSecret: async (id, secretID) => {
       await request(
         `${appPath(id)}/secrets/${encodeURIComponent(secretID)}`,

@@ -27,7 +27,7 @@ from live upstream verification.
 | --- | --- |
 | R1 | Implement the service and management API in Go. |
 | R2 | Support personal Microsoft accounts, Google, and GitHub. |
-| R3 | Provide a Console to register Apps and generate, rotate, and revoke Secrets. |
+| R3 | Provide a Console to register Apps and generate, rotate, reset, and revoke Secrets. |
 | R4 | Return a standard identity profile and every obtained provider identity field under `origin`, within configured and granted scopes. |
 | R5 | Retain complete identity results only in process memory for five minutes from creation. |
 | R6 | Atomically consume an owning App's authenticated result once. |
@@ -82,10 +82,14 @@ App ownership, serialization, expiry, and single consumption.
 Each App has a generated ID, name, enabled state, exact callback URLs, and allowed
 providers. Separate environments use separate registrations. Apps are confidential
 backend integrations; their Secrets remain server-side. Random 256-bit Secrets
-are shown only when created. SQLite retains SHA-256 verification digests,
-compared in constant time, with creation and revocation metadata. Rotation allows
-old and new credentials to coexist until the product switches and revokes the
-old one.
+are shown only when issued. SQLite retains SHA-256 verification digests,
+compared in constant time, with creation and revocation metadata. Planned rotation
+allows old and new credentials to coexist until the product switches and revokes
+the old one. Reset atomically revokes one active Secret and issues a replacement
+with a new ID and key, so subsequent requests reject the old key. The Console
+requires confirmation before reset and displays the replacement once. The
+[reset decision](../../.agents/notes/implemented/feature/2026-10-13-secret-reset.md)
+owns its history and response-loss cost.
 
 SQLite persists only configuration and product Secret verification records.
 Embedded migrations establish the schema without an end-user table. Provider
@@ -110,18 +114,20 @@ serialization while rejecting noncanonical or foreign headers. Login attempts
 are rate-limited. Changing the configured password requires a restart, which
 invalidates these administrator sessions.
 
-Console configuration editing, enable/disable changes, and deletion share one
-operation owner for each App. Ownership is acquired before asynchronous work or
-render updates, so overlapping controls cannot submit an older App snapshot.
-Opening an editor or delete confirmation reserves the App until completion or
-cancellation. Pending updates display `Updating…`; committed response data becomes
-the authoritative App configuration before later actions are allowed. A failed
+Console configuration editing, enable/disable changes, deletion, and Secret reset
+share one operation owner for each App. Ownership is acquired before asynchronous
+work or render updates, so overlapping controls cannot submit an older App
+snapshot. Opening an editor, delete confirmation, or reset confirmation reserves
+the App. A successful reset retains ownership while its new plaintext is visible
+and releases it only after the operator acknowledges saving the key. Pending
+configuration updates display `Updating…`; committed response data becomes the
+authoritative App configuration before later actions are allowed. A failed
 configuration write keeps its owner while the UI reloads server configuration
 and reconciles only the affected App. If that reload also fails, the App shows
 `State unavailable` and new configuration actions remain blocked until explicit
-Refresh succeeds. An already-open draft or delete confirmation retains its owner
-and permits Retry or Cancel; it does not require Refresh before its owned retry.
-An unavailable marker may remain after a successful owned retry until Refresh.
+Refresh succeeds. An already-open draft or confirmation retains its owner and
+permits Retry or Cancel; it does not require Refresh before its owned retry. An
+unavailable marker may remain after a successful owned retry until Refresh.
 Administrator session expiry instead returns to login. This serialization is
 local to the Console, not a server-side version or cross-browser concurrency
 guarantee.

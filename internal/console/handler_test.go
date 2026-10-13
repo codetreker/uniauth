@@ -205,6 +205,80 @@ func TestApplicationLifecycleAndCredentialIsolation(t *testing.T) {
 	requireStatus(t, e.request("DELETE", appPath, "", nil), http.StatusNotFound)
 }
 
+func TestSecretResetEndpoint(t *testing.T) {
+	e := newTestConsole(t, nil)
+	e.login(t)
+	response := e.request("POST", "/console/api/apps", appBody, nil)
+	requireStatus(t, response, http.StatusCreated)
+	created := decodeResponse[apps.CreatedApp](t, response)
+	response = e.request("POST", "/console/api/apps", appBody, nil)
+	requireStatus(t, response, http.StatusCreated)
+	otherApp := decodeResponse[apps.CreatedApp](t, response)
+	appPath := "/console/api/apps/" + created.App.ID
+	response = e.request("POST", appPath+"/secrets", "", nil)
+	requireStatus(t, response, http.StatusCreated)
+	other := decodeResponse[apps.IssuedSecret](t, response)
+	resetPath := appPath + "/secrets/" + created.SecretID + "/reset"
+
+	adminCookie := e.cookie
+	e.cookie = nil
+	requireStatus(t, e.request("POST", resetPath, "", nil), http.StatusUnauthorized)
+	e.cookie = adminCookie
+	for _, headers := range []map[string]string{
+		{"Origin": "https://evil.example"},
+		{"X-CSRF-Token": ""},
+		{"X-CSRF-Token": "wrong"},
+	} {
+		requireStatus(t, e.request("POST", resetPath, "", headers), http.StatusForbidden)
+	}
+	requireStatus(t, e.request("GET", resetPath, "", nil), http.StatusMethodNotAllowed)
+	requireStatus(t, e.request("POST", appPath+"/secrets/"+created.SecretID, "", nil), http.StatusMethodNotAllowed)
+	for _, path := range []string{
+		"/console/api/apps/" + otherApp.App.ID + "/secrets/" + created.SecretID + "/reset",
+		appPath + "/secrets/missing/reset",
+		"/console/api/apps/missing/secrets/" + created.SecretID + "/reset",
+	} {
+		requireStatus(t, e.request("POST", path, "", nil), http.StatusNotFound)
+	}
+	if _, err := e.store.Authenticate(t.Context(), created.App.ID, created.Secret); err != nil {
+		t.Fatalf("rejected reset changed the credential: %v", err)
+	}
+
+	response = e.request("POST", resetPath, "", nil)
+	requireStatus(t, response, http.StatusCreated)
+	replacement := decodeResponse[apps.IssuedSecret](t, response)
+	if replacement.ID == "" || replacement.Secret == "" || replacement.ID == created.SecretID || replacement.Secret == created.Secret || replacement.CreatedAt.IsZero() {
+		t.Fatalf("reset did not issue a fresh credential: %+v", replacement)
+	}
+	if _, err := e.store.Authenticate(t.Context(), created.App.ID, created.Secret); !errors.Is(err, apps.ErrUnauthorized) {
+		t.Fatalf("reset credential authenticated: %v", err)
+	}
+	for _, credential := range []string{replacement.Secret, other.Secret} {
+		if _, err := e.store.Authenticate(t.Context(), created.App.ID, credential); err != nil {
+			t.Fatalf("active credential stopped working: %v", err)
+		}
+	}
+	if _, err := e.store.Authenticate(t.Context(), otherApp.App.ID, otherApp.Secret); err != nil {
+		t.Fatalf("another application's credential stopped working: %v", err)
+	}
+	metadataResponse := e.request("GET", appPath+"/secrets", "", nil)
+	requireStatus(t, metadataResponse, http.StatusOK)
+	metadata := decodeResponse[struct{ Secrets []apps.Secret }](t, metadataResponse)
+	if len(metadata.Secrets) != 3 || strings.Contains(metadataResponse.Body.String(), replacement.Secret) {
+		t.Fatalf("secret metadata leaked or missing: %s", metadataResponse.Body.String())
+	}
+	response = e.request("POST", resetPath, "", nil)
+	requireStatus(t, response, http.StatusConflict)
+	if got := decodeResponse[struct{ Error struct{ Code string } }](t, response).Error.Code; got != "already_revoked" {
+		t.Fatalf("unexpected reset conflict code %q", got)
+	}
+	metadataResponse = e.request("GET", appPath+"/secrets", "", nil)
+	metadata = decodeResponse[struct{ Secrets []apps.Secret }](t, metadataResponse)
+	if len(metadata.Secrets) != 3 {
+		t.Fatalf("conflicting reset issued another credential: %+v", metadata.Secrets)
+	}
+}
+
 func TestOriginCSRFAndStrictInput(t *testing.T) {
 	e := newTestConsole(t, nil)
 	for _, origin := range []string{"", "null", "https://evil.example", "https://auth.example.evil.test", "https://auth.example/"} {
@@ -218,7 +292,7 @@ func TestOriginCSRFAndStrictInput(t *testing.T) {
 	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"`+strings.Repeat("x", 1025)+`"}`, nil), http.StatusBadRequest)
 	requireStatus(t, e.request("POST", "/console/api/login", `{"password":"`+strings.Repeat("x", 65536)+`"}`, nil), http.StatusBadRequest)
 	e.login(t)
-	for _, path := range []string{"/console/api/apps", "/console/api/logout", "/console/api/apps/missing/secrets"} {
+	for _, path := range []string{"/console/api/apps", "/console/api/logout", "/console/api/apps/missing/secrets", "/console/api/apps/missing/secrets/missing/reset"} {
 		for _, token := range []string{"", "wrong"} {
 			requireStatus(t, e.request("POST", path, appBody, map[string]string{"X-CSRF-Token": token}), http.StatusForbidden)
 		}
@@ -484,6 +558,7 @@ func TestStoreFailureIsSanitized(t *testing.T) {
 		{"GET", "/console/api/apps/missing/secrets", ""},
 		{"POST", "/console/api/apps/missing/secrets", ""},
 		{"DELETE", "/console/api/apps/missing/secrets/missing", ""},
+		{"POST", "/console/api/apps/missing/secrets/missing/reset", ""},
 	} {
 		t.Run(fmt.Sprintf("%s %s", req.method, req.path), func(t *testing.T) {
 			response := e.request(req.method, req.path, req.body, nil)

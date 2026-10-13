@@ -105,16 +105,14 @@ export const createMockAPI = (): ConsoleAPI => {
         );
     }
   };
+  const newSecret = () => ({
+    id: `sec_preview_${sequence++}`,
+    secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", ""),
+    created_at: new Date().toISOString(),
+  });
   const issueSecret = (id: string) => {
     getApp(id);
-    const issued = {
-      id: `sec_preview_${sequence++}`,
-      secret: `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll(
-        "-",
-        "",
-      ),
-      created_at: new Date().toISOString(),
-    };
+    const issued = newSecret();
     const existing = credentials.get(id);
     if (existing === undefined)
       throw new Error("Preview application credentials are missing.");
@@ -208,6 +206,33 @@ export const createMockAPI = (): ConsoleAPI => {
       await wait();
       authorize();
       return issueSecret(id);
+    },
+    resetSecret: async (id, secretID) => {
+      await wait();
+      authorize();
+      getApp(id);
+      const secrets = credentials.get(id);
+      if (secrets === undefined)
+        throw new Error("Preview application credentials are missing.");
+      const target = secrets.find((secret) => secret.id === secretID);
+      if (target === undefined)
+        throw new APIError(404, "not_found", "The secret was not found.");
+      if (target.revoked_at !== undefined)
+        throw new APIError(
+          409,
+          "already_revoked",
+          "The secret is already revoked.",
+        );
+      const issued = newSecret();
+      credentials.set(id, [
+        ...secrets.map((secret) =>
+          secret.id === secretID
+            ? { ...secret, revoked_at: issued.created_at }
+            : secret,
+        ),
+        { id: issued.id, created_at: issued.created_at },
+      ]);
+      return issued;
     },
     revokeSecret: async (id, secretID) => {
       await wait();

@@ -59,6 +59,8 @@ func auditErrorCategory(status int) string {
 		return "invalid_input"
 	case http.StatusNotFound:
 		return "not_found"
+	case http.StatusConflict:
+		return "already_revoked"
 	case http.StatusUnsupportedMediaType:
 		return "invalid_content_type"
 	case http.StatusInternalServerError:

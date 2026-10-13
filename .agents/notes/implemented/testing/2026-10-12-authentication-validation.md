@@ -26,10 +26,13 @@ of the external Go module and packed JavaScript package.
 
 Go tests exercise HTTP and store behavior for provider validation, complete raw
 identity fields, separate state and browser binding, expiry, failed and wrong-App
-claims, concurrent consumption, capacity, credentials, sessions, and lifecycle
-ordering. Controlled upstream fixtures provide token, signing-key, and profile
-responses, including invalid responses and faults. These tests preserve errors
-and observe externally visible effects. Console origin regressions cover browser
+claims, concurrent consumption, capacity, credential reset and revocation,
+sessions, and lifecycle ordering. A reset assertion verifies the old key is
+rejected, the new key authenticates, other active keys stay usable, and concurrent
+same-ID resets issue one replacement. Controlled upstream fixtures provide token,
+signing-key, and profile responses, including invalid responses and faults. These
+tests preserve errors and observe externally visible effects. Console origin
+regressions cover browser
 serialization of configured uppercase and IDNA domains, IPv6 literals, and
 default or zero-padded ports through login and CRUD requests. Foreign, null,
 noncanonical, and multiple Origin values and invalid CSRF remain rejected.
@@ -78,9 +81,10 @@ claiming live provider authentication.
 Playwright uses one worker and no automatic retries. It starts a fresh local Go
 service with isolated SQLite data and the production Console, and a separate
 mockup using production components and styles. Scenarios cover administrator
-login, App management, one-time Secret display, rotation and revocation, and
-responsive mockup interaction. Existing browsers or repository-local temporary
-browser installations prevent task tooling from leaving a permanent installation.
+login, App management, one-time Secret display, rotation, confirmed reset,
+revocation, and responsive mockup interaction. Existing browsers or
+repository-local temporary browser installations prevent task tooling from
+leaving a permanent installation.
 
 The [configuration reference](../../../../docs/reference/configuration.md) owns
 validation commands and limits. The

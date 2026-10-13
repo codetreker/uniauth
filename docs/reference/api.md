@@ -278,16 +278,29 @@ Matching is against the registered string exactly; there are no wildcard rules.
 | `DELETE /console/api/apps/{id}` | `204`, App and its Secrets deleted. |
 | `GET /console/api/apps/{id}/secrets` | `200 {"secrets":[...]}` with metadata only. |
 | `POST /console/api/apps/{id}/secrets` | `201 {"id":"...","secret":"...","created_at":"..."}`. |
+| `POST /console/api/apps/{id}/secrets/{secretID}/reset` | `201 {"id":"...","secret":"...","created_at":"..."}` for a new replacement credential. |
 | `DELETE /console/api/apps/{id}/secrets/{secretID}` | `204`, credential revoked; repeating an existing revocation is idempotent. |
 | `GET /console/api/providers` | `200 {"providers":[{"id":"microsoft","available":true},...]}` for all three providers. |
 
 App objects contain `id`, input fields, `created_at`, and `updated_at`. Secret
 metadata contains `id`, `created_at`, and `revoked_at` when revoked. Timestamp
 values use RFC 3339 JSON strings. A new plaintext Secret is returned only by
-creation; subsequent reads return metadata. Rotation creates a new credential,
-allows the product to switch, then revokes the previous one. Multiple unrevoked
-credentials may coexist. Disabling an App blocks authorization and retrieval;
-deletion also removes its credential records.
+creation or reset; subsequent reads return metadata. Planned rotation creates a
+new credential, allows the product to switch, then revokes the previous one.
+Multiple unrevoked credentials may coexist. Clients send no request body to
+reset. The service atomically revokes the selected active Secret and creates a
+replacement with a new ID and independently generated key. The old ID remains
+in metadata as revoked; subsequent authentication with its key fails. Other
+active Secrets remain valid. An authentication request admitted before reset
+commits may finish under its earlier snapshot. Disabling an App blocks
+authorization and retrieval; deletion also removes its credential records.
+
+Resetting a missing or different App's Secret returns `404 not_found`. Resetting
+an already revoked Secret returns `409 already_revoked`; a concurrent reset of
+the same ID cannot issue a second replacement. The new plaintext cannot be
+retrieved after the response. If the response is lost after commit, the operator
+must create another Secret and update the product; retrying the old ID does not
+recover the replacement.
 
 Invalid input returns `400 invalid_input`, unsupported content type returns
 `415 invalid_content_type`, missing records return `404 not_found`, unsupported
@@ -295,13 +308,17 @@ methods return `405 method_not_allowed`, and storage failures return
 `500 internal_error`. Provider availability describes deployment configuration;
 an unavailable provider cannot start authentication even if listed on an App.
 
-The Console UI serializes configuration editing, enable/disable changes, and
-App deletion for the same App. Opening an editor or delete confirmation reserves
-that App; conflicting controls remain unavailable through completion or
-cancellation. A pending update shows `Updating…`, then adopts the returned App
-object before another action can start. Opening the next editor uses that latest
-snapshot, so saving a name after a completed disable retains the disabled state.
-Repeated submit attempts do not start a second mutation.
+The Console UI serializes configuration editing, enable/disable changes, App
+deletion, and Secret reset for the same App. Opening an editor, delete
+confirmation, or reset confirmation reserves that App; conflicting controls
+remain unavailable through completion or cancellation. Reset confirmation
+identifies the selected Secret ID and warns that its key stops working
+immediately. The replacement plaintext remains visible until the administrator
+confirms it has been saved. A pending configuration update shows `Updating…`,
+then adopts the returned App object before another action can start. Opening the
+next editor uses that latest snapshot, so saving a name after a completed disable
+retains the disabled state. Repeated submit attempts do not start a second
+mutation.
 
 After a non-authentication configuration failure, the UI retains ownership while
 reloading server configuration and merges only the affected App into its current
@@ -317,7 +334,8 @@ Management mutations that pass Origin, administrator session, and CSRF checks
 receive `X-Operation-ID`. Their completion emits a `console management operation`
 log with `operation_id`, `request_id`, `action`, `affected_app_id`,
 `phase=completed`, `outcome`, `error_category`, and HTTP `status`. Actions are
-`app.create`, `app.update`, `app.delete`, `secret.create`, and `secret.revoke`.
+`app.create`, `app.update`, `app.delete`, `secret.create`, `secret.reset`, and
+`secret.revoke`.
 Creation events use the generated App ID; existing-App events use a syntactically
 validated App ID. Invalid input or storage failures are recorded as failed
 operations. Logs exclude credentials and App display data. Authorization failures

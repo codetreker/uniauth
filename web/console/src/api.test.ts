@@ -41,6 +41,35 @@ describe("Console transport", () => {
     );
   });
 
+  it("resets the encoded secret ID with a bodyless POST and validates the new credential", async () => {
+    const issued = {
+      id: "sec_replacement",
+      secret: "new-plaintext",
+      created_at: app.created_at,
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ csrf_token: "session-token" }))
+      .mockResolvedValueOnce(response(issued, 201))
+      .mockResolvedValueOnce(response({ ...issued, secret: undefined }, 201));
+    const api = createAPI(fetcher);
+    await api.session();
+    await expect(api.resetSecret("app/with/slash", "sec/old")).resolves.toEqual(
+      issued,
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/console/api/apps/app%2Fwith%2Fslash/secrets/sec%2Fold/reset",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "X-CSRF-Token": "session-token" },
+        body: undefined,
+        credentials: "same-origin",
+      }),
+    );
+    await expect(api.resetSecret(app.id, "sec_old")).rejects.toThrow();
+  });
+
   it("adopts a new session after authentication and clears it on logout", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

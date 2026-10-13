@@ -24,6 +24,36 @@ test("final Console components provide an interactive desktop preview", async ({
     page.getByRole("row").filter({ hasText: "sec_0_previous" }),
   ).toContainText("Revoked");
   await page.screenshot({ path: ".tmp/mockup-detail.png", fullPage: true });
+  await page
+    .getByRole("button", { name: "Reset secret sec_0_current" })
+    .click();
+  const reset = page.getByRole("dialog", { name: "Reset this secret?" });
+  await expect(reset).toContainText("sec_0_current");
+  await expect(reset).toContainText("stop working immediately");
+  await page.screenshot({
+    path: ".tmp/mockup-reset-confirm.png",
+  });
+  await reset.getByRole("button", { name: "Reset secret" }).click();
+  const resetCredential = page.getByRole("dialog", {
+    name: "Save your app secret",
+  });
+  await expect(resetCredential).toContainText("sec_0_current has been revoked");
+  await page.screenshot({
+    path: ".tmp/mockup-reset-credential.png",
+  });
+  const replacementID = await resetCredential
+    .locator(".copy-field")
+    .filter({ hasText: "Secret ID" })
+    .locator("code")
+    .innerText();
+  await resetCredential.getByRole("checkbox").check();
+  await resetCredential.getByRole("button", { name: "Done" }).click();
+  await expect(
+    page.getByRole("row").filter({ hasText: "sec_0_current" }),
+  ).toContainText("Revoked");
+  await expect(
+    page.getByRole("row").filter({ hasText: replacementID }),
+  ).toContainText("Active");
   await page.getByRole("button", { name: "← All applications" }).click();
   await page.getByRole("button", { name: "New application" }).click();
   const editor = page.getByRole("dialog", {

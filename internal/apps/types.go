@@ -7,6 +7,7 @@ import (
 
 var (
 	ErrNotFound     = errors.New("app or credential not found")
+	ErrRevoked      = errors.New("app credential already revoked")
 	ErrInvalid      = errors.New("invalid application configuration")
 	ErrUnauthorized = errors.New("invalid application credentials")
 )

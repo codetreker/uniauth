@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,6 +274,107 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 	require.Len(t, metadata, workers+1)
 }
 
+func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
+	store, ctx := openStore(t, false), t.Context()
+	created, err := store.Create(ctx, validInput())
+	require.NoError(t, err)
+	other, err := store.CreateSecret(ctx, created.App.ID)
+	require.NoError(t, err)
+	secondApp, err := store.Create(ctx, validInput())
+	require.NoError(t, err)
+
+	for _, target := range []struct{ appID, secretID string }{
+		{secondApp.App.ID, created.SecretID},
+		{created.App.ID, "missing"},
+		{"missing", created.SecretID},
+	} {
+		_, err := store.ResetSecret(ctx, target.appID, target.secretID)
+		require.ErrorIs(t, err, apps.ErrNotFound)
+	}
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.NoError(t, err)
+
+	replacement, err := store.ResetSecret(ctx, created.App.ID, created.SecretID)
+	require.NoError(t, err)
+	require.NotEqual(t, created.SecretID, replacement.ID)
+	require.NotEqual(t, created.Secret, replacement.Secret)
+	decoded, err := base64.RawURLEncoding.DecodeString(replacement.Secret)
+	require.NoError(t, err)
+	require.Len(t, decoded, 32)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.ErrorIs(t, err, apps.ErrUnauthorized)
+	for _, credential := range []string{replacement.Secret, other.Secret} {
+		_, err = store.Authenticate(ctx, created.App.ID, credential)
+		require.NoError(t, err)
+	}
+	_, err = store.Authenticate(ctx, secondApp.App.ID, secondApp.Secret)
+	require.NoError(t, err)
+
+	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	require.Len(t, metadata, 3)
+	states := make(map[string]apps.Secret, len(metadata))
+	for _, secret := range metadata {
+		states[secret.ID] = secret
+	}
+	require.NotNil(t, states[created.SecretID].RevokedAt)
+	require.Nil(t, states[other.ID].RevokedAt)
+	require.Nil(t, states[replacement.ID].RevokedAt)
+	_, err = store.ResetSecret(ctx, created.App.ID, created.SecretID)
+	require.ErrorIs(t, err, apps.ErrRevoked)
+	require.NoError(t, store.RevokeSecret(ctx, created.App.ID, other.ID))
+	_, err = store.ResetSecret(ctx, created.App.ID, other.ID)
+	require.ErrorIs(t, err, apps.ErrRevoked)
+	metadata, err = store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	require.Len(t, metadata, 3)
+}
+
+func TestConcurrentResetSecretIssuesOneReplacement(t *testing.T) {
+	store, ctx := openStore(t, false), t.Context()
+	created, err := store.Create(ctx, validInput())
+	require.NoError(t, err)
+	start := make(chan struct{})
+	type result struct {
+		issued apps.IssuedSecret
+		err    error
+	}
+	results := make(chan result, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Go(func() {
+			<-start
+			issued, err := store.ResetSecret(ctx, created.App.ID, created.SecretID)
+			results <- result{issued, err}
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	var replacement apps.IssuedSecret
+	var successes, conflicts int
+	for result := range results {
+		switch {
+		case result.err == nil:
+			successes++
+			replacement = result.issued
+		case errors.Is(result.err, apps.ErrRevoked):
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent reset result: %v", result.err)
+		}
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, conflicts)
+	_, err = store.Authenticate(ctx, created.App.ID, created.Secret)
+	require.ErrorIs(t, err, apps.ErrUnauthorized)
+	_, err = store.Authenticate(ctx, created.App.ID, replacement.Secret)
+	require.NoError(t, err)
+	metadata, err := store.ListSecrets(ctx, created.App.ID)
+	require.NoError(t, err)
+	require.Len(t, metadata, 2)
+}
+
 func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
 	store, ctx := openStore(t, false), t.Context()
 	created, err := store.Create(ctx, validInput())
@@ -327,6 +429,7 @@ func TestDatabaseErrorsRetainCauses(t *testing.T) {
 		func() error { _, err := store.CreateSecret(ctx, "missing"); return err },
 		func() error { _, err := store.ListSecrets(ctx, "missing"); return err },
 		func() error { return store.RevokeSecret(ctx, "missing", "missing") },
+		func() error { _, err := store.ResetSecret(ctx, "missing", "missing"); return err },
 		func() error { _, err := store.Authenticate(ctx, "missing", "secret"); return err },
 	} {
 		require.ErrorIs(t, operation(), context.Canceled)
@@ -354,6 +457,8 @@ func TestSQLiteWriteFailuresRollbackRegistryAndCredentials(t *testing.T) {
 		{"app creation", "INSERT", "apps", func() error { _, err := store.Create(ctx, validInput()); return err }},
 		{"initial credential creation", "INSERT", "app_secrets", func() error { _, err := store.Create(ctx, validInput()); return err }},
 		{"credential rotation", "INSERT", "app_secrets", func() error { _, err := store.CreateSecret(ctx, created.App.ID); return err }},
+		{"credential reset insert", "INSERT", "app_secrets", func() error { _, err := store.ResetSecret(ctx, created.App.ID, created.SecretID); return err }},
+		{"credential reset revoke", "UPDATE", "app_secrets", func() error { _, err := store.ResetSecret(ctx, created.App.ID, created.SecretID); return err }},
 		{"app update", "UPDATE", "apps", func() error {
 			input := validInput()
 			input.Name, input.Enabled = "Rejected update", false

@@ -60,7 +60,11 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	request("PUT", path, strings.Replace(appBody, "Product A", "Updated App", 1), "app.update", created.App.ID, "success", "", "", http.StatusOK)
 	response = request("POST", path+"/secrets", "", "secret.create", created.App.ID, "success", "", "", http.StatusCreated)
 	issued := decodeResponse[apps.IssuedSecret](t, response)
-	request("DELETE", path+"/secrets/"+issued.ID, "", "secret.revoke", created.App.ID, "success", "", "", http.StatusNoContent)
+	resetPath := path + "/secrets/" + issued.ID + "/reset"
+	response = request("POST", resetPath, "", "secret.reset", created.App.ID, "success", "", "", http.StatusCreated)
+	replacement := decodeResponse[apps.IssuedSecret](t, response)
+	request("POST", resetPath, "", "secret.reset", created.App.ID, "failure", "already_revoked", "", http.StatusConflict)
+	request("DELETE", path+"/secrets/"+replacement.ID, "", "secret.revoke", created.App.ID, "success", "", "", http.StatusNoContent)
 	request("DELETE", path, "", "app.delete", created.App.ID, "success", "", "", http.StatusNoContent)
 	request("DELETE", path, "", "app.delete", created.App.ID, "failure", "not_found", "", http.StatusNotFound)
 	request("POST", "/console/api/apps", `{}`, "app.create", "", "failure", "invalid_input", "", http.StatusBadRequest)
@@ -70,7 +74,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sensitive := range []string{created.Secret, issued.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id"} {
+	for _, sensitive := range []string{created.Secret, issued.Secret, replacement.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id"} {
 		if strings.Contains(string(encoded), sensitive) {
 			t.Fatalf("audit disclosed sensitive data %q: %s", sensitive, encoded)
 		}

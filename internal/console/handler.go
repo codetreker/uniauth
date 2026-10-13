@@ -39,6 +39,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/console/api/apps/{id}", h.route([]string{"GET", "PUT", "DELETE"}, true, h.management(map[string]string{"PUT": "app.update", "DELETE": "app.delete"}, h.app)))
 	mux.HandleFunc("/console/api/apps/{id}/secrets", h.route([]string{"GET", "POST"}, true, h.management(map[string]string{"POST": "secret.create"}, h.secrets)))
 	mux.HandleFunc("/console/api/apps/{id}/secrets/{secretID}", h.route([]string{"DELETE"}, true, h.management(map[string]string{"DELETE": "secret.revoke"}, h.secret)))
+	mux.HandleFunc("/console/api/apps/{id}/secrets/{secretID}/reset", h.route([]string{"POST"}, true, h.management(map[string]string{"POST": "secret.reset"}, h.resetSecret)))
 	mux.HandleFunc("/console/api/providers", h.route([]string{"GET"}, true, h.providers))
 	mux.HandleFunc("/console/api/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -183,6 +184,13 @@ func (h *Handler) secret(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) resetSecret(w http.ResponseWriter, r *http.Request) {
+	issued, err := h.store.ResetSecret(r.Context(), r.PathValue("id"), r.PathValue("secretID"))
+	if !storeError(w, err) {
+		writeJSON(w, http.StatusCreated, issued)
+	}
+}
+
 func (h *Handler) providers(w http.ResponseWriter, r *http.Request) {
 	type provider struct {
 		ID        string `json:"id"`
@@ -224,6 +232,8 @@ func storeError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusBadRequest, "invalid_input", "The application configuration is invalid.")
 	case errors.Is(err, apps.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "The application or credential was not found.")
+	case errors.Is(err, apps.ErrRevoked):
+		writeError(w, http.StatusConflict, "already_revoked", "The credential has already been revoked.")
 	case errors.Is(err, apps.ErrUnauthorized):
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Application authentication failed.")
 	default:

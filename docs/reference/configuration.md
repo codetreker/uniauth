@@ -43,18 +43,24 @@ headers: Console mutations still require exactly one canonical Origin matching
 the expected string. Registered product callback matching remains exact.
 
 The Console reserves an App during configuration editing, enable/disable updates,
-and deletion. A failed non-authentication write retains ownership through a
-server-state reload; only that App is reconciled into the current UI snapshot.
-If the reload fails, `State unavailable` blocks new configuration actions until
-explicit Refresh succeeds. An existing draft or delete confirmation may Retry or
-Cancel under its retained owner, and a successful retry may conservatively leave
-the unavailable marker until Refresh. Session expiry returns to administrator
-login. These controls do not coordinate separate Console browsers or API clients.
+deletion, and Secret reset. Reset holds that owner from confirmation through the
+administrator's acknowledgement of the one-time replacement key. A failed
+non-authentication configuration write retains ownership through a server-state
+reload; only that App is reconciled into the current UI snapshot. If the reload
+fails, `State unavailable` blocks new configuration actions until explicit
+Refresh succeeds. An existing draft or confirmation may Retry or Cancel under
+its retained owner, and a successful retry may conservatively leave the
+unavailable marker until Refresh. Session expiry returns to administrator login.
+These controls do not coordinate separate Console browsers or API clients.
 
 Protect runtime credentials and the database using deployment access controls.
 The database contains application definitions and SHA-256 digests of randomly
 generated 256-bit product Secrets. It contains no end-user records, provider
 tokens, identity results, login transactions, or administrator sessions.
+Reset atomically revokes one active credential and issues a new ID and key. Its
+old key stops authenticating after commit, so update the product with the new
+value immediately. If the one-time response is lost, create another Secret;
+the reset value cannot be recovered or replayed.
 
 The administrator password is read directly from `UNIAUTH_ADMIN_PASSWORD` and
 compared exactly with Console login input. It must be a single line: empty values,
@@ -191,9 +197,9 @@ Cleanup logs report aggregate expired-entry counts.
 Authorized management mutations emit `console management operation` events with
 `operation_id`, `request_id`, `action`, `affected_app_id`, `phase=completed`,
 `outcome`, `error_category`, and HTTP `status`. Supported actions are `app.create`,
-`app.update`, `app.delete`, `secret.create`, and `secret.revoke`. The response
-header `X-Operation-ID` correlates the completed operation with its request;
-successful creation logs the generated App ID. Failed mutations retain safe
+`app.update`, `app.delete`, `secret.create`, `secret.reset`, and `secret.revoke`.
+The response header `X-Operation-ID` correlates the completed operation with its
+request; successful creation logs the generated App ID. Failed mutations retain safe
 status and error-category information without Secrets or display values.
 
 Identity payloads, account identifiers, email addresses, Secrets, tokens, result
