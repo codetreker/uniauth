@@ -10,10 +10,11 @@ gh workflow run release.yml --ref main
 The build job requires `refs/heads/main`; selecting another ref skips the build
 and dependent deployments. Pushes to `main` do not start a release.
 
-Build publishes `ghcr.io/codetreker/uniauth:sha-COMMIT` for Linux AMD64 and ARM64
-using `GITHUB_TOKEN` with `packages: write` permission. A separate Docker config
+Build publishes `ghcr.io/codetreker/uniauth:sha-COMMIT16`, where `COMMIT16` is the
+first 16 characters of the source commit hash, for Linux AMD64 and ARM64 using
+`GITHUB_TOKEN` with `packages: write` permission. A separate Docker config
 verifies anonymous pull before deployment. Staging and prod use the same image
-digest.
+digest; deployment selects the built artifact by digest rather than by tag.
 
 Each deployment sets the image and environment name in
 [deploy/docker-compose.yml](../../deploy/docker-compose.yml), copies that file

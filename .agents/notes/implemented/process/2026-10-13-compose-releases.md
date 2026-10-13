@@ -15,7 +15,9 @@ restricting image publication and dependent deployments to `main`. Operators
 choose when source changes are ready for publication and deployment; merging a
 source change does not itself start a release.
 
-The workflow builds one image and deploys its digest to staging, then prod.
+The workflow builds one image with a tag containing `sha-` followed by the
+first 16 characters of the source commit hash. The shorter tag identifies the
+source revision for operators; staging and prod receive the same image digest.
 Deployment copies `deploy/docker-compose.yml` as `docker-compose.yml` to the
 environment's `DEPLOY_PATH` and runs `docker compose up -d` there. GitHub owns
 image publication and file transfer. The VM owns `.env`, persistent volumes,
