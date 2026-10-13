@@ -44,12 +44,12 @@ variables and provider registration callbacks.
 
 ## Release with Docker Compose
 
-The Release workflow builds and publishes an image, then copies
-`deploy/docker-compose.yml` to staging and prod and runs `docker compose up -d`
-in each configured deployment directory. Both environments use the same image digest.
-The VM owns `.env`, registry login, and Caddy configuration. See the
-[deployment reference](docs/reference/deployment.md) for GitHub settings and VM
-prerequisites.
+The Release workflow publishes to `ghcr.io/codetreker/uniauth` and verifies
+anonymous pull before copying `deploy/docker-compose.yml` to staging and prod.
+It runs `docker compose up -d` in each deployment directory using the same image
+digest. The VM owns `.env` and Caddy configuration; public images need no registry
+login. See the [deployment reference](docs/reference/deployment.md) for GitHub
+settings, the one-time Public package setting, and VM prerequisites.
 
 ## Connect a product
 

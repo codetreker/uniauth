@@ -7,6 +7,8 @@
 | [Configuration reference](reference/configuration.md) | Runtime environment, provider setup, limits, deployment, and validation commands. |
 | [Deployment reference](reference/deployment.md) | Docker Compose releases, GitHub settings, and VM prerequisites. |
 | [Compose release decision](../.agents/notes/implemented/process/2026-10-13-compose-releases.md) | Image promotion and deployment ownership. |
+| [Public GHCR decision](../.agents/notes/implemented/process/2026-10-13-public-ghcr-images.md) | Public image access and package visibility ownership. |
+| [GHCR validation](tasks/2026-10-13-public-ghcr-images.md) | Publication research and external setup limits. |
 | [Release validation](tasks/2026-10-13-compose-releases.md) | Observed release checks and verification limits. |
 | [Authentication gateway decision](../.agents/notes/implemented/architecture/2026-10-12-authentication-gateway.md) | Ownership, identity handover alternatives, and operating consequences. |
 | [Normalized identity decision](../.agents/notes/implemented/architecture/2026-10-13-normalized-identity.md) | Standard profile mapping, complete original data, and wire-format costs. |
