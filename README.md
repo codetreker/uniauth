@@ -52,8 +52,11 @@ bound to that browser's pending product login.
 The product callback receives `code` and the original `state`. Validate and
 consume the pending product login before the backend sends an authenticated
 `POST /auth/result` with `{"code":"RECEIVED_CODE"}`. Use HTTP Basic authentication
-with App ID and Secret. The response contains `provider`, a stable
-provider-qualified `subject`, and complete source-specific identity JSON.
+with App ID and Secret. Every successful response contains `provider`, a stable
+provider-qualified `id`, standard `email`, `email_verified`, `name`, and
+`avatar_url` fields, and complete provider source objects under `origin`.
+Unavailable standard profile fields are `null`; an explicit verification value
+of `false` remains `false`. Products control account linking and email policy.
 
 Keep Secrets and result retrieval server-side. An expired or consumed code, a
 service restart, or a response lost after consumption requires a fresh login.

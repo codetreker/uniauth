@@ -47,8 +47,14 @@ Each login has separate product and provider state, browser binding, PKCE, and
 OIDC nonce where applicable. The gateway validates the provider identity and
 collects complete source JSON under the granted scopes. Microsoft supports only
 personal accounts and uses the personal tenant plus `oid`; Google uses `sub`;
-GitHub uses its authenticated numeric user ID. Qualified subjects keep provider
+GitHub uses its authenticated numeric user ID. Qualified IDs keep provider
 identities distinct. Each product controls cross-provider account linking.
+The original handover envelope exposed `provider`, `subject`, and `sources`,
+leaving products to interpret provider attributes. The
+[normalized identity decision](2026-10-13-normalized-identity.md) supersedes that
+response shape and assigns standard-field mapping to provider adapters. It
+preserves the qualified identifier values and complete obtained source data;
+this note continues to own gateway responsibilities and handover semantics.
 
 The callback carries a random result code and the product's original state.
 The product validates that state, then its backend authenticates using App ID
@@ -58,8 +64,9 @@ Ownership and expiry checks and deletion occur atomically; one claim succeeds.
 Authentication failures and wrong-App claims do not consume another App's result.
 
 Unknown JSON fields, explicit nulls, false booleans, complete email arrays, and
-binary Microsoft photo data retain their source meaning. Tokens and other
-authentication credentials are excluded. Missing required identity keys and
+binary Microsoft photo data retain their source meaning under `origin` alongside
+the standard profile. Tokens and other authentication credentials are excluded.
+Missing required identity keys and
 upstream retrieval failures are errors, with no identity-key fallback or empty
 profile substitution.
 
@@ -114,8 +121,7 @@ invalidates Console sessions while retaining App configuration.
 Provider fields and consent determine the available profile data. Product email
 or permission policy cannot be inferred from authentication success. Microsoft
 photo `404` is a documented absence; other upstream errors stop authentication.
-Changing a stable subject convention requires an explicit product identity
-migration.
+Changing a stable ID value requires an explicit product identity migration.
 
 The executable embeds the production Console build. Go, Node.js, and pnpm are
 build dependencies; only the resulting executable and durable SQLite files are

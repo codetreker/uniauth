@@ -115,42 +115,86 @@ success or failure and start a fresh flow when needed.
 
 ## Identity JSON
 
-The envelope has three fields:
+Every successful response includes these seven fields:
 
 ```json
 {
   "provider": "github",
-  "subject": "github:123456",
-  "sources": {
-    "profile": {"id": 123456, "login": "example", "email": null},
+  "id": "github:123456",
+  "email": "person@example.com",
+  "email_verified": false,
+  "name": null,
+  "avatar_url": "https://avatars.githubusercontent.com/u/123456",
+  "origin": {
+    "profile": {
+      "id": 123456,
+      "login": "example",
+      "email": null,
+      "name": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/123456"
+    },
     "emails": [{"email": "person@example.com", "primary": true, "verified": false}]
   }
 }
 ```
 
-Source JSON retains all obtained fields, including unknown attributes, explicit
-nulls, false booleans, arrays, and nested objects. Missing source fields remain
-missing. Products must tolerate provider fields being absent and must choose
-their own account-linking and email-verification policy. Whitespace and JSON
-object ordering are not contractual.
+| Field | JSON type | Meaning |
+| --- | --- | --- |
+| `provider` | String | `microsoft`, `google`, or `github`. |
+| `id` | Nonempty string | Stable provider-qualified identity key. |
+| `email` | String or `null` | Selected provider email, without rewriting its value. |
+| `email_verified` | Boolean or `null` | Upstream verification value when available; unknown is `null`, and explicit `false` remains `false`. |
+| `name` | String or `null` | Provider display name; usernames are not substituted for absent names. |
+| `avatar_url` | String or `null` | Provider image URL, or a data URL containing the fetched Microsoft photo. |
+| `origin` | Object | Complete source-specific identity data obtained under granted scopes. |
 
-| Provider | Stable `subject` | `sources` |
+Missing, null, and empty standard string attributes become `null`. Known fields
+used by the mapping must have the expected JSON type when present and non-null;
+a type mismatch fails authentication, including in a lower-priority source
+field. Unknown source fields retain their original meaning. The API has no
+`subject` or `sources` aliases. Whitespace and JSON object ordering are not
+contractual.
+
+### Provider field mapping
+
+| Provider | `email` | `email_verified` | `name` | `avatar_url` |
+| --- | --- | --- | --- | --- |
+| Microsoft | Nonempty Graph `profile.mail`, otherwise nonempty ID-token claim `email`. | `null`; the selected sources provide no verification flag. | Nonempty Graph `profile.displayName`, otherwise nonempty ID-token claim `name`. | `data:<media-type>;base64,<base64-data>` from the fetched photo; `null` on Graph photo `404`. |
+| Google | UserInfo `email`. | UserInfo `email_verified`, preserving boolean or `null` independently of whether an email is present. | UserInfo `name`. | UserInfo `picture`. |
+| GitHub | Nonempty primary email from the complete `emails` list, otherwise nonempty public `profile.email`; `null` when neither is available. | `verified` from an email-list entry whose `email` exactly matches the selected value; `null` without a selected email, matching entry, or verification value. | Profile `name`. | Profile `avatar_url`. |
+
+Google UserInfo is the canonical profile source; ID-token claims remain in
+`origin` without supplying substitute profile values. Microsoft
+`preferred_username` and `userPrincipalName` are not email fallbacks. GitHub
+never selects an arbitrary non-primary email. Authentication success and an
+upstream verification flag do not establish a product's account-linking,
+email-ownership, or permission policy; each product owns those decisions.
+
+### Stable identity and original sources
+
+| Provider | Stable `id` | `origin` |
 | --- | --- | --- |
 | Microsoft | `microsoft:9188040d-6c67-4c5b-b112-36a304b66dad:<oid>` | Complete validated `id_token_claims`, Graph `/me` as `profile`, and `photo`. |
 | Google | `google:<sub>` | Complete validated `id_token_claims` and fetched `userinfo`, whose `sub` must match the ID token. |
 | GitHub | `github:<numeric id>` | Authenticated `/user` as `profile`, and all pages of `/user/emails` as `emails`. |
 
-Microsoft `photo` is `null` when Graph returns `404`. Otherwise it is an object
-with `content_type` and standard Base64 `data_base64`, preserving returned bytes.
-Other photo errors, invalid image content, profile failures, and email-fetch
-failures fail authentication. Google and GitHub image URLs remain in their
-source objects; those images are not downloaded.
+Source JSON retains all obtained fields, including unknown attributes, explicit
+nulls, false booleans, arrays, and nested objects. Missing source fields remain
+missing; normalization never inserts or rewrites fields inside `origin`.
 
-Subjects are independent of product App Secrets. Email, display name, and login
-name are attributes, not identity keys. Microsoft requires the personal tenant
-and a validated `oid`; there is no fallback identifier. OAuth credentials,
-raw signed ID tokens, upstream authorization codes, and access or refresh tokens
-are excluded from the identity package.
+Microsoft `origin.photo` is `null` when Graph returns `404`. Otherwise it is an
+object with `content_type` and standard Base64 `data_base64`, preserving returned
+bytes. The corresponding `avatar_url` uses the parsed image media type and the
+same Base64 data. It requires no additional fetch; both representations count
+toward the result's memory limit. Other photo errors, invalid image content,
+profile failures, and email-fetch failures fail authentication. Google and
+GitHub image URLs are not downloaded.
+
+IDs are independent of product App Secrets. Email, display name, and login name
+are attributes, not identity keys. Microsoft requires the personal tenant and a
+validated `oid`; there is no fallback identifier. OAuth credentials, raw signed
+ID tokens, upstream authorization codes, and access or refresh tokens are
+excluded from the identity package.
 
 ## Console API
 

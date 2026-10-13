@@ -75,7 +75,7 @@ func (p *fakeProvider) Exchange(ctx context.Context, request providers.ExchangeR
 			return providers.Identity{}, ctx.Err()
 		}
 	}
-	return providers.Identity{Provider: "github", Subject: "github:123", Sources: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":123,"unknown":null,"enabled":false}`)}}, nil
+	return providers.Identity{Provider: "github", ID: "github:123", Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":123,"unknown":null,"enabled":false}`)}}, nil
 }
 
 func TestAdministratorProductFlow(t *testing.T) {
@@ -173,7 +173,7 @@ func TestAdministratorProductFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if identity.Subject != "github:123" || string(identity.Sources["profile"]) != `{"id":123,"unknown":null,"enabled":false}` {
+	if identity.ID != "github:123" || string(identity.Origin["profile"]) != `{"id":123,"unknown":null,"enabled":false}` {
 		t.Fatalf("identity lost: %+v", identity)
 	}
 	res = claim(created.Secret)

@@ -234,7 +234,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		productRedirect(w, r, tx, "error", "provider_failed")
 		return
 	}
-	if identity.Provider != name || identity.Subject == "" || identity.Sources == nil {
+	if identity.Provider != name || identity.ID == "" || identity.Origin == nil {
 		h.log(r, "provider_identity", "provider_failed")
 		productRedirect(w, r, tx, "error", "provider_failed")
 		return
@@ -357,7 +357,7 @@ func (h *Handler) log(r *http.Request, phase, errorCategory string, causes ...er
 	if cause := errors.Join(causes...); cause != nil {
 		operation := phase
 		var providerError *providers.Error
-		if errors.As(cause, &providerError) && slices.Contains([]string{"exchange", "token exchange", "discovery", "identity verification", "userinfo retrieval", "profile retrieval", "email retrieval", "photo retrieval", "photo encoding"}, providerError.Operation) {
+		if errors.As(cause, &providerError) && slices.Contains([]string{"exchange", "token exchange", "discovery", "identity verification", "identity normalization", "userinfo retrieval", "profile retrieval", "email retrieval", "photo retrieval", "photo encoding"}, providerError.Operation) {
 			operation = providerError.Operation
 		}
 		category := "operation_failed"

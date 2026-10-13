@@ -9,12 +9,23 @@ import (
 	"time"
 )
 
-// Identity contains verified identifiers and complete upstream identity sources.
-// OAuth credentials are never included in Sources.
+// Identity contains a stable provider identity and normalized profile fields.
+// Origin preserves upstream identity sources without OAuth credentials.
 type Identity struct {
-	Provider string                     `json:"provider"`
-	Subject  string                     `json:"subject"`
-	Sources  map[string]json.RawMessage `json:"sources"`
+	Provider      string                     `json:"provider"`
+	ID            string                     `json:"id"`
+	Email         *string                    `json:"email"`
+	EmailVerified *bool                      `json:"email_verified"`
+	Name          *string                    `json:"name"`
+	AvatarURL     *string                    `json:"avatar_url"`
+	Origin        map[string]json.RawMessage `json:"origin"`
+}
+
+func nilIfEmpty(value *string) *string {
+	if value == nil || *value == "" {
+		return nil
+	}
+	return value
 }
 
 type AuthorizationRequest struct {
