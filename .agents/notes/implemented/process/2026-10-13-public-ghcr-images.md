@@ -11,8 +11,12 @@ publication should use the repository's existing GitHub Actions identity.
 
 The release workflow publishes `ghcr.io/codetreker/uniauth` with `GITHUB_TOKEN`
 and build-job `packages: write` permission. An OCI source label associates the
-package with its repository. A Docker pull using an empty credential configuration
-verifies public access before staging and prod receive the image digest.
+package with its repository. Authenticated registry tag queries use the GitHub
+actor and `GITHUB_TOKEN` to allocate the daily sequence. A Docker pull using an
+empty credential configuration verifies public access through the same allocated
+`<yymmdd>-<seq>-<hash-8>` image reference passed to staging and prod.
+The [tag-reference decision](2026-10-13-tag-image-references.md) owns allocation
+and selection of that reference.
 The [Compose release decision](2026-10-13-compose-releases.md) owns file transfer
 and service startup; this decision replaces its original private-registry login
 prerequisite.

@@ -15,13 +15,23 @@ restricting image publication and dependent deployments to `main`. Operators
 choose when source changes are ready for publication and deployment; merging a
 source change does not itself start a release.
 
-The workflow builds one image with a tag containing `sha-` followed by the
-first 16 characters of the source commit hash. The shorter tag identifies the
-source revision for operators; staging and prod receive the same image digest.
+The workflow builds one image with a tag in `<yymmdd>-<seq>-<hash-8>` format.
+The tag combines the allocation step's UTC date, the next sequence selected from
+that date's published tags, and the first eight source commit characters.
+Anonymous pull verification, staging, and prod receive the same tag reference.
+The existing workflow concurrency group serializes allocation, publication, and
+deployment across release runs. The
+[tag-reference decision](2026-10-13-tag-image-references.md) supersedes the
+original selection of the build digest and owns image-reference selection.
 Deployment copies `deploy/docker-compose.yml` as `docker-compose.yml` to the
-environment's `DEPLOY_PATH` and runs `docker compose up -d` there. GitHub owns
-image publication and file transfer. The VM owns `.env`, persistent volumes,
-and Caddy configuration. The [public GHCR decision](2026-10-13-public-ghcr-images.md)
+environment's `DEPLOY_PATH` and runs `docker compose up -d` there. The template
+declares `container_name: uniauth`; prod retains that name, and staging renders
+`container_name: uniauth-staging`. The Compose projects are `uniauth-prod` and
+`uniauth-staging`, with respective SQLite volumes `uniauth-prod_data` and
+`uniauth-staging_data`. Distinct container names let operators address both
+services directly on the same VM. GitHub owns image publication and file
+transfer. The VM owns `.env`, persistent volumes, and Caddy configuration.
+The [public GHCR decision](2026-10-13-public-ghcr-images.md)
 replaces the original VM registry-login prerequisite and owns image access.
 The [deployment reference](../../../../docs/reference/deployment.md) owns the
 manual startup command and deployment prerequisites.
@@ -32,7 +42,9 @@ manual startup command and deployment prerequisites.
 publication and deployment. An explicit operator action controls release timing.
 
 **Rebuilding for prod** creates another artifact after staging used the earlier
-build. Digest promotion identifies one artifact for both environments.
+build. The original decision chose digest promotion to identify one artifact
+for both environments. The current tag-reference decision retains one build and
+passes its tag reference to both deployments.
 
 **A custom remote deployment wrapper** adds credential transport, locks, process
 supervision, and cleanup ownership to a file-transfer operation. VM-managed

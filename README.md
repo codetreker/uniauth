@@ -46,13 +46,16 @@ variables and provider registration callbacks.
 
 Start the Release workflow manually on `main` from GitHub Actions or with
 `gh workflow run release.yml --ref main`. It publishes to
-`ghcr.io/codetreker/uniauth` with tags formed from `sha-` and the first 16
-characters of the source commit hash, then verifies anonymous pull before
-copying `deploy/docker-compose.yml` to staging and prod. It runs `docker compose up -d`
-in each deployment directory using the same image digest. The VM owns `.env`
-and Caddy configuration; public images need no registry login. See the
-[deployment reference](docs/reference/deployment.md) for GitHub settings, the
-one-time Public package setting, and VM prerequisites.
+`ghcr.io/codetreker/uniauth` with tags in `<yymmdd>-<seq>-<hash-8>` format, such
+as `261013-3-a1b2c3d4`. The allocation step uses the current UTC date, the next
+sequence from that date's published registry tags, and the first eight source
+commit characters. Anonymous pull verification and both staging and prod use
+that same tag reference. The workflow copies `deploy/docker-compose.yml` to each
+deployment directory and runs `docker compose up -d` there. The prod container
+is named `uniauth`, and the staging container is named `uniauth-staging`.
+The VM owns `.env` and Caddy configuration; public images need no registry login.
+See the [deployment reference](docs/reference/deployment.md) for tag allocation, GitHub
+settings, the one-time Public package setting, and VM prerequisites.
 
 ## Connect a product
 
@@ -95,7 +98,8 @@ release; this delivery does not publish a Go tag or JavaScript package.
 | `make build` | Build Console assets, both SDKs, and the Go executable in `.tmp/bin/`. |
 | `make sdks` | Build the standalone Go module and emitted JavaScript/types. |
 | `make check` | Check documentation, formatting, Go vet for both modules, and Console/SDK types and formatting. |
-| `make test` | Enforce both Go coverage/race gates, run Console/JavaScript tests, and validate package consumers plus both SDKs against the gateway. |
+| `make test` | Enforce Go coverage/race gates, test release tag allocation and Console/JavaScript behavior, and validate package consumers plus both SDKs against the gateway. |
+| `make test-release` | Test UTC daily image tag allocation and registry failure handling with controlled fixtures. |
 | `make coverage` | Run the authoritative go-cov policy for the service and standalone Go SDK. |
 | `make browser` | Build and run Playwright Console and mockup scenarios. |
 | `make mockup` | Open the interactive Console preview using production components and styles. |
