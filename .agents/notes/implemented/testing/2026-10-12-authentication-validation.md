@@ -96,8 +96,10 @@ Playwright uses one worker and no automatic retries. It starts a fresh local Go
 service with isolated SQLite data and the production Console, and a separate
 mockup using production components and styles. Scenarios cover administrator
 login, App management, named one-time Secret display, exact multiline
-descriptions, active and revoked detail editing, rotation, confirmed named reset,
-named revocation, and responsive production-component mockup interaction.
+descriptions, Active/Disabled tab selection and empty states, active and revoked
+detail editing, rotation, confirmed named reset, named revocation, and responsive
+production-component mockup interaction. Tab assertions cover keyboard selection,
+per-App defaults, and movement between views after reset or revocation.
 Existing browsers or repository-local temporary browser installations prevent
 task tooling from leaving a permanent installation.
 

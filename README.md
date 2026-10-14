@@ -63,9 +63,10 @@ settings, the one-time Public package setting, and VM prerequisites.
 
 Create an App in the Console, name its initial Secret, and optionally describe
 its purpose or rotation notes. Save the one-time Secret value in the product
-backend. Later credentials also have names and descriptions; the Console lists
-these details for active and revoked Secrets and lets you edit them without
-changing credential validity. Register the exact callback URL and select allowed
+backend. Later credentials also have names and descriptions; the Console groups
+them into `Active` and `Disabled` tabs, with revoked Secrets in `Disabled`. Both
+views let you edit their details without changing credential validity. Register
+the exact callback URL and select allowed
 providers. Start a browser login at
 `/auth/authorize` with `app_id`, `provider`, `redirect_uri`, and a random `state`
 bound to that browser's pending product login.

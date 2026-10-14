@@ -86,8 +86,11 @@ are shown only when issued. SQLite retains SHA-256 verification digests,
 compared in constant time, with names, descriptions, and creation and revocation
 metadata. Every credential has an operator-supplied name; an optional description
 records its purpose or rotation notes. Names may repeat because the generated
-ID identifies the credential. Details remain editable after revocation, without
-changing credential validity or timestamps. Planned rotation allows old and new
+ID identifies the credential. The Console separates unrevoked records in an
+`Active` tab from revoked history in a `Disabled` tab and opens each App on
+`Active`. Both views retain detail editing, while reset and revocation apply to
+active records. Details remain editable after revocation without changing
+credential validity or timestamps. Planned rotation allows old and new
 credentials to coexist until the product switches and revokes the old one.
 Reset atomically revokes one active Secret and issues a replacement with a new
 ID and key, copying the selected credential's name and description. Subsequent

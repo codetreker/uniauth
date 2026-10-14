@@ -935,6 +935,35 @@ tbody tr:last-child td {
 .secrets-panel {
   margin-bottom: 27px;
 }
+.secret-tabs {
+  display: flex;
+  gap: 24px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+}
+.secret-tabs [role="tab"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  background: none;
+  font-weight: 600;
+}
+.secret-tabs [role="tab"][aria-selected="true"] {
+  color: var(--green);
+  border-bottom-color: var(--green);
+}
+.secret-tabs [role="tab"]:hover:not(:disabled) {
+  color: var(--green-dark);
+}
+.secrets-panel [role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
 .secrets-panel th,
 .secrets-panel td {
   padding: 15px 24px;
@@ -1759,6 +1788,9 @@ tbody tr:last-child td {
   .provider-pills > span {
     font-size: 10px;
     padding: 6px;
+  }
+  .secret-tabs {
+    padding: 0 17px;
   }
   .secrets-panel th,
   .secrets-panel td {

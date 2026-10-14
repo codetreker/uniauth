@@ -52,9 +52,14 @@ and this change adds no foreign key. The
 [configuration reference](../../../../docs/reference/configuration.md) owns
 operational upgrade and backup behavior.
 
-The Console collects initial metadata with App creation, has separate creation
-and detail-editing forms for later credentials, and lists names, descriptions,
-IDs, and lifecycle state. Named revocation confirms the affected credential.
+The Console collects initial metadata with App creation and has separate creation
+and detail-editing forms for later credentials. Its `Active` tab lists unrevoked
+records; `Disabled` lists revoked history with its revocation timestamps. Both
+tabs show names, descriptions, IDs, and lifecycle state and permit detail editing.
+Each App opens on `Active`, and a newly issued credential selects that view.
+Both counts derive from the same metadata response, so view switching needs no
+separate request. `Disabled` is a presentation label for existing revoked rows.
+Named revocation confirms the affected credential.
 The one-time display retains plaintext and per-App ownership until the operator
 marks it saved and closes the dialog. Secret editors and issuance, update,
 reset, and revocation share the existing per-App operation owner with
