@@ -13,21 +13,23 @@ end-user authentication.
 
 ## Decision
 
-UniAuth is a Go gateway with an embedded React and TypeScript administrator
-Console. SQLite persists App definitions and verification digests of product
-Secrets and their names, descriptions, and lifecycle metadata. The
+UniAuth is a Go gateway with an embedded React and TypeScript Console. SQLite
+persists App definitions and verification digests of product Secrets with names,
+descriptions, and lifecycle metadata. The
 [Secret metadata decision](../feature/2026-10-13-secret-metadata.md) owns their
-validation, creation and detail-update APIs, and existing-database migration.
-Upstream credentials and the Console administrator password come from
-deployment configuration. No end-user table or central SSO session is created.
-The Console has its own eight-hour in-memory session and grants no authority to
-product users.
+validation and credential API. Upstream credentials come from deployment
+configuration. External product users and sessions remain product-owned; the
+gateway has no external end-user store or central SSO session.
 
-The original gateway required a deployment-configured Argon2id password hash.
-The [direct administrator password decision](../simplification/2026-10-13-direct-administrator-password.md)
-supersedes that credential format and its CLI generation step. The Console now
-compares the configured single-line password directly; administrator authority
-and session ownership remain governed by this note.
+The original Console had a separate administrator password and no durable
+accounts. The [direct administrator password decision](../simplification/2026-10-13-direct-administrator-password.md)
+removed its Argon2id format and generation step. The
+[public OAuth platform decision](2026-10-13-public-oauth-platform.md) now partially
+supersedes this note for Console authentication, persistence, and authority:
+Console uses a protected gateway App, persists its own accounts and explicit
+identity links, and scopes App management to each owner. Its administrator sees
+minimal user summaries and App counts without owner bypass. This note retains
+external product ownership and one-time identity handover.
 
 Console mutations require exact Origin and CSRF validation. The expected origin
 is derived once from deployment configuration using IDNA ASCII lowercase domain
@@ -51,7 +53,7 @@ the affected App is reconciled. If the reload also fails, the App shows
 Refresh. Existing drafts and delete
 confirmations retain ownership and allow Retry or Cancel; a successful owned
 retry may leave the unavailable marker until Refresh. A session-invalidating
-`401` returns to administrator login and discards idle drafts, but owners of
+`401` returns to OAuth login and discards idle drafts, but owners of
 already in-flight operations survive until their handlers settle. Successful
 issuance retains its one-time display through Saved and Done; failed operations
 release the retained owner. The [Secret metadata decision](../feature/2026-10-13-secret-metadata.md)
@@ -113,7 +115,8 @@ implemented requests, identity sources, limits, and deployment behavior.
 **Unified users and central SSO sessions.** A shared user store and session could
 coordinate identity and login across products. The agreed ownership leaves user
 records, account linking, permissions, and sessions with each product, so the
-gateway has no authority or persistence for those responsibilities.
+gateway has no authority or persistence for those external product responsibilities.
+The later platform account store serves Console ownership only.
 
 **Encrypted identity in callback parameters.** Encrypting the complete identity
 package with the App Secret and Base64 encoding it was considered, followed by
@@ -146,13 +149,14 @@ active credential in the same transaction that issues its replacement. Names and
 descriptions remain available and editable after revocation without changing
 credential validity. Console mutation ownership is local to one UI instance;
 it does not establish server-side optimistic concurrency or coordinate separate
-administrator browsers. Those API clients still submit full
+Console browsers. Those API clients still submit full
 App replacements.
 
 Transient identity state has bounded count, accounted bytes, and lifetime.
 No long-lived recovery, consumed-code history, token refresh, or central logout
 is provided. All requests in a login must reach the same process. Restart also
-invalidates Console sessions while retaining App configuration.
+invalidates Console sessions while retaining platform accounts, links, and owned
+App configuration.
 
 Provider fields and consent determine the available profile data. Product email
 or permission policy cannot be inferred from authentication success. Microsoft

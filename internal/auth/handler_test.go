@@ -62,6 +62,7 @@ type fixture struct {
 	h              *Handler
 	mux            *http.ServeMux
 	store          *apps.Store
+	ownerID        string
 	app, other     apps.CreatedApp
 	google, github *testProvider
 	clock          atomic.Int64
@@ -76,13 +77,21 @@ func newFixture(t *testing.T, modify func(*Config)) *fixture {
 		t.Fatal(err)
 	}
 	f.store = store
+	if err := store.InitializePlatform(context.Background(), "admin@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.ResolveAccount(context.Background(), providers.Identity{Provider: "google", ID: "auth-fixture-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ownerID = owner.ID
 	input := apps.AppInput{Name: "Product", Enabled: true, RedirectURIs: []string{"https://product.example/callback?existing=preserved"}, Providers: []string{"google", "github"}}
-	f.app, err = store.Create(context.Background(), apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
+	f.app, err = store.Create(context.Background(), f.ownerID, apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	input.Name = "Other"
-	f.other, err = store.Create(context.Background(), apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
+	f.other, err = store.Create(context.Background(), f.ownerID, apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +441,7 @@ func TestDisabledOrChangedAppCannotCompleteOrClaim(t *testing.T) {
 	f := newFixture(t, nil)
 	flow := f.start("product-state")
 	input := apps.AppInput{Name: f.app.App.Name, Enabled: false, RedirectURIs: f.app.App.RedirectURIs, Providers: f.app.App.Providers}
-	if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
+	if _, err := f.store.Update(context.Background(), f.ownerID, f.app.App.ID, input); err != nil {
 		t.Fatal(err)
 	}
 	assertCode(t, f.call("GET", "/auth/callback/google?"+url.Values{"state": {flow.state}, "code": {"provider-code"}}.Encode(), nil, []*http.Cookie{flow.cookie}, nil), 410, "transaction_unavailable")
@@ -440,17 +449,17 @@ func TestDisabledOrChangedAppCannotCompleteOrClaim(t *testing.T) {
 		t.Fatal("disabled app reached provider exchange")
 	}
 	input.Enabled = true
-	if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
+	if _, err := f.store.Update(context.Background(), f.ownerID, f.app.App.ID, input); err != nil {
 		t.Fatal(err)
 	}
 	code := f.complete(f.start("new-login"))
 	input.Enabled = false
-	if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
+	if _, err := f.store.Update(context.Background(), f.ownerID, f.app.App.ID, input); err != nil {
 		t.Fatal(err)
 	}
 	assertCode(t, f.retrieve(code, &f.app), 401, "invalid_app")
 	input.Enabled = true
-	if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
+	if _, err := f.store.Update(context.Background(), f.ownerID, f.app.App.ID, input); err != nil {
 		t.Fatal(err)
 	}
 	if f.retrieve(code, &f.app).Code != 200 {
@@ -458,7 +467,7 @@ func TestDisabledOrChangedAppCannotCompleteOrClaim(t *testing.T) {
 	}
 	flow = f.start("callback-removed")
 	input.RedirectURIs = []string{"https://product.example/new"}
-	if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
+	if _, err := f.store.Update(context.Background(), f.ownerID, f.app.App.ID, input); err != nil {
 		t.Fatal(err)
 	}
 	assertCode(t, f.call("GET", "/auth/callback/google?"+url.Values{"state": {flow.state}, "code": {"provider-code"}}.Encode(), nil, []*http.Cookie{flow.cookie}, nil), 410, "transaction_unavailable")
@@ -564,7 +573,7 @@ func TestAppChangedDuringProviderWork(t *testing.T) {
 	f := newFixture(t, nil)
 	f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
 		input := apps.AppInput{Name: f.app.App.Name, Enabled: true, RedirectURIs: []string{"https://product.example/new"}, Providers: []string{"google"}}
-		if _, err := f.store.Update(context.Background(), f.app.App.ID, input); err != nil {
+		if _, err := f.store.Update(context.Background(), f.ownerID, f.app.App.ID, input); err != nil {
 			t.Error(err)
 		}
 		return providers.Identity{Provider: "google", ID: "google:123", Origin: map[string]json.RawMessage{"claims": json.RawMessage(`{"sub":"123"}`)}}, nil
@@ -685,14 +694,14 @@ func TestMissingAndUnavailableAppStorage(t *testing.T) {
 			}
 			flow := f.start("product-state")
 			if mode == "deleted-before-callback" {
-				if err := f.store.Delete(context.Background(), f.app.App.ID); err != nil {
+				if err := f.store.Delete(context.Background(), f.ownerID, f.app.App.ID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
 				f.google.exchange = func(context.Context, providers.ExchangeRequest) (providers.Identity, error) {
 					var err error
 					if mode == "deleted-during-exchange" {
-						err = f.store.Delete(context.Background(), f.app.App.ID)
+						err = f.store.Delete(context.Background(), f.ownerID, f.app.App.ID)
 					} else {
 						err = f.store.Close()
 					}

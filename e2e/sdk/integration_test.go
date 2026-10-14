@@ -94,10 +94,17 @@ func newGateway(t *testing.T) *gateway {
 			t.Error(err)
 		}
 	})
+	if err := store.InitializePlatform(t.Context(), "admin@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.ResolveAccount(t.Context(), providers.Identity{Provider: "google", ID: "sdk-fixture-owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	g := &gateway{}
 	g.clock.Store(time.Now().UnixNano())
 	for i, destination := range []*apps.CreatedApp{&g.app, &g.other} {
-		*destination, err = store.Create(t.Context(), apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: apps.SecretInput{Name: "SDK fixture"}})
+		*destination, err = store.Create(t.Context(), owner.ID, apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: apps.SecretInput{Name: "SDK fixture"}})
 		if err != nil {
 			t.Fatal(err)
 		}

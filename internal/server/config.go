@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/url"
 	"strings"
+	"unicode"
 )
 
 type Credentials struct {
@@ -17,7 +19,7 @@ type Config struct {
 	PublicURL         string
 	ListenAddr        string
 	DatabasePath      string
-	AdminPassword     string
+	InitialAdminEmail string
 	AllowLoopbackHTTP bool
 	Microsoft         Credentials
 	Google            Credentials
@@ -26,10 +28,10 @@ type Config struct {
 
 func LoadConfig(getenv func(string) string) (Config, error) {
 	cfg := Config{
-		PublicURL:     getenv("UNIAUTH_PUBLIC_URL"),
-		ListenAddr:    getenv("UNIAUTH_LISTEN_ADDR"),
-		DatabasePath:  getenv("UNIAUTH_DATABASE_PATH"),
-		AdminPassword: getenv("UNIAUTH_ADMIN_PASSWORD"),
+		PublicURL:         getenv("UNIAUTH_PUBLIC_URL"),
+		ListenAddr:        getenv("UNIAUTH_LISTEN_ADDR"),
+		DatabasePath:      getenv("UNIAUTH_DATABASE_PATH"),
+		InitialAdminEmail: getenv("UNIAUTH_INITIAL_ADMIN_EMAIL"),
 	}
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = ":8080"
@@ -49,6 +51,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	cfg.GitHub = credentialPair(getenv, "GITHUB")
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
+	}
+	if cfg.Microsoft.ClientID == "" && cfg.Google.ClientID == "" && cfg.GitHub.ClientID == "" {
+		return Config{}, errors.New("at least one OAuth provider must be configured")
 	}
 	return cfg, nil
 }
@@ -73,8 +78,9 @@ func (cfg Config) validate() error {
 	if cfg.DatabasePath == "" {
 		return errors.New("UNIAUTH_DATABASE_PATH is required")
 	}
-	if len(cfg.AdminPassword) == 0 || len(cfg.AdminPassword) > 1024 || strings.ContainsAny(cfg.AdminPassword, "\r\n") {
-		return errors.New("UNIAUTH_ADMIN_PASSWORD must contain between one and 1024 bytes without CR or LF")
+	address, err := mail.ParseAddress(cfg.InitialAdminEmail)
+	if err != nil || len(cfg.InitialAdminEmail) > 254 || address.Address != cfg.InitialAdminEmail || strings.IndexFunc(cfg.InitialAdminEmail, unicode.IsSpace) >= 0 {
+		return errors.New("UNIAUTH_INITIAL_ADMIN_EMAIL must be a plain email address of at most 254 bytes without whitespace")
 	}
 	for _, entry := range []struct {
 		name        string

@@ -32,11 +32,8 @@ func TestBrowserOriginFromConfiguredURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.publicURL, func(t *testing.T) {
 			e := newTestConsole(t, func(cfg *Config) { cfg.PublicURL = tt.publicURL; cfg.AllowLoopbackHTTP = tt.loopback })
-			response := e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, map[string]string{"Origin": tt.origin})
-			requireStatus(t, response, http.StatusOK)
-			e.cookie = response.Result().Cookies()[0]
-			e.csrf = decodeResponse[map[string]string](t, response)["csrf_token"]
-			response = e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": tt.origin})
+			e.login(t)
+			response := e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": tt.origin})
 			requireStatus(t, response, http.StatusCreated)
 			created := decodeResponse[apps.CreatedApp](t, response)
 			path := "/console/api/apps/" + created.App.ID
@@ -48,13 +45,13 @@ func TestBrowserOriginFromConfiguredURL(t *testing.T) {
 				wrongOrigins = append(wrongOrigins, tt.publicURL)
 			}
 			for _, origin := range wrongOrigins {
-				requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, map[string]string{"Origin": origin}), http.StatusForbidden)
+				requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"github"}`, map[string]string{"Origin": origin}), http.StatusForbidden)
 				requireStatus(t, e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": origin}), http.StatusForbidden)
 			}
 			requireStatus(t, e.request("POST", "/console/api/apps", createAppBody, map[string]string{"Origin": tt.origin, "X-CSRF-Token": "invalid"}), http.StatusForbidden)
 			for _, port := range []string{":8443", ":4430"} {
 				if strings.HasSuffix(tt.origin, port) {
-					requireStatus(t, e.request("POST", "/console/api/login", `{"password":"correct horse battery staple"}`, map[string]string{"Origin": strings.TrimSuffix(tt.origin, port)}), http.StatusForbidden)
+					requireStatus(t, e.request("POST", "/console/api/login", `{"provider":"github"}`, map[string]string{"Origin": strings.TrimSuffix(tt.origin, port)}), http.StatusForbidden)
 				}
 			}
 		})
@@ -67,7 +64,7 @@ func TestInvalidConfiguredBrowserOriginFailsConstruction(t *testing.T) {
 		t.Run(publicURL, func(t *testing.T) {
 			cfg := e.handler.config
 			cfg.PublicURL = publicURL
-			if _, err := New(e.store, nil, cfg); err == nil {
+			if _, err := New(e.store, []string{"github"}, cfg); err == nil {
 				t.Fatalf("browser-invalid public URL was accepted: %s", publicURL)
 			}
 		})

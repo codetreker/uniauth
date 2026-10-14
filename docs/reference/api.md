@@ -223,33 +223,130 @@ default HTTPS `443` or HTTP `80` ports are omitted. For example,
 Only the configured origin is normalized. Incoming headers remain subject to
 exact string comparison: `null`, trailing slashes, different ports or hosts,
 multiple values, and noncanonical spellings are rejected. Authenticated mutations
-also require `X-CSRF-Token` from login or the session endpoint. JSON bodies require
+also require `X-CSRF-Token` from the session endpoint. JSON bodies require
 `application/json`, contain only supported fields, and are limited to 64 KiB.
 
-### Administrator session
+### OAuth login and Console session
+
+The Console is itself a protected App, managed by service startup. Anyone can
+sign in through any configured provider. Provider availability is public:
 
 | Method and path | Body | Success |
 | --- | --- | --- |
-| `POST /console/api/login` | `{"password":"..."}` | `200 {"csrf_token":"..."}` and session cookie. |
-| `GET /console/api/session` | None | `200 {"csrf_token":"..."}`. |
+| `GET /console/api/providers` | None | `200 {"providers":[{"id":"microsoft","available":true},...]}` for all three providers. |
+| `POST /console/api/login` | `{"provider":"google"}` | `200 {"authorization_url":"..."}` and browser-binding cookie. |
+| `GET /console/auth/callback` | Gateway callback `code` or `error`, plus `state`. | `303` to `/console/` after login or linking. |
+| `GET /console/api/session` | None | `200 {"csrf_token":"...","user":{...}}`. |
 | `POST /console/api/logout` | None | `204`, session removed and cookie cleared. |
 
-The administrator session has a fixed eight-hour lifetime in process memory.
-The HttpOnly, SameSite=Strict cookie is Secure and named
-`__Host-uniauth_admin` under HTTPS. Explicit local HTTP uses `uniauth_admin`.
-Login replaces a prior session presented by the same browser; logout, expiry,
-or restart invalidates it. This session grants Console authority only.
+Login has no password field. The selected provider must be configured; otherwise
+it returns `400 invalid_provider`. Login requires the exact Origin but no prior
+session or CSRF token. Follow the returned authorization URL in the browser.
+The Console App uses the ordinary gateway flow and result retention rules.
+Its callback retrieves the result through the same authenticated handover operation
+in process; its App Secret is never sent to the browser.
 
-The configured `UNIAUTH_ADMIN_PASSWORD` is a single line containing 1–1024 bytes,
-with no CR or LF. Login input must match it exactly, including spaces, dollar
-signs, and Unicode. Empty or oversized passwords return
-`400 invalid_input`; incorrect passwords return `401 unauthorized`. The login
-rate limit returns `429 rate_limited` with `Retry-After`. Session capacity
-exhaustion returns `503 session_capacity`. Missing sessions return
-`401 unauthorized`; invalid
-Origin or CSRF returns `403 invalid_origin` or `403 invalid_csrf`.
+Console pending login state has a ten-minute lifetime and a separate random
+HttpOnly, SameSite=Lax browser-binding cookie. State and binding are consumed
+atomically. Missing or wrong binding, expired state, replay, and malformed or
+ambiguous callback fields fail without creating a session. The callback accepts
+exactly one nonempty `state` and either `code` or `error`, with no extra fields.
+After processing it redirects to a clean Console URL; on failure that URL contains
+only a safe `login_error` category: `invalid_callback`, `login_unavailable`,
+`provider_failed`, `login_failed`, `identity_conflict`, or `session_capacity`.
+Identity profiles and result codes are never forwarded to the Console page.
+
+The Console session has a fixed eight-hour lifetime in process memory. Its
+HttpOnly, SameSite=Strict cookie is Secure and named `__Host-uniauth_console`
+under HTTPS; explicit local HTTP uses `uniauth_console`. A successful login
+rotates its session and CSRF token. Logout, expiry, or restart invalidates it.
+These sessions authorize Console access only and establish no product session
+or central SSO session. Missing sessions return `401 unauthorized`; invalid
+Origin or CSRF returns `403 invalid_origin` or `403 invalid_csrf`. Pending login
+capacity exhaustion returns `503 login_capacity`; session capacity exhaustion
+is reported through the callback redirect.
+
+The session's `user` contains `id`, nullable `email`, `name`, and `avatar_url`,
+`is_admin`, and `created_at`. Profile strings are nullable and timestamps use
+RFC 3339. A successful sign-in refreshes account email, name, and avatar from that
+identity, preserving nulls. Linking refreshes the linked identity's metadata but
+does not change the account display profile. The account ID is a generated platform ID; it is distinct from its
+linked provider IDs.
+
+### Platform accounts and linking
+
+A previously unseen stable provider-qualified identity ID creates a Console
+account. A known linked ID signs in to its existing account. Matching emails never
+merge accounts or move identities.
+
+| Method and path | Body | Success |
+| --- | --- | --- |
+| `GET /console/api/identities` | None | `200 {"identities":[...]}` for the authenticated account only. |
+| `POST /console/api/identities/link` | `{"provider":"github"}` | `200 {"authorization_url":"..."}` and a separate flow cookie. |
+
+Each linked identity contains `provider`, stable `id`, nullable `email`,
+`email_verified`, and `name`, plus `linked_at`. Verification is boolean or `null`;
+unknown is not treated as verified. No raw provider `origin` or token is stored
+or returned by these account endpoints.
+
+Linking requires a live authenticated session, exact Origin, and CSRF. Its
+pending flow records that initiating account and session. The callback must
+retain the correct browser binding and the initiating session must remain live
+through final attachment; logout or expiry prevents the link. A Strict session
+cookie may be absent after a cross-site provider redirect, so the separate Lax
+flow cookie supplies browser binding. If a session cookie is present, it must
+identify the initiating session. An identity already attached to the same account
+can be linked idempotently; one belonging to another account fails with the
+callback's `identity_conflict` category. Signing in to that other identity first
+creates a separate account, so link additional identities from the existing
+account's controls.
+
+### Administrator visibility
+
+Initial administrator authority is claimed once by the first Google or GitHub
+normalized identity whose email matches `UNIAUTH_INITIAL_ADMIN_EMAIL`
+case-insensitively and has
+`email_verified=true`. Microsoft email verification is `null` and cannot claim
+bootstrap authority. This trusts the provider's verification assertion; it does
+not perform a fresh mailbox challenge. The claim attaches authority to the actual
+platform account. Subsequent identity-email or deployment-email changes do not
+transfer the role. See [configuration](configuration.md) for bootstrap operations.
+
+`GET /console/api/users?cursor=OPAQUE_CURSOR&limit=50` requires administrator
+authority, checked against durable account state. Its response is:
+
+```json
+{
+  "users": [{
+    "id": "PLATFORM_USER_ID",
+    "email": "person@example.com",
+    "name": "Example person",
+    "created_at": "2026-10-13T00:00:00Z",
+    "app_count": 2
+  }],
+  "next_cursor": null
+}
+```
+
+The default page size is 50; `limit` must be a decimal integer from 1 through 100.
+`cursor` is an opaque continuation value. Queries permit each supported parameter
+once; extra or duplicate parameters, malformed cursors, and invalid limits return
+`400 invalid_input`. `next_cursor=null` means no following page. Ordinary users
+receive `403 forbidden`.
+
+User summaries contain only `id`, nullable `email` and `name`, `created_at`, and
+`app_count`. The system Console App is excluded from counts. Administrators have
+no API to inspect other users' identities, App details, callbacks, providers,
+Secrets, or management actions. Administrator authority grants no owner bypass.
 
 ### Applications and Secrets
+
+All App and Secret operations are scoped to the authenticated platform account.
+The service derives ownership from the session; requests supply no owner ID.
+Listing returns only that account's Apps. Reading, changing, or addressing
+another account's App or the protected system Console App returns `404 not_found`,
+including for an administrator. Ownership and system-App checks occur within the
+same query or transaction as each operation.
 
 App creation requires application configuration and metadata for its initial
 Secret:
@@ -306,7 +403,6 @@ Secret ID identifies a particular credential.
 | `PUT /console/api/apps/{id}/secrets/{secretID}` | `200` updated Secret metadata, whether active or revoked. |
 | `POST /console/api/apps/{id}/secrets/{secretID}/reset` | `201 {"id":"...","name":"Production backend","description":"...","secret":"...","created_at":"..."}` for a replacement credential. |
 | `DELETE /console/api/apps/{id}/secrets/{secretID}` | `204`, credential revoked; repeating an existing revocation is idempotent. |
-| `GET /console/api/providers` | `200 {"providers":[{"id":"microsoft","available":true},...]}` for all three providers. |
 
 App objects contain `id`, configuration fields, `created_at`, and `updated_at`.
 Secret metadata always contains `id`, `name`, `description`, and `created_at`,
@@ -379,20 +475,23 @@ already-authorized issuance failed. These controls protect one Console instance;
 API callers and separate browsers still send full App replacements without
 server-side version checks.
 
-Management mutations that pass Origin, administrator session, and CSRF checks
+Management mutations that pass Origin, Console session, and CSRF checks
 receive `X-Operation-ID`. Their completion emits a `console management operation`
-log with `operation_id`, `request_id`, `action`, `affected_app_id`,
+log with `operation_id`, `request_id`, `action`, `actor_account_id`,
+`affected_app_id`,
 `phase=completed`, `outcome`, `error_category`, and HTTP `status`. Actions are
 `app.create`, `app.update`, `app.delete`, `secret.create`, `secret.update`,
 `secret.reset`, and `secret.revoke`.
 Creation events use the generated App ID; existing-App events use a syntactically
 validated App ID. Invalid input or storage failures are recorded as failed
 operations. Logs exclude credentials, App display data, and Secret names and
-descriptions. Authorization failures remain observable in HTTP request logs and
+descriptions. `actor_account_id` is the opaque platform account ID, not an
+upstream identity ID or email. Authorization failures remain observable in HTTP
+request logs and
 do not invoke the management handler.
 
 ## Health
 
-`GET /healthz` returns `200 {"status":"ok"}`. `GET /readyz` also verifies an
-application-store read and returns `503` if that fails. These endpoints do not
+`GET /healthz` returns `200 {"status":"ok"}`. `GET /readyz` also verifies a
+database ping and returns `503` if that fails. These endpoints do not
 perform an interactive upstream login or prove provider credentials valid.

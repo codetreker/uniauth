@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { Console } from "./Console";
+import { fixtureSession, completeAuthorization } from "./test-fixtures";
 import { APIError } from "./api";
 import type {
   Application,
@@ -28,8 +29,15 @@ const example: Application = {
   updated_at: "2026-10-12T09:00:00Z",
 };
 const apiFixture = (overrides: Partial<ConsoleAPI> = {}): ConsoleAPI => ({
-  session: vi.fn().mockResolvedValue({ csrf_token: "token" }),
-  login: vi.fn().mockResolvedValue({ csrf_token: "token" }),
+  session: vi.fn().mockResolvedValue(fixtureSession),
+  login: vi.fn().mockResolvedValue({
+    authorization_url: "https://oauth.example.test/authorize",
+  }),
+  listIdentities: vi.fn().mockResolvedValue([]),
+  linkIdentity: vi.fn().mockResolvedValue({
+    authorization_url: "https://oauth.example.test/link",
+  }),
+  listUsers: vi.fn().mockResolvedValue({ users: [], next_cursor: null }),
   logout: vi.fn().mockResolvedValue(undefined),
   listApps: vi.fn().mockResolvedValue([example]),
   listProviders: vi.fn().mockResolvedValue([
@@ -122,7 +130,7 @@ const pendingIssuanceAfterUnrelatedRefresh = async (initialSecret: boolean) => {
     }),
     createSecret: vi.fn().mockReturnValue(issuance.promise),
   });
-  render(<Console api={api} />);
+  render(<Console api={api} onAuthorization={completeAuthorization} />);
   await openApp();
   fireEvent.click(screen.getByRole("button", { name: "Disable app" }));
   await screen.findByText("State unavailable");
@@ -177,10 +185,9 @@ const pendingIssuanceAfterUnrelatedRefresh = async (initialSecret: boolean) => {
   };
 };
 const signInAgain = async () => {
-  fireEvent.change(await screen.findByLabelText("Administrator password"), {
-    target: { value: "password" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Continue with Google" }),
+  );
   await screen.findByRole("button", { name: "Sign out" });
   await waitFor(() =>
     expect(
@@ -190,14 +197,14 @@ const signInAgain = async () => {
   );
 };
 
-describe("Administrator Console", () => {
-  it("keeps a newly created secret visible until the administrator explicitly saves it", async () => {
+describe("OAuth Console", () => {
+  it("keeps a newly created secret visible until the member explicitly saves it", async () => {
     const api = apiFixture({
       listSecrets: vi
         .fn()
         .mockRejectedValue(new Error("Credential list unavailable.")),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "New application" }),
     );
@@ -254,7 +261,7 @@ describe("Administrator Console", () => {
           new APIError(403, "invalid_csrf", "The CSRF token is invalid."),
         ),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(screen.getByRole("button", { name: "Disable app" }));
     await screen.findByText("The CSRF token is invalid.");
@@ -264,7 +271,7 @@ describe("Administrator Console", () => {
 
   it("reconciles an edited application and opens the next editor with saved configuration", async () => {
     const api = apiFixture();
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(screen.getByRole("button", { name: "Edit application" }));
     let editor = screen.getByRole("dialog", { name: "Edit application" });
@@ -293,29 +300,25 @@ describe("Administrator Console", () => {
     ).toBe("https://renamed.test/callback\nhttps://staging.test/callback");
   });
 
-  it("requires a new administrator login when a mutation observes session expiry", async () => {
+  it("requires a new OAuth login when a mutation observes session expiry", async () => {
     const api = apiFixture({
       updateApp: vi
         .fn()
         .mockRejectedValue(
-          new APIError(
-            401,
-            "unauthorized",
-            "Administrator authentication is required.",
-          ),
+          new APIError(401, "unauthorized", "Authentication is required."),
         ),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(screen.getByRole("button", { name: "Disable app" }));
-    await screen.findByRole("button", { name: "Sign in" });
+    await screen.findByRole("button", { name: "Continue with Google" });
     expect(screen.queryByRole("button", { name: "Disable app" })).toBeNull();
-    fireEvent.change(screen.getByLabelText("Administrator password"), {
-      target: { value: "password" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-    await screen.findByRole("button", { name: "Disable app" });
-    expect(api.login).toHaveBeenCalledWith("password");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    );
+    await openApp();
+    expect(screen.getByRole("button", { name: "Disable app" })).toBeDefined();
+    expect(api.login).toHaveBeenCalledWith("google");
     expect(api.listApps).toHaveBeenCalledTimes(2);
   });
 
@@ -340,7 +343,7 @@ describe("Administrator Console", () => {
         },
       ]);
     const api = apiFixture({ listSecrets });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(
       screen.getByRole("button", { name: "Revoke secret sec_original" }),
@@ -390,7 +393,7 @@ describe("Administrator Console", () => {
         return updated;
       }),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(
       screen.getByRole("button", {
@@ -652,7 +655,7 @@ describe("Administrator Console", () => {
         .fn()
         .mockRejectedValue(new Error("Metadata write failed.")),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(
       screen.getByRole("button", {
@@ -702,7 +705,7 @@ describe("Administrator Console", () => {
           new APIError(401, "unauthorized", "Session expired after issuance."),
         ),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     const create = screen.getByRole("button", { name: "Create secret" });
     const remove = screen.getByRole("button", { name: "Delete application" });
@@ -755,7 +758,7 @@ describe("Administrator Console", () => {
       within(credential).getByText("never-discard-this-value"),
     ).toBeDefined();
     expect(within(credential).getByText("Staging backend")).toBeDefined();
-    await screen.findByLabelText("Administrator password");
+    await screen.findByRole("button", { name: "Continue with Google" });
     expect(
       within(credential).getByText("never-discard-this-value"),
     ).toBeDefined();
@@ -778,7 +781,7 @@ describe("Administrator Console", () => {
 
   it("validates UTF-8 metadata limits without changing the draft or issuing a secret", async () => {
     const api = apiFixture();
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
     const editor = screen.getByRole("dialog", { name: "Create secret" });
@@ -828,7 +831,7 @@ describe("Administrator Console", () => {
         return update;
       }),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     const revoke = screen.getByRole("button", {
       name: "Revoke secret sec_original",
@@ -894,7 +897,7 @@ describe("Administrator Console", () => {
         .mockResolvedValue([issued]),
       createSecret: vi.fn().mockReturnValue(issuance),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Manage Example" }),
     );
@@ -948,16 +951,15 @@ describe("Administrator Console", () => {
           ),
         ),
       );
-      await screen.findByLabelText("Administrator password");
+      await screen.findByRole("button", { name: "Continue with Google" });
       expect(screen.queryByRole("dialog")).toBeNull();
+      const login = screen.getByRole("button", {
+        name: "Continue with Google",
+      });
+      expect((login as HTMLButtonElement).disabled).toBe(true);
       if (earlyLogin) {
-        await signInAgain();
-        fireEvent.click(
-          screen.getByRole("button", {
-            name: initialSecret ? "New application" : "Create secret",
-          }),
-        );
-        expect(screen.queryByRole("dialog")).toBeNull();
+        fireEvent.click(login);
+        expect(operation.api.login).not.toHaveBeenCalled();
       }
       await act(async () => operation.finish());
       const credential = await screen.findByRole("dialog", {
@@ -979,6 +981,14 @@ describe("Administrator Console", () => {
           }) as HTMLButtonElement
         ).disabled,
       ).toBe(true);
+      const blockedLogin = screen.getByRole("button", {
+        name: "Continue with Google",
+      });
+      expect((blockedLogin as HTMLButtonElement).disabled).toBe(true);
+      act(() => {
+        blockedLogin.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(operation.api.login).not.toHaveBeenCalled();
       fireEvent.click(
         within(credential).getByRole("checkbox", {
           name: "I have saved this secret securely.",
@@ -987,7 +997,14 @@ describe("Administrator Console", () => {
       fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
       await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       expect(screen.queryByText(operation.issued.secret)).toBeNull();
-      if (!earlyLogin) await signInAgain();
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Continue with Google",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false);
+      await signInAgain();
       const back = screen.queryByRole("button", { name: "← All applications" });
       if (back !== null) fireEvent.click(back);
       fireEvent.click(screen.getByRole("button", { name: "New application" }));
@@ -1020,7 +1037,7 @@ describe("Administrator Console", () => {
           ),
         ),
       );
-      await screen.findByLabelText("Administrator password");
+      await screen.findByRole("button", { name: "Continue with Google" });
       await act(async () =>
         operation.fail(new Error("Issuance response lost.")),
       );
@@ -1083,7 +1100,7 @@ describe("Administrator Console", () => {
         return issued;
       }),
     });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
 
     act(() => {
@@ -1192,7 +1209,7 @@ describe("Administrator Console", () => {
         created_at: example.created_at,
       });
     const api = apiFixture({ resetSecret });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(
       screen.getByRole("button", { name: "Reset secret sec_original" }),
@@ -1251,7 +1268,7 @@ describe("Administrator Console", () => {
         new APIError(409, "already_revoked", "The secret is already revoked."),
       );
     const api = apiFixture({ listSecrets, resetSecret });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(
       screen.getByRole("button", { name: "Reset secret sec_original" }),
@@ -1293,14 +1310,10 @@ describe("Administrator Console", () => {
         },
       ])
       .mockRejectedValueOnce(
-        new APIError(
-          401,
-          "unauthorized",
-          "Administrator authentication is required.",
-        ),
+        new APIError(401, "unauthorized", "Authentication is required."),
       );
     const api = apiFixture({ listSecrets });
-    render(<Console api={api} />);
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
     await openApp();
     fireEvent.click(
       screen.getByRole("button", { name: "Reset secret sec_original" }),
@@ -1314,7 +1327,7 @@ describe("Administrator Console", () => {
     const credential = await screen.findByRole("dialog", {
       name: "Save your app secret",
     });
-    await screen.findByRole("button", { name: "Sign in" });
+    await screen.findByRole("button", { name: "Continue with Google" });
     expect(within(credential).getByText("reset-only-once")).toBeDefined();
     expect(
       (
@@ -1328,7 +1341,9 @@ describe("Administrator Console", () => {
     await waitFor(() =>
       expect(screen.queryByText("reset-only-once")).toBeNull(),
     );
-    expect(screen.getByRole("button", { name: "Sign in" })).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Continue with Google" }),
+    ).toBeDefined();
   });
   it.each([true, false])(
     "settles reset ownership after an unrelated session expiry (success=%s)",
@@ -1346,7 +1361,7 @@ describe("Administrator Console", () => {
         updateApp: vi.fn().mockRejectedValue(new Error("Write response lost.")),
         resetSecret: vi.fn().mockReturnValue(reset.promise),
       });
-      render(<Console api={api} />);
+      render(<Console api={api} onAuthorization={completeAuthorization} />);
       await openApp();
       fireEvent.click(screen.getByRole("button", { name: "Disable app" }));
       await screen.findByText("State unavailable");
@@ -1371,7 +1386,7 @@ describe("Administrator Console", () => {
       await act(async () =>
         refresh.reject(new APIError(401, "unauthorized", "Session expired.")),
       );
-      await screen.findByLabelText("Administrator password");
+      await screen.findByRole("button", { name: "Continue with Google" });
       expect(screen.queryByRole("dialog")).toBeNull();
       if (succeeds) {
         await act(async () =>

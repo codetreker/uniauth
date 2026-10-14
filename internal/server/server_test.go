@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -23,7 +24,7 @@ import (
 
 func configForTest(t *testing.T) Config {
 	t.Helper()
-	return Config{PublicURL: "http://localhost:8080", ListenAddr: "127.0.0.1:0", DatabasePath: filepath.Join(t.TempDir(), "apps.db"), AdminPassword: "  $直接-password  ", AllowLoopbackHTTP: true}
+	return Config{PublicURL: "http://localhost:8080", ListenAddr: "127.0.0.1:0", DatabasePath: filepath.Join(t.TempDir(), "apps.db"), InitialAdminEmail: "admin@example.com", AllowLoopbackHTTP: true}
 }
 func quietLogger() *slog.Logger { return slog.New(slog.NewJSONHandler(io.Discard, nil)) }
 func newTestService(t *testing.T, registry map[string]providers.Provider) *Service {
@@ -63,10 +64,11 @@ func (p *fakeProvider) Exchange(ctx context.Context, request providers.ExchangeR
 			return providers.Identity{}, ctx.Err()
 		}
 	}
-	return providers.Identity{Provider: "github", ID: "github:123", Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":123,"unknown":null,"enabled":false}`)}}, nil
+	email, verified := "admin@example.com", true
+	return providers.Identity{Provider: "github", ID: "github:123", Email: &email, EmailVerified: &verified, Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":123,"unknown":null,"enabled":false}`)}}, nil
 }
 
-func TestAdministratorProductFlow(t *testing.T) {
+func TestConsolePlatformAndProductFlow(t *testing.T) {
 	provider := &fakeProvider{}
 	service := newTestService(t, map[string]providers.Provider{"github": provider})
 	ts := httptest.NewServer(service.Handler())
@@ -90,17 +92,23 @@ func TestAdministratorProductFlow(t *testing.T) {
 		}
 		return res
 	}
-	res := request("POST", "/console/api/login", `{"password":"  $直接-password  "}`, "")
-	if res.StatusCode != 200 {
-		t.Fatalf("login: %d", res.StatusCode)
+	res := request("POST", "/console/api/login", `{"password":"retired-password"}`, "")
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("password login remains available: %d", res.StatusCode)
 	}
-	var login struct {
-		CSRF string `json:"csrf_token"`
+	res.Body.Close()
+	login := performConsoleLogin(t, request, provider, "http://localhost:8080")
+	res = request("GET", "/console/api/apps", "", "")
+	var initialApps struct {
+		Apps []apps.App `json:"apps"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&login); err != nil {
+	if err := json.NewDecoder(res.Body).Decode(&initialApps); err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
+	if len(initialApps.Apps) != 0 {
+		t.Fatalf("system application exposed: %+v", initialApps.Apps)
+	}
 	res = request("GET", "/console/api/providers", "", "")
 	data, _ := io.ReadAll(res.Body)
 	res.Body.Close()
@@ -116,6 +124,15 @@ func TestAdministratorProductFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
+	res = request("GET", "/console/api/users", "", "")
+	var users apps.UserPage
+	if err := json.NewDecoder(res.Body).Decode(&users); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(users.Users) != 1 || users.Users[0].AppCount != 1 || users.Users[0].ID != login.User.ID {
+		t.Fatalf("administrator summary: status=%d users=%+v", res.StatusCode, users)
+	}
 	q := url.Values{"app_id": {created.App.ID}, "provider": {"github"}, "redirect_uri": {"https://product.example/callback?context=x"}, "state": {"product-state"}}
 	res = request("GET", "/auth/authorize?"+q.Encode(), "", "")
 	if res.StatusCode != 302 {
@@ -178,7 +195,7 @@ func TestAdministratorProductFlow(t *testing.T) {
 
 func TestHealthRoutingAndSanitizedLogs(t *testing.T) {
 	var logs bytes.Buffer
-	service, err := New(context.Background(), configForTest(t), map[string]providers.Provider{}, slog.New(slog.NewJSONHandler(&logs, nil)))
+	service, err := New(context.Background(), configForTest(t), map[string]providers.Provider{"github": &fakeProvider{}}, slog.New(slog.NewJSONHandler(&logs, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,8 +203,8 @@ func TestHealthRoutingAndSanitizedLogs(t *testing.T) {
 	for _, tc := range []struct {
 		path   string
 		status int
-	}{{"/healthz", 200}, {"/readyz", 200}, {"/", 302}, {"/unknown", 404}, {"/console/api/unknown", 404}} {
-		r := httptest.NewRequest("GET", tc.path+"?code=private-code", nil)
+	}{{"/healthz", 200}, {"/readyz", 200}, {"/", 302}, {"/unknown", 404}, {"/console/api/unknown", 404}, {"/console/auth/callback", 303}} {
+		r := httptest.NewRequest("GET", tc.path+"?code=private-code&state=private-state&email=private@example.com", nil)
 		r.Header.Set("Cookie", "private-cookie")
 		w := httptest.NewRecorder()
 		service.Handler().ServeHTTP(w, r)
@@ -197,9 +214,15 @@ func TestHealthRoutingAndSanitizedLogs(t *testing.T) {
 		if w.Header().Get("X-Request-ID") == "" {
 			t.Fatal("missing request ID")
 		}
+		if strings.Contains(w.Header().Get("Location"), "private") {
+			t.Fatal("callback redirect disclosed fields")
+		}
 	}
 	if strings.Contains(logs.String(), "private") || strings.Contains(logs.String(), "unknown?code") {
 		t.Fatalf("sensitive logs: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"operation":"console_callback"`) {
+		t.Fatal("console callback was not classified")
 	}
 	if err := service.Close(); err != nil {
 		t.Fatal(err)
@@ -217,19 +240,18 @@ func TestStartupCleanupAndLiveRegistry(t *testing.T) {
 		t.Fatal("missing logger accepted")
 	}
 	invalid := cfg
-	invalid.AdminPassword = strings.Repeat("x", 1025)
+	invalid.InitialAdminEmail = "Admin <admin@example.com>"
 	if _, err := New(context.Background(), invalid, nil, quietLogger()); err == nil {
-		t.Fatal("invalid administrator password accepted")
+		t.Fatal("invalid initial administrator email accepted")
 	}
-	service, err := New(context.Background(), cfg, nil, quietLogger())
-	if err != nil {
-		t.Fatal(err)
+	if _, err := New(context.Background(), cfg, nil, quietLogger()); err == nil || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("zero-provider startup: %v", err)
 	}
-	if err := service.Close(); err != nil {
-		t.Fatal(err)
+	if _, err := New(context.Background(), cfg, map[string]providers.Provider{}, quietLogger()); err == nil || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("empty injected registry: %v", err)
 	}
 	cfg.GitHub = Credentials{"client", "secret"}
-	service, err = New(context.Background(), cfg, nil, quietLogger())
+	service, err := New(context.Background(), cfg, nil, quietLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,8 +265,128 @@ func TestStartupCleanupAndLiveRegistry(t *testing.T) {
 	}
 }
 
+func TestConsoleInitializationFailureAllowsStartupRecovery(t *testing.T) {
+	cfg := configForTest(t)
+	cfg.PublicURL = "https://auth.example:65536"
+	registry := map[string]providers.Provider{"github": &fakeProvider{}}
+	if _, err := New(context.Background(), cfg, registry, quietLogger()); err == nil || !strings.Contains(err.Error(), "port") {
+		t.Fatalf("console initialization did not reject invalid browser port: %v", err)
+	}
+	cfg.PublicURL = "http://localhost:8080"
+	service, err := New(context.Background(), cfg, registry, quietLogger())
+	if err != nil {
+		t.Fatalf("startup resources prevented recovery: %v", err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConsoleProvisioningAcrossRestarts(t *testing.T) {
+	ctx := context.Background()
+	cfg := configForTest(t)
+	cfg.PublicURL += "/"
+	first, err := New(ctx, cfg, map[string]providers.Provider{"github": &fakeProvider{}}, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	consoleApp := provisionedConsoleApp(t, first, cfg.PublicURL)
+	if !consoleApp.Enabled || len(consoleApp.RedirectURIs) != 1 || consoleApp.RedirectURIs[0] != "http://localhost:8080/console/auth/callback" || len(consoleApp.Providers) != 1 || consoleApp.Providers[0] != "github" {
+		t.Fatalf("initial console configuration: %+v", consoleApp)
+	}
+	email, verified := cfg.InitialAdminEmail, true
+	owner, err := first.store.ResolveAccount(ctx, providers.Identity{Provider: "github", ID: "github:owner", Email: &email, EmailVerified: &verified, Origin: map[string]json.RawMessage{}})
+	if err != nil || !owner.IsAdmin {
+		t.Fatalf("claim administrator: %+v %v", owner, err)
+	}
+	product, err := first.store.Create(ctx, owner.ID, apps.CreateAppInput{
+		AppInput:      apps.AppInput{Name: "Persistent product", Enabled: true, RedirectURIs: []string{"https://product.example/callback"}, Providers: []string{"github"}},
+		InitialSecret: apps.SecretInput{Name: "Backend", Description: "Restart fixture"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := consoleCredentialDigest(t, cfg.DatabasePath, consoleApp.ID)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.PublicURL = "https://new-auth.example"
+	microsoft, err := providers.NewMicrosoft(ctx, providers.Config{ClientID: "client", ClientSecret: "secret", RedirectURL: cfg.PublicURL + "/auth/callback/microsoft", HTTPClient: &http.Client{Timeout: 20 * time.Second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(ctx, cfg, map[string]providers.Provider{"microsoft": microsoft, "github": &fakeProvider{}}, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	updated := provisionedConsoleApp(t, second, cfg.PublicURL)
+	if updated.ID != consoleApp.ID || len(updated.RedirectURIs) != 1 || updated.RedirectURIs[0] != cfg.PublicURL+"/console/auth/callback" || strings.Join(updated.Providers, ",") != "github,microsoft" {
+		t.Fatalf("console configuration did not follow deployment: %+v", updated)
+	}
+	after := consoleCredentialDigest(t, cfg.DatabasePath, updated.ID)
+	if bytes.Equal(before, after) {
+		t.Fatal("private credential did not rotate on restart")
+	}
+	if _, err := second.store.GetOwned(ctx, owner.ID, updated.ID); !errors.Is(err, apps.ErrNotFound) {
+		t.Fatalf("system app exposed to owner: %v", err)
+	}
+	if _, err := second.store.Authenticate(ctx, product.App.ID, product.Secret); err != nil {
+		t.Fatalf("ordinary product credential changed on restart: %v", err)
+	}
+	if persisted, err := second.store.Account(ctx, owner.ID); err != nil || !persisted.IsAdmin {
+		t.Fatalf("administrator authority changed on restart: %+v %v", persisted, err)
+	}
+}
+
+func provisionedConsoleApp(t *testing.T, service *Service, origin string) apps.App {
+	t.Helper()
+	r := httptest.NewRequest("POST", "/console/api/login", strings.NewReader(`{"provider":"github"}`))
+	r.Header.Set("Origin", strings.TrimSuffix(origin, "/"))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	service.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start console login: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		AuthorizationURL string `json:"authorization_url"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	location, err := url.Parse(response.AuthorizationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := service.store.Get(context.Background(), location.Query().Get("app_id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app
+}
+
+func consoleCredentialDigest(t *testing.T, path, appID string) []byte {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM app_secrets WHERE app_id = ?", appID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("private credential count: %d %v", count, err)
+	}
+	var digest []byte
+	if err := db.QueryRow("SELECT digest FROM app_secrets WHERE app_id = ?", appID).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	return digest
+}
+
 func TestServeGracefulShutdown(t *testing.T) {
-	service := newTestService(t, map[string]providers.Provider{})
+	service := newTestService(t, map[string]providers.Provider{"github": &fakeProvider{}})
 	entered, release := make(chan struct{}), make(chan struct{})
 	service.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -300,7 +442,7 @@ func TestServeGracefulShutdown(t *testing.T) {
 }
 
 func TestServeListenerFailureClosesService(t *testing.T) {
-	service := newTestService(t, map[string]providers.Provider{})
+	service := newTestService(t, map[string]providers.Provider{"github": &fakeProvider{}})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +466,7 @@ func TestMiddlewarePanicAndMethods(t *testing.T) {
 	if w.Code != 500 || strings.Contains(logs.String(), "private-password") || strings.Contains(logs.String(), "PRIVATE") {
 		t.Fatalf("panic handling: %d %s", w.Code, logs.String())
 	}
-	for _, path := range []string{"/auth/authorize", "/auth/callback/github", "/auth/result", "/console/api/apps", "/console/index.html"} {
+	for _, path := range []string{"/auth/authorize", "/auth/callback/github", "/auth/result", "/console/auth/callback", "/console/api/apps", "/console/index.html"} {
 		if operation(path) == "unknown" {
 			t.Fatalf("unclassified %s", path)
 		}
@@ -378,4 +520,95 @@ func TestMiddlewarePreservesStreamingAndSanitizesTransportErrors(t *testing.T) {
 	if strings.Contains(logs.String(), "secret") || strings.Contains(logs.String(), "private") {
 		t.Fatalf("transport diagnostic leaked: %s", logs.String())
 	}
+}
+
+type consoleSessionResult struct {
+	CSRF string       `json:"csrf_token"`
+	User apps.Account `json:"user"`
+}
+
+func performConsoleLogin(t *testing.T, request func(string, string, string, string) *http.Response, provider *fakeProvider, publicURL string) consoleSessionResult {
+	t.Helper()
+	res := request("POST", "/console/api/login", `{"provider":"github"}`, "")
+	if res.StatusCode != 200 {
+		t.Fatalf("login: %d", res.StatusCode)
+	}
+	var started struct {
+		AuthorizationURL string `json:"authorization_url"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&started); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	authorizationURL, err := url.Parse(started.AuthorizationURL)
+	if err != nil || authorizationURL.Path != "/auth/authorize" || authorizationURL.Query().Get("redirect_uri") != strings.TrimSuffix(publicURL, "/")+"/console/auth/callback" {
+		t.Fatalf("console gateway integration: %s %v", started.AuthorizationURL, err)
+	}
+	res = request("GET", authorizationURL.RequestURI(), "", "")
+	if res.StatusCode != http.StatusFound {
+		t.Fatalf("console authorize: %d", res.StatusCode)
+	}
+	res.Body.Close()
+	res = request("GET", "/auth/callback/github?code=provider-code&state="+url.QueryEscape(provider.request.State), "", "")
+	if res.StatusCode != http.StatusFound {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("console upstream callback: %d %s", res.StatusCode, body)
+	}
+	res.Body.Close()
+	consoleCallback, err := url.Parse(res.Header.Get("Location"))
+	if err != nil || consoleCallback.Path != "/console/auth/callback" {
+		t.Fatalf("console product callback: %s %v", res.Header.Get("Location"), err)
+	}
+	res = request("GET", consoleCallback.RequestURI(), "", "")
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/console/" {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("console callback: %d %s %s", res.StatusCode, res.Header.Get("Location"), body)
+	}
+	res.Body.Close()
+	res = request("GET", "/console/api/session", "", "")
+	var login consoleSessionResult
+	if err := json.NewDecoder(res.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if login.CSRF == "" || !login.User.IsAdmin {
+		t.Fatalf("initial administrator was not claimed: %+v", login)
+	}
+	return login
+}
+
+func TestConsoleDeploymentOriginCallbackContract(t *testing.T) {
+	cfg := configForTest(t)
+	cfg.PublicURL = "http://LOCALHOST:08080/"
+	provider := &fakeProvider{}
+	service, err := New(context.Background(), cfg, map[string]providers.Provider{"github": provider}, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.Close()
+	ts := httptest.NewServer(service.Handler())
+	defer ts.Close()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	request := func(method, path, body, csrf string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", "http://localhost:8080")
+		req.Header.Set("Content-Type", "application/json")
+		if csrf != "" {
+			req.Header.Set("X-CSRF-Token", csrf)
+		}
+		response, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	performConsoleLogin(t, request, provider, cfg.PublicURL)
 }

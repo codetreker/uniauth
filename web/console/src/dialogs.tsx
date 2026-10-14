@@ -1,11 +1,10 @@
-import { useId, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { APIError, secretInputSchema } from "./api";
 import type {
   Application,
   AppInput,
   CreateAppInput,
-  ConsoleAPI,
   Provider,
   ProviderID,
   SecretInput,
@@ -45,33 +44,47 @@ export type Confirmation = {
 const describeError = (error: unknown) =>
   error instanceof Error ? error.message : "An unexpected error occurred.";
 export const Login = ({
-  api,
+  providers,
+  loading,
+  providerError,
+  onRetry,
   onLogin,
   error,
+  notice,
+  blocked,
   preview,
 }: {
-  api: ConsoleAPI;
-  onLogin: () => void;
+  providers: Provider[];
+  loading: boolean;
+  providerError?: string;
+  onRetry: () => void;
+  onLogin: (provider: ProviderID) => Promise<void>;
   error?: string;
+  notice?: ReactNode;
+  blocked: boolean;
   preview: boolean;
 }) => {
-  const [password, setPassword] = useState("");
   const [failure, setFailure] = useState<string>();
-  const [pending, setPending] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setPending(true);
+  const [pending, setPending] = useState<ProviderID>();
+  const busy = useRef(false);
+  useEffect(() => {
+    setFailure(undefined);
+  }, [error]);
+  const submit = async (provider: ProviderID) => {
+    if (blocked || busy.current) return;
+    busy.current = true;
+    setPending(provider);
     setFailure(undefined);
     try {
-      await api.login(password);
-      setPassword("");
-      onLogin();
+      await onLogin(provider);
     } catch (cause) {
       setFailure(describeError(cause));
     } finally {
-      setPending(false);
+      busy.current = false;
+      setPending(undefined);
     }
   };
+  const available = providers.filter((provider) => provider.available);
   return (
     <main className="login-page">
       <div className="login-brand">
@@ -101,35 +114,52 @@ export const Login = ({
             <Icon name="shield" size={26} />
           </span>
           <h2>Welcome to your Console</h2>
-          <p>Sign in to manage applications and credentials.</p>
+          <p>Sign in to create and manage your applications.</p>
+          {notice}
           {error !== undefined && <ErrorNotice message={error} />}
           {failure !== undefined && <ErrorNotice message={failure} />}
-          <form onSubmit={submit}>
-            <label className="field">
-              Administrator password
-              <input
-                type="password"
-                name="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoFocus
-              />
-            </label>
-            <button
-              className="button full-width"
-              type="submit"
-              disabled={pending}
-            >
-              {pending ? "Signing in…" : "Sign in"}
-              <Icon name="arrow" size={16} />
-            </button>
-          </form>
+          {blocked && (
+            <p className="login-help" role="status">
+              Finish the pending operation and save any issued secret before
+              signing in again.
+            </p>
+          )}
+          {loading ? (
+            <p role="status">Loading sign-in methods…</p>
+          ) : providerError !== undefined ? (
+            <>
+              <ErrorNotice message={providerError} />
+              <button className="button secondary full-width" onClick={onRetry}>
+                Retry sign-in methods
+              </button>
+            </>
+          ) : available.length === 0 ? (
+            <p className="login-help" role="status">
+              No sign-in providers are configured. Contact the platform
+              operator.
+            </p>
+          ) : (
+            <div className="oauth-buttons">
+              {available.map(({ id }) => (
+                <button
+                  key={id}
+                  className="button secondary full-width oauth-button"
+                  disabled={blocked || pending !== undefined}
+                  onClick={() => void submit(id)}
+                >
+                  <ProviderMark provider={id} />
+                  {pending === id
+                    ? "Connecting…"
+                    : `Continue with ${providerNames[id]}`}
+                  <Icon name="arrow" size={16} />
+                </button>
+              ))}
+            </div>
+          )}
           <div className="login-help">
             {preview
-              ? "Preview password: preview"
-              : "Use the administrator password configured for this deployment."}
+              ? "Choose a provider to try the Console with the selected preview account."
+              : "Your identity is provided by your chosen sign-in service. New accounts are created automatically."}
           </div>
         </section>
       </div>

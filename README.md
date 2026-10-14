@@ -1,13 +1,16 @@
 # UniAuth
 
 UniAuth is a Go authentication gateway for product backends. It supports personal
-Microsoft accounts, Google, and GitHub, with an embedded administrator Console
-for application registration and Secret management. Products own their users,
-account linking, permissions, and login sessions.
+Microsoft accounts, Google, and GitHub, with a public Console for application
+registration and Secret management. Anyone can sign in through a configured OAuth
+provider and manage their own Apps. Products own their users, account linking,
+permissions, and login sessions.
 
-UniAuth stores application configuration in SQLite. Completed identity results
-exist only in process memory for five minutes and can be retrieved once by the
-owning application. There is no end-user database or central SSO session.
+SQLite stores Console platform accounts, explicitly linked identities, owned App
+configuration, and credential digests. The gateway stores no external product
+users or central SSO session. Completed identity results exist only in process
+memory for five minutes and can be retrieved once by their owning App. The Console
+is itself a protected UniAuth App and uses this same handover.
 
 ## Build and run
 
@@ -20,26 +23,39 @@ make setup
 make build
 ```
 
-Set the administrator password and provider credentials in deployment environment
-variables. For local development:
+Set the initial administrator email and at least one provider credential pair in
+deployment configuration. For local development:
 
 ```sh
 export UNIAUTH_PUBLIC_URL=http://127.0.0.1:8080
 export UNIAUTH_ALLOW_LOOPBACK_HTTP=true
 export UNIAUTH_DATABASE_PATH=./data/uniauth.db
-export UNIAUTH_ADMIN_PASSWORD='YOUR_ADMINISTRATOR_PASSWORD'
+export UNIAUTH_INITIAL_ADMIN_EMAIL=sychenjianjun@gmail.com
+export UNIAUTH_GOOGLE_CLIENT_ID=YOUR_GOOGLE_CLIENT_ID
+export UNIAUTH_GOOGLE_CLIENT_SECRET=YOUR_GOOGLE_CLIENT_SECRET
 mkdir -p data
 .tmp/bin/uniauth serve
 ```
 
-Open `/console/` and sign in with the configured password. It must be a single
-line containing 1–1024 bytes, with no carriage return or line feed. Spaces, dollar
-signs, and Unicode are literal password characters.
-Configure providers before creating usable integrations; each provider requires
-its own Client ID and Client Secret pair. Production requires HTTPS, normally
-terminated by a reverse proxy in front of the service. See the
-[configuration reference](docs/reference/configuration.md) for environment
-variables and provider registration callbacks.
+Open `/console/` and choose any configured provider. Accounts are identified by
+stable provider IDs; matching email addresses never merge accounts. After signing
+in, explicitly link additional login identities from the account controls.
+
+The first Google or GitHub identity with a verified email matching
+`UNIAUTH_INITIAL_ADMIN_EMAIL` claims administrator authority. Microsoft can sign
+in and link, but its unknown email verification cannot claim that role. The
+administrator sees minimal user summaries and App counts; each user, including
+the administrator, manages only their own Apps. Password login is removed.
+
+Each upstream provider requires its own Client ID and Client Secret pair.
+Production requires HTTPS, normally terminated by a reverse proxy in front of
+the service. See the [configuration reference](docs/reference/configuration.md)
+for environment variables, bootstrap rules, and provider registration callbacks.
+
+Database migration 3 clears all existing Apps and Secrets when upgrading to the
+platform schema. Recreate product registrations and replace their backend
+credentials after upgrading. Platform accounts and newly created Apps then persist
+across restarts; transient logins, results, and Console sessions do not.
 
 ## Release with Docker Compose
 
@@ -117,10 +133,10 @@ release; this delivery does not publish a Go tag or JavaScript package.
 | `make browser` | Build and run Playwright Console and mockup scenarios. |
 | `make mockup` | Open the interactive Console preview using production components and styles. |
 
-The mockup starts authenticated with representative fixture applications, named
-active and revoked Secrets, and multiline descriptions. After
-signing out, use the fixture password `preview`. Its state resets on reload and
-its fixtures are excluded from the production build. Browser tests may use an
+The mockup uses production components and styles with representative accounts,
+owned Apps, named active and revoked Secrets, and multiline descriptions. Its
+OAuth choices and account controls operate on local fixtures; state resets on
+reload and fixtures are excluded from the production build. Browser tests may use an
 existing Chromium executable through `PLAYWRIGHT_CHROMIUM_EXECUTABLE`; temporary
 browser installs belong under `.tmp/`.
 

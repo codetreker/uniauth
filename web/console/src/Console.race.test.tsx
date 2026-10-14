@@ -9,6 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import { Console } from "./Console";
+import { fixtureSession } from "./test-fixtures";
 import { createAPI } from "./api";
 import type { Application, AppInput } from "./api";
 
@@ -55,7 +56,7 @@ const transport = () => {
   const fetcher = vi
     .fn<typeof fetch>()
     .mockImplementation(async (url, options) => {
-      if (url === "/console/api/session") return json({ csrf_token: "token" });
+      if (url === "/console/api/session") return json(fixtureSession);
       if (url === "/console/api/apps") {
         if (listFailure) throw new Error("Registry unavailable.");
         return json({ apps: deleted ? [] : [persisted] });

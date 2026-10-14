@@ -23,7 +23,7 @@ issuance. Missing or wrong-App IDs return `404`; already revoked IDs return
 The authenticated Console exposes reset only for active Secrets. It identifies
 the selected name and ID and requires explicit confirmation that the old key
 stops working immediately. The new plaintext is returned once and remains visible
-until the administrator acknowledges saving it. The management endpoint uses
+until the owner acknowledges saving it. The management endpoint uses
 the existing Origin, session, CSRF, no-store, and audit controls with action
 `secret.reset`. The [API reference](../../../../docs/reference/api.md) owns the
 exact endpoint and response. The

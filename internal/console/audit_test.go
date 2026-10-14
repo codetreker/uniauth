@@ -16,6 +16,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	var output bytes.Buffer
 	e := newTestConsole(t, func(cfg *Config) { cfg.Logger = slog.New(slog.NewJSONHandler(&output, nil)) })
 	e.login(t)
+	output.Reset()
 	var events []map[string]any
 	request := func(method, path, body, action, appID, outcome, category, serverID string, status int) *httptest.ResponseRecorder {
 		t.Helper()
@@ -48,7 +49,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 		if action == "app.create" && outcome == "success" {
 			appID = decodeResponse[apps.CreatedApp](t, response).App.ID
 		}
-		if event["action"] != action || event["phase"] != "completed" || event["affected_app_id"] != appID || event["outcome"] != outcome || event["error_category"] != category || event["status"] != float64(status) {
+		if event["actor_account_id"] != e.account.ID || event["action"] != action || event["phase"] != "completed" || event["affected_app_id"] != appID || event["outcome"] != outcome || event["error_category"] != category || event["status"] != float64(status) {
 			t.Fatalf("unexpected audit event: %+v", event)
 		}
 		events = append(events, event)
@@ -79,7 +80,7 @@ func TestManagementAuditCorrelationAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, sensitive := range []string{created.Secret, issued.Secret, replacement.Secret, testPassword, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id", "Production server", "Primary deployment credential", "Backup server", "Standby deployment credential", "Edited private label", "Private rotation memo"} {
+	for _, sensitive := range []string{created.Secret, issued.Secret, replacement.Secret, e.csrf, e.cookie.Value, "private-data", "Updated App", "product.example", "client-controlled-request-id", "Production server", "Primary deployment credential", "Backup server", "Standby deployment credential", "Edited private label", "Private rotation memo"} {
 		if strings.Contains(string(encoded), sensitive) {
 			t.Fatalf("audit disclosed sensitive data %q: %s", sensitive, encoded)
 		}

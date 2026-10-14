@@ -9,17 +9,18 @@ import (
 	"time"
 )
 
-const loginBurst = 5
-
-type adminSession struct {
+type consoleSession struct {
+	accountID string
 	csrfToken string
 	expiresAt time.Time
 }
 
 type authenticatedSession struct {
-	adminSession
+	consoleSession
 	key [32]byte
 }
+
+func sessionTokenKey(token string) [32]byte { return sha256.Sum256([]byte(token)) }
 
 func randomToken() string {
 	var value [32]byte
@@ -27,9 +28,22 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(value[:])
 }
 
+func uniqueCookie(r *http.Request, name string) (*http.Cookie, bool) {
+	var result *http.Cookie
+	for _, cookie := range r.Cookies() {
+		if cookie.Name == name {
+			if result != nil {
+				return nil, false
+			}
+			result = cookie
+		}
+	}
+	return result, result != nil
+}
+
 func (h *Handler) session(r *http.Request) (authenticatedSession, bool) {
-	cookie, err := r.Cookie(h.cookieName)
-	if err != nil || len(cookie.Value) != 43 {
+	cookie, ok := uniqueCookie(r, h.cookieName)
+	if !ok || len(cookie.Value) != 43 {
 		return authenticatedSession{}, false
 	}
 	h.mu.Lock()
@@ -37,7 +51,7 @@ func (h *Handler) session(r *http.Request) (authenticatedSession, bool) {
 	h.pruneSessions(h.config.Now())
 	key := sha256.Sum256([]byte(cookie.Value))
 	session, ok := h.sessions[key]
-	return authenticatedSession{adminSession: session, key: key}, ok
+	return authenticatedSession{consoleSession: session, key: key}, ok && !h.closed
 }
 
 func (h *Handler) pruneSessions(now time.Time) {
@@ -48,26 +62,28 @@ func (h *Handler) pruneSessions(now time.Time) {
 	}
 }
 
-func (h *Handler) issueSession(w http.ResponseWriter, r *http.Request) (adminSession, bool) {
+func (h *Handler) issueSession(w http.ResponseWriter, r *http.Request, accountID string, oldKey *[32]byte) bool {
 	token := randomToken()
-	csrfToken := randomToken()
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	now := h.config.Now()
 	h.pruneSessions(now)
-	oldCookie, cookieErr := r.Cookie(h.cookieName)
-	if cookieErr == nil {
-		delete(h.sessions, sha256.Sum256([]byte(oldCookie.Value)))
+	if h.closed {
+		return false
+	}
+	if oldKey != nil {
+		delete(h.sessions, *oldKey)
+	}
+	if cookie, ok := uniqueCookie(r, h.cookieName); ok {
+		delete(h.sessions, sha256.Sum256([]byte(cookie.Value)))
 	}
 	if len(h.sessions) >= h.config.MaxSessions {
-		h.mu.Unlock()
-		writeError(w, http.StatusServiceUnavailable, "session_capacity", "Administrator session capacity has been reached.")
-		return adminSession{}, false
+		return false
 	}
-	session := adminSession{csrfToken: csrfToken, expiresAt: now.Add(h.config.SessionTTL)}
+	session := consoleSession{accountID: accountID, csrfToken: randomToken(), expiresAt: now.Add(h.config.SessionTTL)}
 	h.sessions[sha256.Sum256([]byte(token))] = session
-	h.mu.Unlock()
 	h.setCookie(w, token, session.expiresAt, int(h.config.SessionTTL/time.Second))
-	return session, true
+	return true
 }
 
 func (h *Handler) setCookie(w http.ResponseWriter, token string, expiry time.Time, maxAge int) {
@@ -83,26 +99,16 @@ func (h *Handler) removeSession(key [32]byte) {
 	delete(h.sessions, key)
 }
 
-func (h *Handler) allowLogin() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	now := h.config.Now()
-	elapsed := now.Sub(h.lastLoginRefill)
-	if elapsed > 0 {
-		h.loginTokens += float64(elapsed) / float64(h.config.LoginInterval)
-		if h.loginTokens > loginBurst {
-			h.loginTokens = loginBurst
-		}
-		h.lastLoginRefill = now
-	}
-	if h.loginTokens < 1 {
-		return false
-	}
-	h.loginTokens--
-	return true
-}
-
-func validCSRF(r *http.Request, session adminSession) bool {
+func validCSRF(r *http.Request, session consoleSession) bool {
 	values := r.Header.Values("X-CSRF-Token")
 	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), []byte(session.csrfToken)) == 1
+}
+
+func (h *Handler) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	clear(h.sessions)
+	clear(h.pending)
+	return nil
 }

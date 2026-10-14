@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { APIError } from "./api";
+import { AccountAvatar, AccountView, UsersView, accountName } from "./accounts";
 import {
   AppEditor,
   ConfirmDialog,
@@ -11,6 +12,9 @@ import {
 import type { Confirmation, Credential } from "./dialogs";
 
 import type {
+  Account,
+  Session,
+  ProviderID,
   Application,
   AppInput,
   CreateAppInput,
@@ -29,6 +33,19 @@ import {
   providerNames,
 } from "./ui";
 
+const loginErrors: Record<string, string> = {
+  invalid_callback:
+    "This sign-in request is expired, already used, or no longer valid. Start a new sign-in.",
+  login_unavailable:
+    "This sign-in request is expired, already used, or no longer valid. Start a new sign-in.",
+  provider_failed:
+    "The provider canceled or could not complete sign-in. Please try again.",
+  login_failed: "Sign-in could not be completed. Please try again.",
+  identity_conflict:
+    "This identity belongs to another account and cannot be linked.",
+  session_capacity:
+    "Sign-in is temporarily unavailable. Please try again later.",
+};
 const describeError = (error: unknown) =>
   error instanceof Error ? error.message : "An unexpected error occurred.";
 
@@ -67,20 +84,31 @@ const appInput = (app: Application): AppInput => ({
 export const Console = ({
   api,
   preview = false,
+  onAuthorization,
 }: {
   api: ConsoleAPI;
   preview?: boolean;
+  onAuthorization?: (url: string) => Promise<Session>;
 }) => {
   const [session, setSession] = useState<
     "loading" | "signed-out" | "signed-in"
   >("loading");
+  const [user, setUser] = useState<Account>();
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providersError, setProvidersError] = useState<string>();
+  const [providerRevision, setProviderRevision] = useState(0);
+  const oauthPending = useRef(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
   const [apps, setApps] = useState<Application[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  const [callbackError, setCallbackError] = useState<string>();
   const [selected, setSelected] = useState<string>();
-  const [section, setSection] = useState<"apps" | "providers">("apps");
+  const [section, setSection] = useState<
+    "apps" | "providers" | "account" | "users"
+  >("apps");
   const [query, setQuery] = useState("");
   const [editor, setEditor] = useState<Application | "new">();
   const [secretEditor, setSecretEditor] = useState<SecretDraft>();
@@ -145,7 +173,12 @@ export const Console = ({
     key: string | symbol,
     phase: AppPhase,
   ): AppOwner | undefined => {
-    if (owners.current.has(key) || logoutPending.current) return undefined;
+    if (
+      owners.current.has(key) ||
+      logoutPending.current ||
+      oauthPending.current
+    )
+      return undefined;
     const token = Symbol("app operation");
     owners.current.set(key, { token, phase });
     configurationRevision.current += 1;
@@ -233,6 +266,7 @@ export const Console = ({
     setEditor(undefined);
   };
   const dialogOwned = () =>
+    oauthPending.current ||
     editorOwner.current !== undefined ||
     secretEditorOwner.current !== undefined ||
     confirmationOwner.current !== undefined ||
@@ -322,6 +356,7 @@ export const Console = ({
     setError(describeError(cause));
     if (cause instanceof APIError && cause.status === 401) {
       setSession("signed-out");
+      setUser(undefined);
       setLoaded(false);
       // Discard unauthorized drafts; dispatched writes retain ownership until settlement.
       for (const owner of [
@@ -374,8 +409,11 @@ export const Console = ({
     let active = true;
     api
       .session()
-      .then(() => {
-        if (active) setSession("signed-in");
+      .then((result) => {
+        if (active) {
+          setUser(result.user);
+          setSession("signed-in");
+        }
       })
       .catch((cause: unknown) => {
         if (!active) return;
@@ -387,6 +425,42 @@ export const Console = ({
       active = false;
     };
   }, [api]);
+  useEffect(() => {
+    let active = true;
+    setProvidersLoading(true);
+    setProvidersError(undefined);
+    api
+      .listProviders()
+      .then((result) => {
+        if (active) setProviders(result);
+      })
+      .catch((cause: unknown) => {
+        if (active) setProvidersError(describeError(cause));
+      })
+      .finally(() => {
+        if (active) setProvidersLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, providerRevision]);
+  useEffect(() => {
+    const parameters = new URLSearchParams(window.location.search);
+    const failure = parameters.get("login_error");
+    if (failure === null) return;
+    setCallbackError(
+      Object.hasOwn(loginErrors, failure)
+        ? loginErrors[failure]
+        : "Sign-in could not be completed. Please try again.",
+    );
+    parameters.delete("login_error");
+    const query = parameters.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query === "" ? "" : `?${query}`}${window.location.hash}`,
+    );
+  }, []);
   useEffect(() => {
     if (session === "signed-in") void refresh();
   }, [session, api]);
@@ -708,15 +782,53 @@ export const Console = ({
       },
     });
   };
+  const startOAuth = async (provider: ProviderID, link = false) => {
+    if (
+      owners.current.size !== 0 ||
+      logoutPending.current ||
+      oauthPending.current
+    )
+      return;
+    oauthPending.current = true;
+    setOauthLoading(true);
+    setCallbackError(undefined);
+    try {
+      const result = await (link
+        ? api.linkIdentity(provider)
+        : api.login(provider));
+      if (onAuthorization === undefined)
+        window.location.assign(result.authorization_url);
+      else {
+        const nextSession = await onAuthorization(result.authorization_url);
+        setUser(nextSession.user);
+        setSession("signed-in");
+        setError(undefined);
+        if (!link) {
+          setSection("apps");
+          setSelected(undefined);
+        }
+      }
+    } finally {
+      oauthPending.current = false;
+      setOauthLoading(false);
+    }
+  };
   const signOut = async () => {
-    if (owners.current.size !== 0 || logoutPending.current) return;
+    if (
+      owners.current.size !== 0 ||
+      logoutPending.current ||
+      oauthPending.current
+    )
+      return;
     logoutPending.current = true;
     setPending(true);
     try {
       await api.logout();
       setSession("signed-out");
+      setCallbackError(undefined);
       replaceApps([]);
-      setProviders([]);
+      setUser(undefined);
+      setSection("apps");
       setSelected(undefined);
       setLoaded(false);
       setSecrets([]);
@@ -733,22 +845,37 @@ export const Console = ({
     `${app.name} ${app.id}`.toLowerCase().includes(query.toLowerCase()),
   );
 
+  const callbackNotice =
+    callbackError === undefined ? undefined : (
+      <div className="callback-notice">
+        <ErrorNotice message={callbackError} />
+        <button
+          className="icon-button"
+          aria-label="Dismiss sign-in notice"
+          onClick={() => setCallbackError(undefined)}
+        >
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+    );
   return (
     <>
       {session === "loading" ? (
         <main className="boot">
           <Brand />
-          <Loading label="Checking administrator session…" />
+          <Loading label="Checking your session…" />
         </main>
       ) : session === "signed-out" ? (
         <Login
-          api={api}
+          providers={providers}
+          loading={providersLoading}
+          providerError={providersError}
+          onRetry={() => setProviderRevision((value) => value + 1)}
           error={error}
+          notice={callbackNotice}
           preview={preview}
-          onLogin={() => {
-            setError(undefined);
-            setSession("signed-in");
-          }}
+          blocked={operations.size !== 0 || oauthLoading}
+          onLogin={(provider) => startOAuth(provider)}
         />
       ) : (
         <div className="shell">
@@ -784,22 +911,58 @@ export const Console = ({
                 <Icon name="shield" />
                 Identity providers
               </button>
+              <button
+                disabled={dialogOwned()}
+                className={
+                  section === "account" ? "nav-item active" : "nav-item"
+                }
+                onClick={() =>
+                  navigate(() => {
+                    setSection("account");
+                    setSelected(undefined);
+                  })
+                }
+              >
+                <Icon name="key" />
+                My account
+              </button>
+              {user?.is_admin === true && (
+                <button
+                  disabled={dialogOwned()}
+                  className={
+                    section === "users" ? "nav-item active" : "nav-item"
+                  }
+                  onClick={() =>
+                    navigate(() => {
+                      setSection("users");
+                      setSelected(undefined);
+                    })
+                  }
+                >
+                  <Icon name="apps" />
+                  Users
+                </button>
+              )}
             </nav>
             <div className="sidebar-bottom">
               <div className="system-indicator">
                 <span />
                 Authentication gateway
               </div>
-              <div className="admin-row">
-                <span className="avatar small">A</span>
+              <div className="account-row">
+                {user !== undefined && <AccountAvatar user={user} />}
                 <div>
-                  <strong>Administrator</strong>
-                  <span>Console access</span>
+                  <strong>{user === undefined ? "" : accountName(user)}</strong>
+                  <span>
+                    {user?.is_admin === true
+                      ? "Platform administrator"
+                      : "Platform member"}
+                  </span>
                 </div>
                 <button
                   className="icon-button"
                   aria-label="Sign out"
-                  disabled={pending || operations.size !== 0}
+                  disabled={pending || operations.size !== 0 || oauthLoading}
                   onClick={signOut}
                 >
                   <Icon name="logout" />
@@ -813,7 +976,13 @@ export const Console = ({
                 <span className="breadcrumb">Workspace</span>
                 <Icon name="arrow" size={14} />
                 <span>
-                  {section === "apps" ? "Applications" : "Identity providers"}
+                  {section === "apps"
+                    ? "Applications"
+                    : section === "providers"
+                      ? "Identity providers"
+                      : section === "account"
+                        ? "My account"
+                        : "Users"}
                 </span>
                 {current !== undefined && (
                   <>
@@ -824,7 +993,7 @@ export const Console = ({
               </div>
               <span className={`environment ${preview ? "preview" : ""}`}>
                 <span />
-                {preview ? "Interactive preview" : "Admin console"}
+                {preview ? "Interactive preview" : "Your console"}
               </span>
             </header>
             <main className="main-content">
@@ -840,8 +1009,20 @@ export const Console = ({
                   </button>
                 </div>
               )}
+              {callbackNotice}
               {error !== undefined && <ErrorNotice message={error} />}
-              {!loaded ? (
+              {section === "account" && user !== undefined ? (
+                <AccountView
+                  api={api}
+                  user={user}
+                  providers={providers}
+                  blocked={operations.size !== 0 || oauthLoading}
+                  onLink={(provider) => startOAuth(provider, true)}
+                  onUnauthorized={reportError}
+                />
+              ) : section === "users" && user?.is_admin === true ? (
+                <UsersView api={api} onUnauthorized={reportError} />
+              ) : !loaded ? (
                 loading ? (
                   <Loading label="Loading workspace…" />
                 ) : (
@@ -1462,7 +1643,7 @@ export const Console = ({
             </main>
             <footer className="workspace-footer">
               <span>UniAuth · Authentication gateway</span>
-              <span>No user directory. No central SSO.</span>
+              <span>Your applications. Your credentials.</span>
             </footer>
           </div>
         </div>

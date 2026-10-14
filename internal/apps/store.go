@@ -65,7 +65,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) Create(ctx context.Context, input CreateAppInput) (CreatedApp, error) {
+func (s *Store) Create(ctx context.Context, ownerID string, input CreateAppInput) (CreatedApp, error) {
 	if err := validateInput(input.AppInput, s.allowLoopbackHTTP); err != nil {
 		return CreatedApp{}, err
 	}
@@ -82,7 +82,10 @@ func (s *Store) Create(ctx context.Context, input CreateAppInput) (CreatedApp, e
 		return CreatedApp{}, fmt.Errorf("begin app creation: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO apps (id, name, enabled, redirect_uris, providers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, id, input.Name, input.Enabled, redirects, providers, now.UnixNano(), now.UnixNano()); err != nil {
+	if err := requireAccount(ctx, tx, ownerID); err != nil {
+		return CreatedApp{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO apps (id, name, enabled, redirect_uris, providers, created_at, updated_at, owner_id, system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`, id, input.Name, input.Enabled, redirects, providers, now.UnixNano(), now.UnixNano(), ownerID); err != nil {
 		return CreatedApp{}, fmt.Errorf("create app: %w", err)
 	}
 	if err := insertCredential(ctx, tx, id, issued, digest); err != nil {
@@ -100,8 +103,12 @@ func (s *Store) Get(ctx context.Context, id string) (App, error) {
 	return scanApp(s.db.QueryRowContext(ctx, "SELECT "+appColumns+" FROM apps WHERE id = ?", id))
 }
 
-func (s *Store) List(ctx context.Context) ([]App, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+appColumns+" FROM apps ORDER BY created_at, id")
+func (s *Store) GetOwned(ctx context.Context, ownerID, appID string) (App, error) {
+	return scanApp(s.db.QueryRowContext(ctx, "SELECT "+appColumns+" FROM apps WHERE id = ? AND owner_id = ? AND system = 0", appID, ownerID))
+}
+
+func (s *Store) List(ctx context.Context, ownerID string) ([]App, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+appColumns+" FROM apps WHERE owner_id = ? AND system = 0 ORDER BY created_at, id", ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("list apps: %w", err)
 	}
@@ -120,7 +127,7 @@ func (s *Store) List(ctx context.Context) ([]App, error) {
 	return apps, nil
 }
 
-func (s *Store) Update(ctx context.Context, id string, input AppInput) (App, error) {
+func (s *Store) Update(ctx context.Context, ownerID, id string, input AppInput) (App, error) {
 	if err := validateInput(input, s.allowLoopbackHTTP); err != nil {
 		return App{}, err
 	}
@@ -130,7 +137,7 @@ func (s *Store) Update(ctx context.Context, id string, input AppInput) (App, err
 		return App{}, fmt.Errorf("begin app update: %w", err)
 	}
 	defer tx.Rollback()
-	app, err := scanApp(tx.QueryRowContext(ctx, "SELECT "+appColumns+" FROM apps WHERE id = ?", id))
+	app, err := scanApp(tx.QueryRowContext(ctx, "SELECT "+appColumns+" FROM apps WHERE id = ? AND owner_id = ? AND system = 0", id, ownerID))
 	if err != nil {
 		return App{}, err
 	}
@@ -146,13 +153,13 @@ func (s *Store) Update(ctx context.Context, id string, input AppInput) (App, err
 	return app, nil
 }
 
-func (s *Store) Delete(ctx context.Context, id string) error {
+func (s *Store) Delete(ctx context.Context, ownerID, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin app deletion: %w", err)
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, "DELETE FROM apps WHERE id = ?", id)
+	result, err := tx.ExecContext(ctx, "DELETE FROM apps WHERE id = ? AND owner_id = ? AND system = 0", id, ownerID)
 	if err != nil {
 		return fmt.Errorf("delete app: %w", err)
 	}
@@ -170,13 +177,13 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 
 const secretColumns = "id, name, description, created_at, revoked_at"
 
-func (s *Store) ListSecrets(ctx context.Context, appID string) ([]Secret, error) {
+func (s *Store) ListSecrets(ctx context.Context, ownerID, appID string) ([]Secret, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, fmt.Errorf("begin credential listing: %w", err)
 	}
 	defer tx.Rollback()
-	if err := requireApp(ctx, tx, appID); err != nil {
+	if err := requireOwnedApp(ctx, tx, ownerID, appID); err != nil {
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, "SELECT "+secretColumns+" FROM app_secrets WHERE app_id = ? ORDER BY created_at, id", appID)
@@ -198,7 +205,7 @@ func (s *Store) ListSecrets(ctx context.Context, appID string) ([]Secret, error)
 	return secrets, nil
 }
 
-func (s *Store) CreateSecret(ctx context.Context, appID string, input SecretInput) (IssuedSecret, error) {
+func (s *Store) CreateSecret(ctx context.Context, ownerID, appID string, input SecretInput) (IssuedSecret, error) {
 	if err := validateSecretInput(input); err != nil {
 		return IssuedSecret{}, err
 	}
@@ -208,7 +215,7 @@ func (s *Store) CreateSecret(ctx context.Context, appID string, input SecretInpu
 		return IssuedSecret{}, fmt.Errorf("begin credential creation: %w", err)
 	}
 	defer tx.Rollback()
-	if err := requireApp(ctx, tx, appID); err != nil {
+	if err := requireOwnedApp(ctx, tx, ownerID, appID); err != nil {
 		return IssuedSecret{}, err
 	}
 	if err := insertCredential(ctx, tx, appID, issued, digest); err != nil {
@@ -220,7 +227,7 @@ func (s *Store) CreateSecret(ctx context.Context, appID string, input SecretInpu
 	return issued, nil
 }
 
-func (s *Store) UpdateSecret(ctx context.Context, appID, secretID string, input SecretInput) (Secret, error) {
+func (s *Store) UpdateSecret(ctx context.Context, ownerID, appID, secretID string, input SecretInput) (Secret, error) {
 	if err := validateSecretInput(input); err != nil {
 		return Secret{}, err
 	}
@@ -229,7 +236,7 @@ func (s *Store) UpdateSecret(ctx context.Context, appID, secretID string, input 
 		return Secret{}, fmt.Errorf("begin credential metadata update: %w", err)
 	}
 	defer tx.Rollback()
-	if err := requireApp(ctx, tx, appID); err != nil {
+	if err := requireOwnedApp(ctx, tx, ownerID, appID); err != nil {
 		return Secret{}, err
 	}
 	result, err := tx.ExecContext(ctx, "UPDATE app_secrets SET name = ?, description = ? WHERE app_id = ? AND id = ?", input.Name, input.Description, appID, secretID)
@@ -249,20 +256,23 @@ func (s *Store) UpdateSecret(ctx context.Context, appID, secretID string, input 
 	return secret, nil
 }
 
-func (s *Store) RevokeSecret(ctx context.Context, appID, secretID string) error {
-	result, err := s.db.ExecContext(ctx, "UPDATE app_secrets SET revoked_at = COALESCE(revoked_at, ?) WHERE app_id = ? AND id = ?", time.Now().UTC().UnixNano(), appID, secretID)
+func (s *Store) RevokeSecret(ctx context.Context, ownerID, appID, secretID string) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE app_secrets SET revoked_at = COALESCE(revoked_at, ?) WHERE app_id = ? AND id = ? AND EXISTS (SELECT 1 FROM apps WHERE id = ? AND owner_id = ? AND system = 0)", time.Now().UTC().UnixNano(), appID, secretID, appID, ownerID)
 	if err != nil {
 		return fmt.Errorf("revoke app credential: %w", err)
 	}
 	return requireAffected(result)
 }
 
-func (s *Store) ResetSecret(ctx context.Context, appID, secretID string) (IssuedSecret, error) {
+func (s *Store) ResetSecret(ctx context.Context, ownerID, appID, secretID string) (IssuedSecret, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return IssuedSecret{}, fmt.Errorf("begin credential reset: %w", err)
 	}
 	defer tx.Rollback()
+	if err := requireOwnedApp(ctx, tx, ownerID, appID); err != nil {
+		return IssuedSecret{}, err
+	}
 	var metadata SecretInput
 	err = tx.QueryRowContext(ctx, "UPDATE app_secrets SET revoked_at = ? WHERE app_id = ? AND id = ? AND revoked_at IS NULL RETURNING name, description", time.Now().UTC().UnixNano(), appID, secretID).Scan(&metadata.Name, &metadata.Description)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -373,9 +383,9 @@ func encodeLists(input AppInput) (string, string) {
 	return string(redirects), string(providers)
 }
 
-func requireApp(ctx context.Context, tx *sql.Tx, appID string) error {
+func requireOwnedApp(ctx context.Context, tx *sql.Tx, ownerID, appID string) error {
 	var id string
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM apps WHERE id = ?", appID).Scan(&id); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM apps WHERE id = ? AND owner_id = ? AND system = 0", appID, ownerID).Scan(&id); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}

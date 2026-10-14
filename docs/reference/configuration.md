@@ -1,14 +1,25 @@
 # Configuration and Operations
 
-`uniauth serve` reads deployment environment variables and starts one Go process.
-With no command, `serve` is selected. `uniauth help` prints usage.
+`uniauth serve` reads and validates deployment environment variables, then reserves
+`UNIAUTH_LISTEN_ADDR` before initializing the service. With no command, `serve` is
+selected. `uniauth help` prints usage.
+
+If listener binding fails, the command does not open or migrate SQLite, update
+pending bootstrap configuration, reconcile the Console App, or rotate its private
+credential. A second command rejected at an occupied address leaves the running
+instance's Console login and identity linking usable, even when the rejected
+command supplies different configuration. If service initialization fails after
+binding, the reservation is closed and the original error remains available.
+The initialized service owns the listener through serving and shutdown. This
+ordering protects listener-bind failures; it does not guarantee rollback of every
+later initialization failure or permit separate instances to share one database.
 
 ## Environment
 
 | Variable | Required or default | Meaning |
 | --- | --- | --- |
 | `UNIAUTH_PUBLIC_URL` | Required | External absolute origin, such as `https://auth.example`; no path other than `/`, query, fragment, or user information. |
-| `UNIAUTH_ADMIN_PASSWORD` | Required | Single-line administrator password containing 1–1024 bytes, with no CR or LF; preserved exactly. |
+| `UNIAUTH_INITIAL_ADMIN_EMAIL` | Required | Plain email address for one-time administrator bootstrap, up to 254 bytes and without whitespace or display-name syntax. |
 | `UNIAUTH_LISTEN_ADDR` | `:8080` | HTTP listener address in `host:port` form. |
 | `UNIAUTH_DATABASE_PATH` | `uniauth.db` | SQLite database path; parent directory must exist. |
 | `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for loopback public origins and registered product callbacks. |
@@ -19,8 +30,8 @@ With no command, `serve` is selected. `uniauth help` prints usage.
 | `UNIAUTH_GITHUB_CLIENT_ID` | Optional pair | GitHub OAuth application Client ID. |
 | `UNIAUTH_GITHUB_CLIENT_SECRET` | Optional pair | GitHub OAuth application Client Secret. |
 
-Each provider pair is either completely configured or omitted. Partial pairs or
-surrounding credential whitespace fail startup. Omitted providers appear
+At least one provider pair must be configured. Each pair is either complete or
+omitted. Partial pairs or surrounding credential whitespace fail startup. Omitted providers appear
 unavailable in the Console and cannot authorize product requests. Upstream
 Secrets are deployment credentials and are not stored in SQLite.
 
@@ -40,7 +51,13 @@ browser requests with `Origin: https://auth.example`. Invalid configured domains
 IPv6 literals, scoped IPv6 addresses, and ports outside 0–65535 fail Console
 initialization. This configuration normalization does not normalize incoming
 headers: Console mutations still require exactly one canonical Origin matching
-the expected string. Registered product callback matching remains exact.
+the expected string. Registered product callback matching remains exact. The
+protected Console App
+callback preserves the configured public URL spelling, with its final slash
+removed before `/console/auth/callback` is added; the generated OAuth callback
+uses the same string. Browser navigation and mutation Origin use the canonical
+origin. This keeps accepted uppercase hosts and explicit default ports usable
+without weakening exact callback matching.
 
 The Console reserves an App during configuration editing, enable/disable updates,
 deletion, and Secret creation, detail updates, reset, and revocation. A new Secret
@@ -52,49 +69,78 @@ If the reload fails, `State unavailable` blocks new configuration actions until
 explicit Refresh succeeds. An existing draft or delete confirmation may Retry or
 Cancel under its retained owner, and a successful retry may conservatively leave
 the unavailable marker until Refresh. A session-invalidating `401` returns to
-administrator login and discards idle drafts. Operations already in flight keep
+OAuth login and discards idle drafts. Operations already in flight keep
 their owners until their handlers settle: successful App or Secret issuance
 retains its plaintext display through Saved and Done, and a failed operation
-releases its retained owner. An unrelated request losing administrator authority
+releases its retained owner. An unrelated request losing Console authentication
 does not prove that pending issuance failed. These controls do not coordinate
 separate Console browsers or API clients.
 
 Protect runtime credentials and the database using deployment access controls.
 The database contains application definitions and SHA-256 digests of randomly
 generated 256-bit product Secrets, their names and descriptions, and lifecycle
-metadata. It contains no end-user records, provider
-tokens, identity results, login transactions, or administrator sessions.
+metadata. It also stores Console platform accounts, linked normalized identity
+profiles, and one-time bootstrap status. It stores no external product users, raw
+provider `origin`, upstream tokens, identity results, login transactions, or
+Console sessions.
 
 Reset atomically revokes one active credential and issues a new ID and key with
 the same name and description. Its old key stops authenticating after commit,
 so update the product with the new value immediately. If the one-time response
 is lost, create another Secret; the reset value cannot be recovered or replayed.
 
-The administrator password is read directly from `UNIAUTH_ADMIN_PASSWORD` and
-compared exactly with Console login input. It must be a single line: empty values,
-values longer than 1024 bytes, and values containing carriage return (CR) or line
-feed (LF) fail startup. Spaces, dollar signs, and Unicode are preserved; no
-trimming is applied. The Console password control removes CR and LF, making
-multiline passwords unusable through that interface. The deployment environment
-holds the password, and SQLite does not store it. Changing it requires a restart,
-which invalidates administrator sessions, pending product logins, and completed
-results.
+## Platform login and administrator bootstrap
 
-For an existing deployment, remove `UNIAUTH_ADMIN_PASSWORD_HASH` from the VM-owned
-`.env` and supply the actual login password:
+The Console supports OAuth only through all configured personal Microsoft,
+Google, and GitHub providers. Password login and its configuration variables are
+removed. In the existing deployment `.env`, specify the initial administrator
+email and provider credential pairs:
 
 ```dotenv
-UNIAUTH_ADMIN_PASSWORD='YOUR_ADMINISTRATOR_PASSWORD'
+UNIAUTH_INITIAL_ADMIN_EMAIL=sychenjianjun@gmail.com
 ```
 
-The [deployment template](../../deploy/.env.example) leaves this variable empty.
-Set an administrator password before starting the service; copying the template
-unchanged fails startup. Use single quotes in Compose `.env` files to preserve
-literal dollar signs. Deploy an image built from the direct-password
-implementation, then recreate the container with
-`docker compose up -d --force-recreate`. The old hash variable is
-not read by that image. App configuration and product Secret digests remain
-unchanged. The [deployment reference](deployment.md) owns the release procedure.
+The [deployment template](../../deploy/.env.example) leaves this value empty;
+set it explicitly before starting the service. It must be a plain email address
+of at most 254 bytes, without whitespace, display names, or angle brackets.
+Startup also requires at least one complete provider pair.
+
+Startup records the pending bootstrap email without creating a seed account.
+The first Google or GitHub normalized identity matching that email with
+`email_verified=true` atomically claims administrator authority for its actual
+platform account, through sign-in or explicit linking. Email matching is
+case-insensitive; it never merges accounts. Microsoft's unknown verification value
+cannot claim that authority. A deployment configured only for Microsoft can
+serve ordinary users, but needs a Google or GitHub provider with matching verified
+email evidence to claim its administrator.
+
+Bootstrap trusts the provider's assertion that the selected email was verified.
+This is not a fresh mailbox challenge or a guarantee of continued mailbox
+control. After the claim, administrator authority remains bound to the stable
+platform account regardless of later profile-email or deployment-email changes.
+Before the claim, restarting with a different configured email updates the pending
+bootstrap target. Changing this value after the claim does not transfer the role
+or grant another administrator. No password or credential fallback exists.
+
+Stable provider-qualified IDs identify accounts. Signing in with a new identity
+creates a new account, even if its email matches another account. To use multiple
+login methods for one account, sign in to that account and explicitly link each
+additional identity before signing out. Linking requires the initiating session
+to stay live until completion and rejects an identity owned by another account.
+
+After listener reservation, service initialization provisions the protected
+Console App with the exact callback `<UNIAUTH_PUBLIC_URL>/console/auth/callback`
+and all configured providers. Its backend-only random Secret rotates during that
+initialization, including on restart; only its digest persists. Ordinary
+management cannot list, edit, delete, or issue credentials for that App. The
+Console retrieves its result in process through the gateway's authenticated
+handover operation, sharing the external HTTP result's expiry and single-use rules.
+
+Administrators can view minimal user summaries and created-App counts only.
+They manage their own Apps under the same ownership restrictions as other users.
+The [platform decision](../../.agents/notes/implemented/architecture/2026-10-13-public-oauth-platform.md)
+owns bootstrap trust, account linking, and restricted administrator authority;
+the [API reference](api.md) defines login, linking, and user-list responses.
 
 ## Product SDK configuration
 
@@ -153,17 +199,20 @@ The [API reference](api.md) owns the response fields, selection rules, and error
 
 SQLite uses embedded Goose migrations, one database connection, WAL journaling,
 full synchronous writes, and a five-second busy timeout. Application and Secret
-configuration survives restarts. Embedded migration 2 adds Secret names and
-descriptions to existing databases. Every existing row, active or revoked,
-receives `Secret <id>` as its name and an empty description; IDs, verification
-digests, creation and revocation times, and the App lookup index are retained.
-Existing credentials continue authenticating without reissue. The service reads
-the migrated schema directly. Operators can replace these generated labels in
-the Console without changing credential validity. Back up the live SQLite
-database with a SQLite-aware backup method or stop the process before copying
-its files. The [Secret metadata decision](../../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md)
-owns this upgrade and its metadata limits; the [API reference](api.md) owns
-creation and detail-update requests.
+configuration, platform accounts, and linked identities survive restarts. Embedded
+migration 3 intentionally deletes every pre-platform App and Secret and creates
+the final owner-scoped platform schema. Recreate product registrations and replace
+product backend credentials after the upgrade. No legacy rows are assigned to an
+administrator, and no old-data compatibility branch is retained. Later startups
+preserve newly created user accounts and Apps while rotating the private Console
+credential.
+
+Back up the live SQLite database with a SQLite-aware method or stop the process
+before copying its files. A backup preserves the old registration data for
+reference; the new schema does not reuse those credentials. The
+[platform decision](../../.agents/notes/implemented/architecture/2026-10-13-public-oauth-platform.md)
+owns this deliberate reset. The [Secret metadata decision](../../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md)
+retains metadata rules and the prior migration's rationale.
 
 The following limits are fixed by service composition:
 
@@ -177,8 +226,8 @@ The following limits are fixed by service composition:
 | Provider HTTP and exchange deadline | 20 seconds. |
 | Callback processing deadline | 30 seconds. |
 | Each upstream response | 8 MiB; combined GitHub email response pages also limited to 8 MiB. |
-| Administrator session | 8 hours; at most 1,000 live sessions. |
-| Administrator login rate | Burst of 5 attempts, then 1 per second globally. |
+| Console session | 8 hours; at most 1,000 live sessions. |
+| Pending Console login or link | 10 minutes; at most 1,000 pending flows. |
 | HTTP request body | 1 MiB globally, with smaller endpoint-specific limits. |
 | HTTP header size | 16 KiB. |
 | HTTP read-header / read / write / idle timeout | 5 / 15 / 45 / 60 seconds. |
@@ -194,8 +243,8 @@ when upstream or cache size limits are exceeded.
 Deploy a single UniAuth instance. Authorization, provider callbacks, and result
 retrieval must reach the process holding the transient state. Multiple replicas
 require an explicit state or routing design. A restart loses outstanding login
-transactions, pending results, and administrator sessions. Products start a fresh
-login; durable App configuration remains.
+transactions, pending results, and Console sessions. Products start a fresh
+login; platform accounts, links, and owned App configuration remain.
 
 On SIGINT or SIGTERM, the HTTP server stops accepting requests and drains
 accepted requests within the shutdown deadline before releasing transient state
@@ -212,7 +261,8 @@ result; later unavailable claims cannot recover that correlation after deletion.
 Cleanup logs report aggregate expired-entry counts.
 
 Authorized management mutations emit `console management operation` events with
-`operation_id`, `request_id`, `action`, `affected_app_id`, `phase=completed`,
+`operation_id`, `request_id`, `action`, `actor_account_id`, `affected_app_id`,
+`phase=completed`,
 `outcome`, `error_category`, and HTTP `status`. Supported actions are `app.create`,
 `app.update`, `app.delete`, `secret.create`, `secret.update`, `secret.reset`, and
 `secret.revoke`. The response header `X-Operation-ID` correlates the completed
@@ -221,7 +271,8 @@ Failed mutations retain safe status and error-category information without
 Secrets, App display values, or
 Secret names and descriptions.
 
-Identity payloads, account identifiers, email addresses, Secrets, tokens, result
+Management audit includes the opaque platform account ID for actor correlation.
+Identity payloads, upstream identity IDs, email addresses, Secrets, tokens, result
 codes, states, and full URLs with sensitive query parameters are excluded from
 application logs. Configure reverse-proxy logs to preserve that policy as well.
 Health and readiness routes are described in the [API reference](api.md).
@@ -247,17 +298,21 @@ standalone external Go consumer. The isolated `e2e/sdk/` module then runs both
 clients against the Go authentication handler and SQLite configuration with a
 fixture provider, race detection, and a two-minute timeout. `make sdks` builds the Go module and JavaScript
 output independently; `make build` includes those builds. `make check` validates
-active documents and skill metadata, formatting, Go vet for service, SDK, and
-integration modules,
-frontend/SDK types, and frontend/SDK formatting.
+active documents and skill metadata, formatting, Go vet for service, SDK,
+integration, and browser-fixture modules, frontend/SDK types, and frontend/SDK
+formatting.
 
 `make test-release` runs Python standard-library tests for UTC release dates,
 published-tag sequences, registry pagination, and failure handling. `make test`
 includes this gate; these fixtures do not publish an image or deploy a service.
 
-`make browser` runs Playwright against a fresh local service and the interactive
-mockup. Use an existing Chromium executable with
+`make browser` runs Playwright against production server composition with
+controlled OAuth providers from the standalone `e2e/browser/` fixture module,
+fresh SQLite data, and the interactive mockup. Use an existing Chromium executable
+with
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, or place a temporary Playwright browser install
-under `.tmp/`. The browser harness uses local loopback HTTP, fixture credentials,
-isolated runtime data, one worker, and no automatic retries. Browser scenarios
-do not prove an interactive Microsoft, Google, or GitHub login.
+under `.tmp/`. The browser harness uses local loopback HTTP, fixture OAuth providers,
+isolated runtime data, one worker, and no automatic retries. It exercises the
+Console through gateway authorization, provider and Console callbacks, one-time
+handover, and session creation, as well as account linking and owner isolation.
+Injected adapters do not prove interactive Microsoft, Google, or GitHub login.

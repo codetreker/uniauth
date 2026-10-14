@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"sync"
 	"time"
@@ -98,11 +99,14 @@ func (s *transientStore) addResult(code string, entry result, now time.Time) err
 	return nil
 }
 
-func (s *transientStore) takeResult(code, appID string, now time.Time) (result, error) {
+func (s *transientStore) takeResult(ctx context.Context, code, appID string, now time.Time) (result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return result{}, ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return result{}, err
 	}
 	entry, ok := s.results[code]
 	if !ok {
