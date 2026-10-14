@@ -129,11 +129,22 @@ configuration and are distinct from App credentials.
 
 ## Public Console accounts and authority
 
+The `serve` command validates deployment configuration and reserves its TCP
+listener before initializing the service. Database opening, migrations, pending
+bootstrap updates, and protected Console App provisioning follow that reservation.
+An occupied or unavailable listener therefore fails without changing database
+state or the running process's Console credential. If service initialization
+fails, the command closes the reserved listener and preserves the failure cause;
+once initialized, the service owns it through serving and shutdown.
+
 The server provisions a protected Console App. Its exact callback is
 `<UNIAUTH_PUBLIC_URL>/console/auth/callback`; its allowed providers are all
-configured upstream providers. Startup rotates its backend-only random Secret
-and stores only the verification digest in SQLite. Management APIs neither list
-nor permit modification of that system App.
+configured upstream providers. Service initialization rotates its backend-only
+random Secret and stores only the verification digest in SQLite. This rotation
+continues on restart after listener reservation. Management APIs neither list
+nor permit modification of that system App. Listener reservation does not make
+later initialization failures transactional or support multiple instances sharing
+a database on different addresses.
 
 Console login starts the ordinary gateway authorization flow. At its callback,
 Console consumes its browser-bound pending state, then retrieves the App-bound

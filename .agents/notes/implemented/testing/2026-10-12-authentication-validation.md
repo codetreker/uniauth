@@ -44,7 +44,11 @@ responses, including invalid responses and faults. These tests preserve errors
 and observe externally visible effects. Console origin regressions cover browser
 serialization of configured uppercase and IDNA domains, IPv6 literals, and
 default or zero-padded ports through login and CRUD requests. Foreign, null,
-noncanonical, and multiple Origin values and invalid CSRF remain rejected.
+noncanonical, and multiple Origin values and invalid CSRF remain rejected. Command
+startup regressions verify that a rejected listener bind leaves database state,
+pending bootstrap configuration, Console App configuration, and its existing
+credential unchanged. They also verify listener release after service
+initialization errors, preserving original failure causes.
 
 Frontend configuration regressions hold mutation responses open after the
 simulated backend commits. They verify that Edit, enable/disable, and deletion

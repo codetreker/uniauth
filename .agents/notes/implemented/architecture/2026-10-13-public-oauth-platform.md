@@ -15,11 +15,23 @@ same gateway that products integrate.
 
 The Console is an OAuth-only UniAuth App using every configured personal
 Microsoft, Google, and GitHub provider. Anyone can sign in and create Apps owned
-by their platform account. Startup requires at least one configured provider and
-provisions a protected system Console App whose callback and allowed providers
-come from deployment configuration. Its random backend-only Secret rotates at
-startup; SQLite stores only its verification digest. Management APIs cannot list,
-change, delete, or issue credentials for that App.
+by their platform account. Startup requires at least one configured provider.
+The `serve` command validates configuration and reserves the configured TCP
+listener before service initialization opens or migrates SQLite, updates pending
+bootstrap configuration, or provisions the protected system Console App. Its
+callback and allowed providers come from deployment configuration. Its random
+backend-only Secret rotates during that initialization, including on restart;
+SQLite stores only its verification digest. Management APIs cannot list, change,
+delete, or issue credentials for that App.
+
+Listener reservation precedes durable initialization because replacing the
+private credential changes authority used by the running Console. A process
+rejected at an occupied address must not rotate that credential or otherwise
+change the database. Initialization errors close the reserved listener while
+preserving their original cause; the initialized service owns the listener
+through serving and shutdown. This ordering leaves the existing credential
+lifecycle intact and makes no transactional guarantee for later initialization
+failures.
 
 The Console starts ordinary gateway authorization and, at callback, atomically
 consumes its own browser-bound pending state before retrieving the result through
@@ -138,7 +150,10 @@ personal information as well as owned App configuration and digests. Complete
 external handover payloads retain their five-minute in-memory policy. Restart
 invalidates gateway flows/results and Console pending flows/sessions, while
 preserving accounts, links, and product registrations created after migration.
-All transient steps still require one process.
+All transient steps still require one process. A failed listener bind leaves the
+running instance's Console credential, configuration, and bootstrap state intact.
+Listener reservation is not a database or distributed singleton lock: instances
+on different listener addresses sharing one database remain unsupported.
 
 Automated tests use controlled identity and OAuth fixtures. They establish local
 ownership, bootstrap, linking, browser binding, and handover behavior without

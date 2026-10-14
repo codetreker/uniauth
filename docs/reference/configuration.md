@@ -1,7 +1,18 @@
 # Configuration and Operations
 
-`uniauth serve` reads deployment environment variables and starts one Go process.
-With no command, `serve` is selected. `uniauth help` prints usage.
+`uniauth serve` reads and validates deployment environment variables, then reserves
+`UNIAUTH_LISTEN_ADDR` before initializing the service. With no command, `serve` is
+selected. `uniauth help` prints usage.
+
+If listener binding fails, the command does not open or migrate SQLite, update
+pending bootstrap configuration, reconcile the Console App, or rotate its private
+credential. A second command rejected at an occupied address leaves the running
+instance's Console login and identity linking usable, even when the rejected
+command supplies different configuration. If service initialization fails after
+binding, the reservation is closed and the original error remains available.
+The initialized service owns the listener through serving and shutdown. This
+ordering protects listener-bind failures; it does not guarantee rollback of every
+later initialization failure or permit separate instances to share one database.
 
 ## Environment
 
@@ -117,9 +128,10 @@ login methods for one account, sign in to that account and explicitly link each
 additional identity before signing out. Linking requires the initiating session
 to stay live until completion and rejects an identity owned by another account.
 
-Startup provisions the protected Console App with the exact callback
-`<UNIAUTH_PUBLIC_URL>/console/auth/callback` and all configured providers. Its
-backend-only random Secret rotates at startup; only its digest persists. Ordinary
+After listener reservation, service initialization provisions the protected
+Console App with the exact callback `<UNIAUTH_PUBLIC_URL>/console/auth/callback`
+and all configured providers. Its backend-only random Secret rotates during that
+initialization, including on restart; only its digest persists. Ordinary
 management cannot list, edit, delete, or issue credentials for that App. The
 Console retrieves its result in process through the gateway's authenticated
 handover operation, sharing the external HTTP result's expiry and single-use rules.
