@@ -353,6 +353,10 @@ describe("OAuth Console", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Revoke secret" }),
     );
+    await screen.findByText(
+      "No active secrets. Create a secret to connect this application.",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     await screen.findByText("Revoked");
     expect(api.revokeSecret).toHaveBeenCalledWith(example.id, "sec_original");
     expect(
@@ -412,6 +416,7 @@ describe("OAuth Console", () => {
     );
     await screen.findByText("Production API");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Edit details for secret sec_retired",
@@ -444,6 +449,206 @@ describe("OAuth Console", () => {
     });
   });
 
+  it("partitions secrets into counted accessible tabs with keyboard navigation and defaults on App opening", async () => {
+    const other = { ...example, id: "app_other", name: "Other" };
+    const rows: Secret[] = [
+      {
+        id: "sec_original",
+        name: "Production",
+        description: "",
+        created_at: example.created_at,
+      },
+      {
+        id: "sec_retired",
+        name: "Retired",
+        description: "Audit history",
+        created_at: example.created_at,
+        revoked_at: example.created_at,
+      },
+    ];
+    const api = apiFixture({
+      listApps: vi.fn().mockResolvedValue([example, other]),
+      listSecrets: vi.fn().mockResolvedValue(rows),
+    });
+    render(<Console api={api} />);
+    await openApp();
+    const active = screen.getByRole("tab", { name: "Active 1" });
+    const disabled = screen.getByRole("tab", { name: "Disabled 1" });
+    expect(active.getAttribute("aria-selected")).toBe("true");
+    expect(active.tabIndex).toBe(0);
+    expect(disabled.tabIndex).toBe(-1);
+    expect(screen.queryByText("sec_retired")).toBeNull();
+    expect(screen.getByRole("tabpanel").id).toBe(
+      active.getAttribute("aria-controls"),
+    );
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+      active.id,
+    );
+    active.focus();
+    fireEvent.keyDown(active, { key: "End" });
+    expect(document.activeElement).toBe(disabled);
+    expect(disabled.getAttribute("aria-selected")).toBe("true");
+    expect(disabled.tabIndex).toBe(0);
+    expect(active.tabIndex).toBe(-1);
+    expect(screen.getByText("sec_retired")).toBeDefined();
+    expect(screen.queryByText("sec_original")).toBeNull();
+    expect(screen.getByRole("tabpanel").id).toBe(
+      disabled.getAttribute("aria-controls"),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Reset secret sec_retired" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Revoke secret sec_retired" }),
+    ).toBeNull();
+    fireEvent.keyDown(disabled, { key: "Home" });
+    expect(document.activeElement).toBe(active);
+    fireEvent.keyDown(active, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(disabled);
+    fireEvent.keyDown(disabled, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(active);
+    expect(api.listSecrets).toHaveBeenCalledTimes(1);
+    fireEvent.click(disabled);
+    fireEvent.click(screen.getByRole("button", { name: "← All applications" }));
+    await openApp();
+    expect(
+      screen
+        .getByRole("tab", { name: /^Active/ })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
+    fireEvent.click(screen.getByRole("button", { name: "← All applications" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
+    await screen.findByText("sec_original");
+    expect(
+      screen
+        .getByRole("tab", { name: /^Active/ })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+  });
+
+  it("preserves Disabled across metadata saves and guards tab changes until a created key is saved", async () => {
+    let rows: Secret[] = [
+      {
+        id: "sec_original",
+        name: "Production",
+        description: "",
+        created_at: example.created_at,
+      },
+      {
+        id: "sec_retired",
+        name: "Retired",
+        description: "Audit history",
+        created_at: example.created_at,
+        revoked_at: example.created_at,
+      },
+    ];
+    const api = apiFixture({
+      listSecrets: vi.fn(async () => structuredClone(rows)),
+      updateSecret: vi.fn(async (_appID, id, input) => {
+        const updated = { ...rows[1], ...input, id };
+        rows = [rows[0], updated];
+        return updated;
+      }),
+      createSecret: vi.fn(async (_appID, input) => {
+        const issued = {
+          id: "sec_created_tab",
+          ...input,
+          created_at: example.created_at,
+          secret: "created-from-disabled",
+        };
+        rows.push({ id: issued.id, ...input, created_at: issued.created_at });
+        return issued;
+      }),
+    });
+    render(<Console api={api} />);
+    await openApp();
+    const active = screen.getByRole("tab", { name: /^Active/ });
+    const disabled = screen.getByRole("tab", { name: /^Disabled/ });
+    fireEvent.click(disabled);
+    act(() => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Edit details for secret sec_retired",
+        }),
+      );
+      active.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      fireEvent.keyDown(disabled, { key: "Home" });
+    });
+    expect(disabled.getAttribute("aria-selected")).toBe("true");
+    expect((active as HTMLButtonElement).disabled).toBe(true);
+    let editor = screen.getByRole("dialog", { name: "Edit secret details" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "Retired production" },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Save details" }),
+    );
+    await screen.findByText("Retired production");
+    expect(disabled.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
+    editor = screen.getByRole("dialog", { name: "Create secret" });
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: "New production" },
+    });
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Create secret" }),
+    );
+    const credential = await screen.findByRole("dialog", {
+      name: "Save your app secret",
+    });
+    expect(active.getAttribute("aria-selected")).toBe("true");
+    disabled.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(active.getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(credential).getByRole("checkbox"));
+    fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
+    await screen.findByText("sec_created_tab");
+    expect(
+      screen
+        .getByRole("tab", { name: "Active 2" })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(screen.getByRole("tab", { name: "Disabled 1" })).toBeDefined();
+  });
+
+  it("keeps tabs mounted through loading and errors and provides distinct empty states", async () => {
+    const listing = Promise.withResolvers<Secret[]>();
+    const api = apiFixture({
+      listSecrets: vi
+        .fn()
+        .mockResolvedValue([])
+        .mockReturnValueOnce(listing.promise),
+    });
+    render(<Console api={api} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Manage Example" }),
+    );
+    const active = await screen.findByRole("tab", { name: "Active" });
+    const disabled = screen.getByRole("tab", { name: "Disabled" });
+    fireEvent.click(disabled);
+    disabled.focus();
+    await act(async () =>
+      listing.reject(new Error("Secret list unavailable.")),
+    );
+    await screen.findByText("Secret list unavailable.");
+    expect(screen.getByRole("tab", { name: "Disabled" })).toBe(disabled);
+    expect(document.activeElement).toBe(disabled);
+    expect(screen.queryByRole("tab", { name: "Disabled 0" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText(
+      "No disabled secrets. Revoked secrets appear here.",
+    );
+    expect(screen.getByRole("tab", { name: "Disabled 0" })).toBe(disabled);
+    fireEvent.click(active);
+    expect(
+      screen.getByText(
+        "No active secrets. Create a secret to connect this application.",
+      ),
+    ).toBeDefined();
+    expect(
+      screen.getAllByRole("button", { name: "Create secret" }),
+    ).toHaveLength(1);
+  });
   it("retains metadata drafts and errors after a failed save and releases the App only on cancellation", async () => {
     const api = apiFixture({
       updateSecret: vi
@@ -978,7 +1183,11 @@ describe("OAuth Console", () => {
     await waitFor(() =>
       expect(screen.queryByText("reset-only-once")).toBeNull(),
     );
+    await screen.findByText("sec_replacement");
+    expect(screen.queryByText("sec_original")).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     await screen.findByText("Revoked");
+    fireEvent.click(screen.getByRole("tab", { name: /^Active/ }));
     expect(
       (screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement)
         .disabled,
@@ -1084,6 +1293,7 @@ describe("OAuth Console", () => {
     );
     expect(resetSecret).toHaveBeenCalledTimes(1);
     expect(screen.getByText("sec_replacement")).toBeDefined();
+    fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     expect(screen.getByText("Revoked")).toBeDefined();
     expect(screen.queryByText("reset-only-once")).toBeNull();
   });

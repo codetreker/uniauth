@@ -105,8 +105,10 @@ creation. Browser scenarios cover OAuth login, manual identity linking and
 conflicts, equal-email separation, missing-email Microsoft identities, browser
 binding, replay and logout, two-user App isolation, administrator summary-only
 visibility, App management, named one-time Secret display, exact multiline
-descriptions, active and revoked detail editing, rotation, confirmed named reset,
-and named revocation. A separate mockup uses production components and styles
+descriptions, Active/Disabled tab selection and empty states, active and revoked
+detail editing, rotation, confirmed named reset, and named revocation. Tab
+assertions cover keyboard selection, per-App defaults, and movement between views
+after reset or revocation. A separate mockup uses production components and styles
 for account, App, credential, and responsive interaction. These injected adapters
 exercise local composition rather than live Microsoft, Google, or GitHub services.
 Existing browsers or repository-local temporary browser installations prevent

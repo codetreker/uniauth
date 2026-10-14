@@ -1,6 +1,6 @@
 # Public OAuth Platform Delivery Receipt
 
-Date: 2026-10-13
+Date: 2026-10-14
 
 ## Delivered behavior
 
@@ -43,10 +43,10 @@ owns the rationale; the [API](../reference/api.md) and
 | Service Go tests | 536 reported cases, including 116 top-level tests, passed with race detection; total coverage 96.6%. Apps 93.6%, Auth 99.5%, Console 97.8%, server 96.5%, CLI 96.8%, providers 95.7%, embedded Console 97.0%. |
 | Go SDK | 106 reported cases passed with race detection; coverage 99.3%. |
 | Coverage policy | Total 90%, package 85%, function 80%, and critical-block requirements passed unchanged for both Go modules. |
-| Console and SDK tests | All 57 Console tests and 16 JavaScript SDK tests passed. |
+| Console and SDK tests | All 60 Console tests and 16 JavaScript SDK tests passed. |
 | Release and package consumers | All 17 existing release tests, the packed JavaScript consumer, and the external Go consumer passed. |
-| SDK/gateway integration | Both race-enabled integration tests passed in 1.340 seconds. |
-| Browser suite | All seven scenarios passed in 36.8 seconds. Four affected scenarios passed again in 23.0 seconds after the final mobile layout and callback-harness corrections. |
+| SDK/gateway integration | Both race-enabled integration tests passed in 1.424 seconds. |
+| Browser suite | All seven scenarios passed in 45.4 seconds, covering the platform flows and existing Secret status tabs. Both desktop and mobile previews passed again in 16.4 seconds after the final mobile history assertions. |
 | Independent reviews | Storage and server, Console and authentication, and frontend reviews found no remaining confirmed in-scope Critical/Major issue. Fourteen focused caller probes passed across those reviews. |
 | Final assets | Final responsive CSS was rebuilt into the executable; TypeScript, formatting, and diff checks passed. Desktop and mobile login, account, and user-summary screenshots were inspected. |
 
@@ -61,8 +61,10 @@ Browser scenarios use the actual service composition with deterministic OAuth
 providers and fresh local SQLite. They retain Secret metadata, reset, revocation,
 and one-time acknowledgement checks while exercising public signup, manual
 binding, same-email separation, Microsoft missing email, administrator privacy,
-and production-component previews. Final mobile user summaries keep names and
-emails readable with application counts visible.
+and production-component previews. Secret tab assertions retain keyboard
+navigation, Active defaults, and reset and revocation transitions into Disabled
+history. Final mobile user summaries keep names and emails readable with
+application counts visible.
 
 ## Deferred follow-up and limits
 

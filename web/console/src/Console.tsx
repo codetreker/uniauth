@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { APIError } from "./api";
 import { AccountAvatar, AccountView, UsersView, accountName } from "./accounts";
 import {
@@ -59,6 +59,11 @@ type AppPhase =
   | "resetting-secret"
   | "revoking"
   | "credential";
+type SecretTab = "active" | "disabled";
+const secretTabs: { id: SecretTab; label: string }[] = [
+  { id: "active", label: "Active" },
+  { id: "disabled", label: "Disabled" },
+];
 type SecretDraft = { app: Application; secret: Secret | "new" };
 type AppOwner = { key: string | symbol; token: symbol };
 const newApplication = Symbol("new application");
@@ -112,6 +117,13 @@ export const Console = ({
   const [pending, setPending] = useState(false);
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [secretsLoading, setSecretsLoading] = useState(false);
+  const [secretsLoaded, setSecretsLoaded] = useState(false);
+  const [secretView, setSecretView] = useState<{
+    appID: string;
+    tab: SecretTab;
+  }>();
+  const secretTabsID = useId();
+  const secretTabButtons = useRef(new Map<SecretTab, HTMLButtonElement>());
   const [secretsError, setSecretsError] = useState<string>();
   const [secretRevision, setSecretRevision] = useState(0);
   const owners = useRef(
@@ -134,6 +146,23 @@ export const Console = ({
   const configurationRevision = useRef(0);
   const readGeneration = useRef(0);
   const current = apps.find((app) => app.id === selected);
+  const secretTab =
+    secretView !== undefined && secretView.appID === selected
+      ? secretView.tab
+      : "active";
+  const currentSecrets = secretAppID.current === selected ? secrets : [];
+  const activeSecrets = currentSecrets.filter(
+    (secret) => secret.revoked_at === undefined,
+  );
+  const disabledSecrets = currentSecrets.filter(
+    (secret) => secret.revoked_at !== undefined,
+  );
+  const visibleSecrets =
+    secretTab === "active" ? activeSecrets : disabledSecrets;
+  const secretCountsAvailable =
+    secretAppID.current === selected &&
+    secretsLoaded &&
+    secretsError === undefined;
 
   const publishOperations = () =>
     setOperations(
@@ -298,7 +327,19 @@ export const Console = ({
   };
   const navigate = (change: () => void) => {
     if (dialogOwned()) return;
+    setSecretView(undefined);
     change();
+  };
+  const selectSecretTab = (tab: SecretTab) => {
+    if (
+      selected === undefined ||
+      dialogOwned() ||
+      owners.current.has(selected) ||
+      logoutPending.current
+    )
+      return false;
+    setSecretView({ appID: selected, tab });
+    return true;
   };
   const appStatus = (app: Application) => {
     const phase = operations.get(app.id);
@@ -429,6 +470,7 @@ export const Console = ({
     if (secretAppID.current !== selected) {
       secretAppID.current = selected;
       setSecrets([]);
+      setSecretsLoaded(false);
     }
     const revision = secretConfigurationRevision.current;
     const generation = ++secretReadGeneration.current;
@@ -441,8 +483,10 @@ export const Console = ({
           active &&
           revision === secretConfigurationRevision.current &&
           generation === secretReadGeneration.current
-        )
+        ) {
           setSecrets(result);
+          setSecretsLoaded(true);
+        }
       })
       .catch((cause: unknown) => {
         if (
@@ -547,6 +591,7 @@ export const Console = ({
     try {
       if (secret === "new") {
         const issued = await api.createSecret(app.id, input);
+        setSecretView({ appID: app.id, tab: "active" });
         setCredential({
           app,
           secret: issued.secret,
@@ -715,6 +760,7 @@ export const Console = ({
           }
           secretReadGeneration.current += 1;
           setSecrets(currentSecrets);
+          setSecretsLoaded(true);
           setSecretsError(undefined);
           setSecretsLoading(false);
           restoreConfirmation();
@@ -786,6 +832,7 @@ export const Console = ({
       setSelected(undefined);
       setLoaded(false);
       setSecrets([]);
+      setSecretsLoaded(false);
       setError(undefined);
     } catch (cause) {
       reportError(cause);
@@ -1191,132 +1238,213 @@ export const Console = ({
                         Create secret
                       </button>
                     </div>
-                    {secretsLoading ? (
-                      <Loading label="Loading credentials…" />
-                    ) : secretsError !== undefined ? (
-                      <>
-                        <ErrorNotice message={secretsError} />
+                    <div
+                      className="secret-tabs"
+                      role="tablist"
+                      aria-label="App secrets"
+                    >
+                      {secretTabs.map(({ id, label }) => (
                         <button
-                          className="button secondary"
-                          onClick={() =>
-                            setSecretRevision((value) => value + 1)
-                          }
+                          key={id}
+                          id={`${secretTabsID}-${id}-tab`}
+                          ref={(button) => {
+                            if (button === null)
+                              secretTabButtons.current.delete(id);
+                            else secretTabButtons.current.set(id, button);
+                          }}
+                          role="tab"
+                          aria-selected={secretTab === id}
+                          aria-controls={`${secretTabsID}-${id}-panel`}
+                          tabIndex={secretTab === id ? 0 : -1}
+                          disabled={dialogOwned() || operations.has(current.id)}
+                          onClick={() => selectSecretTab(id)}
+                          onKeyDown={(event) => {
+                            const next =
+                              event.key === "Home"
+                                ? "active"
+                                : event.key === "End"
+                                  ? "disabled"
+                                  : event.key === "ArrowLeft" ||
+                                      event.key === "ArrowRight"
+                                    ? id === "active"
+                                      ? "disabled"
+                                      : "active"
+                                    : undefined;
+                            if (next === undefined) return;
+                            event.preventDefault();
+                            if (selectSecretTab(next))
+                              secretTabButtons.current.get(next)?.focus();
+                          }}
                         >
-                          Try again
+                          {label}
+                          {secretCountsAvailable && (
+                            <>
+                              {" "}
+                              <span className="count">
+                                {id === "active"
+                                  ? activeSecrets.length
+                                  : disabledSecrets.length}
+                              </span>
+                            </>
+                          )}
                         </button>
-                      </>
-                    ) : secrets.length === 0 ? (
-                      <div className="compact-empty">
-                        <Icon name="key" />
-                        <p>
-                          No secrets yet. Create a secret to connect this
-                          application.
-                        </p>
+                      ))}
+                    </div>
+                    {secretTabs.map(({ id }) => (
+                      <div
+                        key={id}
+                        id={`${secretTabsID}-${id}-panel`}
+                        role="tabpanel"
+                        aria-labelledby={`${secretTabsID}-${id}-tab`}
+                        hidden={secretTab !== id}
+                        tabIndex={0}
+                      >
+                        {secretTab === id && (
+                          <>
+                            {secretsLoading ? (
+                              <Loading label="Loading credentials…" />
+                            ) : secretsError !== undefined ? (
+                              <>
+                                <ErrorNotice message={secretsError} />
+                                <button
+                                  className="button secondary"
+                                  onClick={() =>
+                                    setSecretRevision((value) => value + 1)
+                                  }
+                                >
+                                  Try again
+                                </button>
+                              </>
+                            ) : visibleSecrets.length === 0 ? (
+                              <div className="compact-empty">
+                                <Icon name="key" />
+                                <p>
+                                  {secretTab === "active"
+                                    ? "No active secrets. Create a secret to connect this application."
+                                    : "No disabled secrets. Revoked secrets appear here."}
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="table-scroll">
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th>Secret</th>
+                                      <th>Created</th>
+                                      <th>Status</th>
+                                      <th>
+                                        <span className="sr-only">Actions</span>
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {visibleSecrets.map((secret) => (
+                                      <tr key={secret.id}>
+                                        <td>
+                                          <div className="secret-details">
+                                            <strong>{secret.name}</strong>
+                                            <p className="secret-description">
+                                              {secret.description === "" ? (
+                                                <span className="hint">
+                                                  No description
+                                                </span>
+                                              ) : (
+                                                secret.description
+                                              )}
+                                            </p>
+                                            <code>{secret.id}</code>
+                                          </div>
+                                        </td>
+                                        <td>{date(secret.created_at)}</td>
+                                        <td>
+                                          <span
+                                            className={`badge ${secret.revoked_at === undefined ? "success" : "muted"}`}
+                                          >
+                                            {secret.revoked_at === undefined
+                                              ? "Active"
+                                              : "Revoked"}
+                                          </span>
+                                          {secret.revoked_at !== undefined && (
+                                            <span className="revoked-date">
+                                              {date(secret.revoked_at)}
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td>
+                                          <div className="secret-actions">
+                                            <button
+                                              aria-label={`Edit details for secret ${secret.id}`}
+                                              className="text-button"
+                                              disabled={
+                                                pending ||
+                                                operations.has(current.id) ||
+                                                unavailable.has(current.id)
+                                              }
+                                              onClick={() =>
+                                                openSecretEditor(
+                                                  current,
+                                                  secret,
+                                                )
+                                              }
+                                            >
+                                              Edit details
+                                            </button>
+                                            {secret.revoked_at ===
+                                              undefined && (
+                                              <>
+                                                <button
+                                                  aria-label={`Reset secret ${secret.id}`}
+                                                  className="text-button"
+                                                  disabled={
+                                                    pending ||
+                                                    operations.has(
+                                                      current.id,
+                                                    ) ||
+                                                    unavailable.has(
+                                                      current.id,
+                                                    ) ||
+                                                    secretsLoading ||
+                                                    secretsError !== undefined
+                                                  }
+                                                  onClick={() =>
+                                                    resetSecret(current, secret)
+                                                  }
+                                                >
+                                                  Reset
+                                                </button>
+                                                <button
+                                                  aria-label={`Revoke secret ${secret.id}`}
+                                                  className="text-button danger-text"
+                                                  disabled={
+                                                    pending ||
+                                                    operations.has(
+                                                      current.id,
+                                                    ) ||
+                                                    unavailable.has(current.id)
+                                                  }
+                                                  onClick={() =>
+                                                    revokeSecret(
+                                                      current,
+                                                      secret,
+                                                    )
+                                                  }
+                                                >
+                                                  Revoke
+                                                </button>
+                                              </>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
-                    ) : (
-                      <div className="table-scroll">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Secret</th>
-                              <th>Created</th>
-                              <th>Status</th>
-                              <th>
-                                <span className="sr-only">Actions</span>
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {secrets.map((secret) => (
-                              <tr key={secret.id}>
-                                <td>
-                                  <div className="secret-details">
-                                    <strong>{secret.name}</strong>
-                                    <p className="secret-description">
-                                      {secret.description === "" ? (
-                                        <span className="hint">
-                                          No description
-                                        </span>
-                                      ) : (
-                                        secret.description
-                                      )}
-                                    </p>
-                                    <code>{secret.id}</code>
-                                  </div>
-                                </td>
-                                <td>{date(secret.created_at)}</td>
-                                <td>
-                                  <span
-                                    className={`badge ${secret.revoked_at === undefined ? "success" : "muted"}`}
-                                  >
-                                    {secret.revoked_at === undefined
-                                      ? "Active"
-                                      : "Revoked"}
-                                  </span>
-                                  {secret.revoked_at !== undefined && (
-                                    <span className="revoked-date">
-                                      {date(secret.revoked_at)}
-                                    </span>
-                                  )}
-                                </td>
-                                <td>
-                                  <div className="secret-actions">
-                                    <button
-                                      aria-label={`Edit details for secret ${secret.id}`}
-                                      className="text-button"
-                                      disabled={
-                                        pending ||
-                                        operations.has(current.id) ||
-                                        unavailable.has(current.id)
-                                      }
-                                      onClick={() =>
-                                        openSecretEditor(current, secret)
-                                      }
-                                    >
-                                      Edit details
-                                    </button>
-                                    {secret.revoked_at === undefined && (
-                                      <>
-                                        <button
-                                          aria-label={`Reset secret ${secret.id}`}
-                                          className="text-button"
-                                          disabled={
-                                            pending ||
-                                            operations.has(current.id) ||
-                                            unavailable.has(current.id) ||
-                                            secretsLoading ||
-                                            secretsError !== undefined
-                                          }
-                                          onClick={() =>
-                                            resetSecret(current, secret)
-                                          }
-                                        >
-                                          Reset
-                                        </button>
-                                        <button
-                                          aria-label={`Revoke secret ${secret.id}`}
-                                          className="text-button danger-text"
-                                          disabled={
-                                            pending ||
-                                            operations.has(current.id) ||
-                                            unavailable.has(current.id)
-                                          }
-                                          onClick={() =>
-                                            revokeSecret(current, secret)
-                                          }
-                                        >
-                                          Revoke
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                    ))}
                   </section>
                   <div className="danger-zone">
                     <div>

@@ -430,12 +430,18 @@ must create another Secret and update the product; retrying the old ID does not
 recover the replacement.
 
 The Console collects initial Secret metadata alongside App configuration. For
-later credentials it provides separate creation and detail-editing forms, and
-shows name, description, ID, creation time, and revocation status. Revocation
-and reset confirmations identify the named credential. Reset requires explicit
-confirmation that its current key stops working immediately. One-time plaintext
-displays include credential metadata so the operator can save the value with its
-purpose; later detail edits cannot recover it.
+later credentials it provides separate creation and detail-editing forms. App
+secrets has an `Active` tab for unrevoked records and a `Disabled` tab for revoked
+records, with counts and separate empty states. Opening an App selects `Active`;
+new issuance returns to that tab. Both views show name, description, ID, creation
+time, and revocation status, and permit metadata editing. Reset and revocation
+remain available only for active records. Tab selection supports arrow keys,
+Home, and End and waits for owned dialogs to finish or close.
+
+Revocation and reset confirmations identify the named credential. Reset requires
+explicit confirmation that its current key stops working immediately. One-time
+plaintext displays include credential metadata so the operator can save the value
+with its purpose; later detail edits cannot recover it.
 
 Invalid input returns `400 invalid_input`, unsupported content type returns
 `415 invalid_content_type`, missing records return `404 not_found`, unsupported

@@ -21,15 +21,39 @@ test("final Console components provide an interactive desktop preview", async ({
     page.getByRole("heading", { name: "Borgee", exact: true }),
   ).toBeVisible();
   await expect(
+    page.getByRole("tab", { name: "Active 3", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByRole("tab", { name: "Disabled 1", exact: true }),
+  ).toBeVisible();
+  await expect(
     page.getByRole("row").filter({ hasText: "sec_0_previous" }),
-  ).toContainText("Revoked");
+  ).toHaveCount(0);
   await expect(
     page.getByRole("row").filter({ hasText: "sec_0_current" }),
   ).toContainText("Production backend");
   await expect(
     page.getByRole("row").filter({ hasText: "sec_0_staging" }),
   ).toContainText("No description");
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: ".tmp/mockup-detail.png", fullPage: true });
+  await page.screenshot({
+    path: ".tmp/mockup-secrets-active.png",
+    fullPage: true,
+  });
+  await page.getByRole("tab", { name: /^Active/ }).focus();
+  await page.keyboard.press("End");
+  await expect(page.getByRole("tab", { name: /^Disabled/ })).toBeFocused();
+  await expect(
+    page.getByRole("row").filter({ hasText: "sec_0_previous" }),
+  ).toContainText("Revoked");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: ".tmp/mockup-secrets-disabled.png",
+    fullPage: true,
+  });
+  await page.keyboard.press("Home");
+  await expect(page.getByRole("tab", { name: /^Active/ })).toBeFocused();
   await page
     .getByRole("button", { name: "Reset secret sec_0_current" })
     .click();
@@ -59,10 +83,14 @@ test("final Console components provide an interactive desktop preview", async ({
   await resetCredential.getByRole("button", { name: "Done" }).click();
   await expect(
     page.getByRole("row").filter({ hasText: "sec_0_current" }),
-  ).toContainText("Revoked");
+  ).toHaveCount(0);
   await expect(
     page.getByRole("row").filter({ hasText: replacementID }),
   ).toContainText("Active");
+  await page.getByRole("tab", { name: /^Disabled/ }).click();
+  await expect(
+    page.getByRole("row").filter({ hasText: "sec_0_current" }),
+  ).toContainText("Revoked");
   await page
     .getByRole("button", {
       name: "Edit details for secret sec_0_previous",
@@ -152,6 +180,19 @@ test("preview remains usable on a mobile viewport", async ({ page }) => {
   expect(detailDimensions.document).toBeLessThanOrEqual(
     detailDimensions.viewport,
   );
+  await page.getByRole("tab", { name: "Disabled 1", exact: true }).click();
+  await expect(
+    page.getByRole("row").filter({ hasText: "sec_2_previous" }),
+  ).toContainText("Revoked");
+  await expect(page.getByRole("button", { name: /^Reset secret/ })).toHaveCount(
+    0,
+  );
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: ".tmp/mockup-secrets-disabled-mobile.png",
+    fullPage: true,
+  });
+  await page.getByRole("tab", { name: "Active 3", exact: true }).click();
   await page
     .getByRole("button", {
       name: "Edit details for secret sec_2_unicode",
