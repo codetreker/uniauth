@@ -69,6 +69,13 @@ plaintext accessible through Saved and Done; a failed pending operation must
 release ownership and leave login usable. Idle drafts are discarded without
 releasing owners still held by outstanding requests.
 
+OAuth component assertions distinguish ordinary progress from unfinished App
+work, retain errors and permit retry, preserve synchronous duplicate guards, and
+exercise in-page preview completion. A persisted history event cannot release an
+outstanding start request. Existing issuance regressions also retain the
+Secret-saving warning and ownership when a separate request invalidates the
+session.
+
 SDK assertions exercise callback ambiguity, state mismatches, exact callback
 string preservation, HTTP Basic and JSON request construction, redirect rejection,
 request deadlines and cancellation, typed errors, lost-response behavior, and
@@ -115,6 +122,17 @@ assertions cover keyboard selection, per-App defaults, and movement between view
 after reset or revocation. A separate mockup uses production components and styles
 for account, App, credential, and responsive interaction. These injected adapters
 exercise local composition rather than live Microsoft, Google, or GitHub services.
+Sign-in transition scenarios hold the real start API response, then replace the
+returned authorization URL with a same-document target to observe the return
+from `location.assign`. This probe avoids inspection waits
+observed when pausing a cross-document navigation. Tests compare card/button
+geometry on desktop and mobile, require the selected button to remain pending,
+reject duplicate starts, and preserve linked identities without an early reload.
+They then follow the saved real authorization URL to the controlled provider and
+require browser Back to leave controls usable. Component tests inject persisted
+`pageshow` events to check cached-document restoration; those events do not
+establish that the browser used its history cache during the real Back operation.
+
 Existing browsers or repository-local temporary browser installations prevent
 task tooling from leaving a permanent installation.
 

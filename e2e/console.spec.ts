@@ -57,6 +57,242 @@ const createApplication = async (page: Page, name: string) => {
   return saveCredential(page);
 };
 
+for (const viewport of [
+  { name: "desktop", width: 1440, height: 1000 },
+  { name: "mobile", width: 390, height: 844 },
+]) {
+  test(`OAuth sign-in preserves its layout and pending state through navigation on ${viewport.name}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/console/");
+    const google = page.getByRole("button", {
+      name: "Continue with Google",
+      exact: true,
+    });
+    await expect(google).toBeEnabled();
+    await page.evaluate(() => document.fonts.ready);
+    await google.scrollIntoViewIfNeeded();
+    const geometry = () =>
+      page.locator(".login-card, .oauth-button").evaluateAll((elements) =>
+        elements.map((element) => {
+          const { x, y, width, height } = element.getBoundingClientRect();
+          return { x, y, width, height };
+        }),
+      );
+    const original = await geometry();
+    const returnProbe = new URL("#oauth-start-pending", page.url()).href;
+    let authorizationURL = "";
+    const firstStart = Promise.withResolvers<void>();
+    const releaseFailure = Promise.withResolvers<void>();
+    const retryStart = Promise.withResolvers<void>();
+    const releaseSuccess = Promise.withResolvers<void>();
+    let starts = 0;
+    await page.route("**/console/api/login", async (route) => {
+      starts += 1;
+      if (starts === 1) {
+        firstStart.resolve();
+        await releaseFailure.promise;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "service_unavailable",
+              message: "Sign-in temporarily unavailable.",
+            },
+          }),
+        });
+      } else if (starts === 2) {
+        try {
+          const response = await route.fetch();
+          expect(response.ok()).toBe(true);
+          authorizationURL = (await response.json()).authorization_url;
+          retryStart.resolve();
+          await releaseSuccess.promise;
+          // A same-document destination keeps the real assign-return state observable.
+          await route.fulfill({
+            response,
+            json: { authorization_url: returnProbe },
+          });
+        } catch (error) {
+          retryStart.reject(error);
+          throw error;
+        }
+      } else {
+        await route.continue();
+      }
+    });
+    const expectPending = async (expectedStarts: number) => {
+      await expect(
+        page.getByRole("button", { name: "Connecting…", exact: true }),
+      ).toBeDisabled();
+      await expect(page.locator(".oauth-button:disabled")).toHaveCount(3);
+      await expect(
+        page.getByRole("button", {
+          name: "Continue with Microsoft",
+          exact: true,
+        }),
+      ).toBeDisabled();
+      await expect(
+        page.getByRole("button", { name: "Continue with GitHub", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        page.getByText("Finish the pending operation", { exact: false }),
+      ).toHaveCount(0);
+      expect(await geometry()).toEqual(original);
+      expect(starts).toBe(expectedStarts);
+    };
+    try {
+      await google.evaluate((button) => (button as HTMLButtonElement).click());
+      await firstStart.promise;
+      await expectPending(1);
+      await page.locator(".oauth-button").evaluateAll((buttons) => {
+        for (const button of buttons) (button as HTMLButtonElement).click();
+      });
+      expect(starts).toBe(1);
+      releaseFailure.resolve();
+      await expect(page.getByRole("alert")).toContainText(
+        "Sign-in temporarily unavailable.",
+      );
+      await expect(google).toBeEnabled();
+      await expect(page.locator(".oauth-button:disabled")).toHaveCount(0);
+
+      await google.evaluate((button) => (button as HTMLButtonElement).click());
+      await retryStart.promise;
+      await expect(page.getByRole("alert")).toHaveCount(0);
+      await expectPending(2);
+      await page.locator(".oauth-button").evaluateAll((buttons) => {
+        for (const button of buttons) (button as HTMLButtonElement).click();
+      });
+      expect(starts).toBe(2);
+      releaseSuccess.resolve();
+      await expect(page).toHaveURL(returnProbe);
+      await expectPending(2);
+      await page.locator(".oauth-button").evaluateAll((buttons) => {
+        for (const button of buttons) (button as HTMLButtonElement).click();
+      });
+      expect(starts).toBe(2);
+      await page.goto(authorizationURL);
+      await expect(
+        page.getByRole("heading", {
+          name: "Fixture identity for google",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await page.goBack();
+      await expect(google).toBeEnabled();
+      await expect(page.locator(".oauth-button:disabled")).toHaveCount(0);
+      await page
+        .getByRole("button", { name: "Continue with Microsoft", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", {
+          name: "Fixture identity for microsoft",
+          exact: true,
+        }),
+      ).toBeVisible();
+      expect(starts).toBe(3);
+    } finally {
+      releaseFailure.resolve();
+      releaseSuccess.resolve();
+    }
+  });
+}
+
+test("identity linking holds its account controls and list until external navigation", async ({
+  page,
+}) => {
+  await page.goto("/console/");
+  await signIn(page, "Microsoft", "Identity without email");
+  await page.getByRole("button", { name: "My account", exact: true }).click();
+  await expect(page.locator(".identity-row")).toHaveCount(1);
+  const identities = await page.locator(".identity-list").innerText();
+  const returnProbe = new URL("#oauth-link-pending", page.url()).href;
+  let authorizationURL = "";
+  let identityReloads = 0;
+  let starts = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      request.url().endsWith("/console/api/identities")
+    )
+      identityReloads += 1;
+  });
+  const apiStarted = Promise.withResolvers<void>();
+  const releaseAPI = Promise.withResolvers<void>();
+  await page.route("**/console/api/identities/link", async (route) => {
+    starts += 1;
+    try {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      authorizationURL = (await response.json()).authorization_url;
+      apiStarted.resolve();
+      await releaseAPI.promise;
+      await route.fulfill({
+        response,
+        json: { authorization_url: returnProbe },
+      });
+    } catch (error) {
+      apiStarted.reject(error);
+      throw error;
+    }
+  });
+  const expectPending = async () => {
+    await expect(
+      page.getByRole("button", { name: "Connecting…", exact: true }),
+    ).toBeDisabled();
+    await expect(page.locator(".link-providers button:disabled")).toHaveCount(
+      3,
+    );
+    await expect(
+      page.getByRole("button", { name: "Sign out", exact: true }),
+    ).toBeDisabled();
+    expect(await page.locator(".identity-list").innerText()).toBe(identities);
+    await expect(
+      page.getByText("Loading linked identities…", { exact: true }),
+    ).toHaveCount(0);
+    expect(starts).toBe(1);
+    expect(identityReloads).toBe(0);
+  };
+  try {
+    await page
+      .getByRole("button", { name: "Link GitHub", exact: true })
+      .evaluate((button) => (button as HTMLButtonElement).click());
+    await apiStarted.promise;
+    await expectPending();
+    await page.locator(".link-providers button").evaluateAll((buttons) => {
+      for (const button of buttons) (button as HTMLButtonElement).click();
+    });
+    expect(starts).toBe(1);
+    releaseAPI.resolve();
+    await expect(page).toHaveURL(returnProbe);
+    await expectPending();
+    await page.locator(".link-providers button").evaluateAll((buttons) => {
+      for (const button of buttons) (button as HTMLButtonElement).click();
+    });
+    expect(starts).toBe(1);
+    await page.goto(authorizationURL);
+    await expect(
+      page.getByRole("heading", {
+        name: "Fixture identity for github",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.goBack();
+    await expect(
+      page.getByRole("button", { name: "Sign out", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("button", { name: "My account", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Link GitHub", exact: true }),
+    ).toBeEnabled();
+    await expect(page.locator(".identity-row")).toHaveCount(1);
+  } finally {
+    releaseAPI.resolve();
+  }
+});
+
 test("OAuth account manages applications and one-time credentials against the service", async ({
   page,
   browser,

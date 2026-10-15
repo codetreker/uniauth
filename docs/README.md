@@ -22,6 +22,7 @@ Administrator visibility is limited to minimal user summaries and App counts.
 | [Tag-reference decision](../.agents/notes/implemented/process/2026-10-13-tag-image-references.md) | UTC date, published-tag sequence, and commit hash allocation shared by publication, anonymous pull, and deployment. |
 | [Public GHCR decision](../.agents/notes/implemented/process/2026-10-13-public-ghcr-images.md) | Public image access and package visibility ownership. |
 | [Public platform receipt](tasks/2026-10-13-public-oauth-platform.md) | OAuth login and linking, verified-email bootstrap, owner isolation, deliberate database reset, and observed fixture, coverage, browser, and independent review validation. |
+| [OAuth sign-in transition receipt](tasks/2026-10-15-oauth-login-transition.md) | Stable login layout, retained OAuth progress, failure and history recovery, identity-list stability, and component/browser observation limits. |
 | [Console startup correction receipt](tasks/2026-10-14-console-startup-review-fix.md) | Listener reservation before stateful initialization, preservation of the running Console on rejected startup, database and migration checks, and listener cleanup. |
 | [Authentication gateway receipt](tasks/2026-10-12-authentication-gateway.md) | Original gateway implementation checks and verification limits. |
 | [Console correction receipt](tasks/2026-10-12-console-review-fixes.md) | Origin serialization and same-App mutation validation. |

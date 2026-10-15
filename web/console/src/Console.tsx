@@ -32,6 +32,7 @@ import {
   ProviderMark,
   providerNames,
 } from "./ui";
+import type { OAuthOutcome } from "./ui";
 
 const loginErrors: Record<string, string> = {
   invalid_callback:
@@ -88,7 +89,8 @@ export const Console = ({
 }: {
   api: ConsoleAPI;
   preview?: boolean;
-  onAuthorization?: (url: string) => Promise<Session>;
+  // A session completes authorization in-page; undefined means navigation has started.
+  onAuthorization?: (url: string) => Promise<Session | undefined>;
 }) => {
   const [session, setSession] = useState<
     "loading" | "signed-out" | "signed-in"
@@ -97,8 +99,9 @@ export const Console = ({
   const [providersLoading, setProvidersLoading] = useState(true);
   const [providersError, setProvidersError] = useState<string>();
   const [providerRevision, setProviderRevision] = useState(0);
-  const oauthPending = useRef(false);
-  const [oauthLoading, setOauthLoading] = useState(false);
+  const oauthPending = useRef<"requesting" | "redirecting">(undefined);
+  const [oauthProvider, setOauthProvider] = useState<ProviderID>();
+  const oauthLoading = oauthProvider !== undefined;
   const [apps, setApps] = useState<Application[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -266,7 +269,7 @@ export const Console = ({
     setEditor(undefined);
   };
   const dialogOwned = () =>
-    oauthPending.current ||
+    oauthPending.current !== undefined ||
     editorOwner.current !== undefined ||
     secretEditorOwner.current !== undefined ||
     confirmationOwner.current !== undefined ||
@@ -782,35 +785,55 @@ export const Console = ({
       },
     });
   };
-  const startOAuth = async (provider: ProviderID, link = false) => {
+  useEffect(() => {
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted && oauthPending.current === "redirecting") {
+        oauthPending.current = undefined;
+        setOauthProvider(undefined);
+      }
+    };
+    window.addEventListener("pageshow", restore);
+    return () => window.removeEventListener("pageshow", restore);
+  }, []);
+  const startOAuth = async (
+    provider: ProviderID,
+    link = false,
+  ): Promise<OAuthOutcome> => {
     if (
       owners.current.size !== 0 ||
       logoutPending.current ||
       oauthPending.current
     )
-      return;
-    oauthPending.current = true;
-    setOauthLoading(true);
+      return "blocked";
+    oauthPending.current = "requesting";
+    setOauthProvider(provider);
     setCallbackError(undefined);
     try {
       const result = await (link
         ? api.linkIdentity(provider)
         : api.login(provider));
+      let nextSession: Session | undefined;
       if (onAuthorization === undefined)
         window.location.assign(result.authorization_url);
-      else {
-        const nextSession = await onAuthorization(result.authorization_url);
-        setUser(nextSession.user);
-        setSession("signed-in");
-        setError(undefined);
-        if (!link) {
-          setSection("apps");
-          setSelected(undefined);
-        }
+      else nextSession = await onAuthorization(result.authorization_url);
+      if (nextSession === undefined) {
+        oauthPending.current = "redirecting";
+        return "redirecting";
       }
-    } finally {
-      oauthPending.current = false;
-      setOauthLoading(false);
+      setUser(nextSession.user);
+      setSession("signed-in");
+      setError(undefined);
+      if (!link) {
+        setSection("apps");
+        setSelected(undefined);
+      }
+      oauthPending.current = undefined;
+      setOauthProvider(undefined);
+      return "completed";
+    } catch (cause) {
+      oauthPending.current = undefined;
+      setOauthProvider(undefined);
+      throw cause;
     }
   };
   const signOut = async () => {
@@ -874,7 +897,8 @@ export const Console = ({
           error={error}
           notice={callbackNotice}
           preview={preview}
-          blocked={operations.size !== 0 || oauthLoading}
+          blocked={operations.size !== 0}
+          connecting={oauthProvider}
           onLogin={(provider) => startOAuth(provider)}
         />
       ) : (
@@ -1016,7 +1040,8 @@ export const Console = ({
                   api={api}
                   user={user}
                   providers={providers}
-                  blocked={operations.size !== 0 || oauthLoading}
+                  blocked={operations.size !== 0}
+                  connecting={oauthProvider}
                   onLink={(provider) => startOAuth(provider, true)}
                   onUnauthorized={reportError}
                 />

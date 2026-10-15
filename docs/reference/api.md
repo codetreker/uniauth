@@ -246,6 +246,15 @@ The Console App uses the ordinary gateway flow and result retention rules.
 Its callback retrieves the result through the same authenticated handover operation
 in process; its App Secret is never sent to the browser.
 
+While starting sign-in or identity linking, the selected Console button shows
+`Connecting…`. Other provider buttons and conflicting workspace controls remain
+disabled until the browser leaves. OAuth progress does not insert the unfinished
+App/Secret warning or resize the sign-in card. Start failures display the error
+and permit retry; an interactive preview releases the controls on completion.
+Returning to a cached page through browser history restores the controls. Linking
+keeps the current identity list visible during navigation rather than reloading
+it before the browser leaves.
+
 Console pending login state has a ten-minute lifetime and a separate random
 HttpOnly, SameSite=Lax browser-binding cookie. State and binding are consumed
 atomically. Missing or wrong binding, expired state, replay, and malformed or

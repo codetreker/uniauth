@@ -119,7 +119,9 @@ it("retains login failure and prevents synchronous duplicate OAuth requests", as
       .mockRejectedValue(
         new APIError(401, "unauthorized", "Sign in required."),
       ),
-    login: vi.fn().mockReturnValue(pending.promise),
+    login: vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue({
+      authorization_url: "https://oauth.example.test/login",
+    }),
   });
   render(<Console api={api} onAuthorization={completeAuthorization} />);
   const google = await screen.findByRole("button", {
@@ -128,6 +130,22 @@ it("retains login failure and prevents synchronous duplicate OAuth requests", as
   const github = screen.getByRole("button", { name: "Continue with GitHub" });
   act(() => {
     google.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    github.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  expect(api.login).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByText(
+      /Finish the pending operation and save any issued secret/,
+    ),
+  ).toBeNull();
+  expect(
+    (screen.getByRole("button", { name: "Connecting…" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  act(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
     github.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   expect(api.login).toHaveBeenCalledTimes(1);
@@ -142,7 +160,81 @@ it("retains login failure and prevents synchronous duplicate OAuth requests", as
       }) as HTMLButtonElement
     ).disabled,
   ).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+  await screen.findByRole("button", { name: "Sign out" });
+  expect(api.login).toHaveBeenCalledTimes(2);
 });
+
+it("releases OAuth ownership when in-page authorization fails and permits another provider", async () => {
+  const api = fixture({
+    session: vi
+      .fn()
+      .mockRejectedValue(
+        new APIError(401, "unauthorized", "Sign in required."),
+      ),
+  });
+  const navigation = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Authorization could not complete."))
+    .mockResolvedValue(fixtureSession);
+  render(<Console api={api} onAuthorization={navigation} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Continue with Google" }),
+  );
+  await screen.findByText("Authorization could not complete.");
+  fireEvent.click(screen.getByRole("button", { name: "Continue with GitHub" }));
+  await screen.findByRole("button", { name: "Sign out" });
+  expect(api.login).toHaveBeenCalledTimes(2);
+  expect(api.login).toHaveBeenLastCalledWith("github");
+});
+
+it.each([false, true])(
+  "retains OAuth progress after navigation starts and restores a cached document (link=%s)",
+  async (linking) => {
+    const api = fixture(
+      linking
+        ? {}
+        : {
+            session: vi
+              .fn()
+              .mockRejectedValue(
+                new APIError(401, "unauthorized", "Sign in required."),
+              ),
+          },
+    );
+    const navigation = vi.fn().mockResolvedValue(undefined);
+    render(<Console api={api} onAuthorization={navigation} />);
+    if (linking) {
+      fireEvent.click(
+        await screen.findByRole("button", { name: "My account" }),
+      );
+      await screen.findByText(identity.id);
+    }
+    const label = linking ? "Link Google" : "Continue with Google";
+    fireEvent.click(await screen.findByRole("button", { name: label }));
+    await waitFor(() => expect(navigation).toHaveBeenCalledTimes(1));
+    expect(
+      (screen.getByRole("button", { name: "Connecting…" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    act(() => window.dispatchEvent(new PageTransitionEvent("pageshow")));
+    expect(screen.queryByRole("button", { name: label })).toBeNull();
+    if (linking) {
+      expect(screen.getByText(identity.id)).toBeDefined();
+      expect(api.listIdentities).toHaveBeenCalledTimes(1);
+    }
+    act(() =>
+      window.dispatchEvent(
+        new PageTransitionEvent("pageshow", { persisted: true }),
+      ),
+    );
+    const restored = screen.getByRole("button", { name: label });
+    expect((restored as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(restored);
+    await waitFor(() => expect(navigation).toHaveBeenCalledTimes(2));
+    if (linking) expect(api.listIdentities).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("shows explicit nullable account fields and stable linked identity IDs", async () => {
   const api = fixture({
