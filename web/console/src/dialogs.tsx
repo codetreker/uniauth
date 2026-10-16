@@ -18,6 +18,7 @@ import {
   ProviderMark,
   providerNames,
 } from "./ui";
+import type { OAuthOutcome } from "./ui";
 
 export type Credential = SecretInput & {
   app: Application;
@@ -52,36 +53,31 @@ export const Login = ({
   error,
   notice,
   blocked,
+  connecting,
   preview,
 }: {
   providers: Provider[];
   loading: boolean;
   providerError?: string;
   onRetry: () => void;
-  onLogin: (provider: ProviderID) => Promise<void>;
+  onLogin: (provider: ProviderID) => Promise<OAuthOutcome>;
   error?: string;
   notice?: ReactNode;
   blocked: boolean;
+  connecting?: ProviderID;
   preview: boolean;
 }) => {
   const [failure, setFailure] = useState<string>();
-  const [pending, setPending] = useState<ProviderID>();
-  const busy = useRef(false);
   useEffect(() => {
     setFailure(undefined);
   }, [error]);
   const submit = async (provider: ProviderID) => {
-    if (blocked || busy.current) return;
-    busy.current = true;
-    setPending(provider);
+    if (blocked || connecting !== undefined) return;
     setFailure(undefined);
     try {
       await onLogin(provider);
     } catch (cause) {
       setFailure(describeError(cause));
-    } finally {
-      busy.current = false;
-      setPending(undefined);
     }
   };
   const available = providers.filter((provider) => provider.available);
@@ -144,11 +140,11 @@ export const Login = ({
                 <button
                   key={id}
                   className="button secondary full-width oauth-button"
-                  disabled={blocked || pending !== undefined}
+                  disabled={blocked || connecting !== undefined}
                   onClick={() => void submit(id)}
                 >
                   <ProviderMark provider={id} />
-                  {pending === id
+                  {connecting === id
                     ? "Connecting…"
                     : `Continue with ${providerNames[id]}`}
                   <Icon name="arrow" size={16} />
