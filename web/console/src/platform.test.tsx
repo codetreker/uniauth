@@ -48,8 +48,42 @@ const fixture = (overrides: Partial<ConsoleAPI> = {}): ConsoleAPI => ({
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   window.history.replaceState(null, "", "/");
 });
+
+const navigationSignal = (navigation: EventTarget) => {
+  const controller = new AbortController();
+  const event = new Event("navigate");
+  Object.defineProperty(event, "signal", { value: controller.signal });
+  act(() => navigation.dispatchEvent(event));
+  return controller;
+};
+
+const oauthFixture = (linking: boolean) =>
+  fixture(
+    linking
+      ? {}
+      : {
+          session: vi
+            .fn()
+            .mockRejectedValue(
+              new APIError(401, "unauthorized", "Sign in required."),
+            ),
+        },
+  );
+
+const beginGoogle = async (linking: boolean) => {
+  if (linking) {
+    fireEvent.click(await screen.findByRole("button", { name: "My account" }));
+    await screen.findByText(identity.id);
+  }
+  const label = linking ? "Link Google" : "Continue with Google";
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  await screen.findByRole("button", { name: "Cancel sign-in" });
+  return label;
+};
 
 it("shows every configured OAuth method and completes only the chosen provider without a password form", async () => {
   const api = fixture({
@@ -133,6 +167,7 @@ it("retains login failure and prevents synchronous duplicate OAuth requests", as
     github.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   expect(api.login).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
   expect(
     screen.queryByText(
       /Finish the pending operation and save any issued secret/,
@@ -235,6 +270,113 @@ it.each([false, true])(
     if (linking) expect(api.listIdentities).toHaveBeenCalledTimes(1);
   },
 );
+
+it.each([false, true])(
+  "recovers browser-cancelled OAuth navigation without a history event (link=%s)",
+  async (linking) => {
+    const navigation = new EventTarget();
+    vi.stubGlobal("navigation", navigation);
+    const api = oauthFixture(linking);
+    const authorization = vi.fn().mockResolvedValue(undefined);
+    render(<Console api={api} onAuthorization={authorization} />);
+    const label = await beginGoogle(linking);
+    const attempt = navigationSignal(navigation);
+    act(() => attempt.abort());
+    const restored = screen.getByRole("button", { name: label });
+    expect((restored as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "Connecting…" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel sign-in" })).toBeNull();
+    fireEvent.click(restored);
+    await waitFor(() => expect(authorization).toHaveBeenCalledTimes(2));
+    if (linking) expect(api.listIdentities).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([false, true])(
+  "stops navigation before releasing explicit recovery without Navigation API (link=%s)",
+  async (linking) => {
+    vi.stubGlobal("navigation", undefined);
+    const api = oauthFixture(linking);
+    const authorization = vi.fn().mockResolvedValue(undefined);
+    const stop = vi.spyOn(window, "stop").mockImplementation(() => {
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Connecting…",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+    });
+    render(<Console api={api} onAuthorization={authorization} />);
+    const label = await beginGoogle(linking);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+    expect(stop).toHaveBeenCalledTimes(1);
+    const restored = screen.getByRole("button", { name: label });
+    expect((restored as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(restored);
+    await waitFor(() => expect(authorization).toHaveBeenCalledTimes(2));
+    if (linking) expect(api.listIdentities).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("does not let an old navigation signal release a newer OAuth attempt", async () => {
+  const navigation = new EventTarget();
+  vi.stubGlobal("navigation", navigation);
+  const api = oauthFixture(false);
+  const authorization = vi.fn().mockResolvedValue(undefined);
+  render(<Console api={api} onAuthorization={authorization} />);
+  const label = await beginGoogle(false);
+  const first = navigationSignal(navigation);
+  act(() =>
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: label }));
+  await waitFor(() => expect(authorization).toHaveBeenCalledTimes(2));
+  const second = navigationSignal(navigation);
+  act(() => first.abort());
+  expect(
+    (screen.getByRole("button", { name: "Connecting…" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  act(() => second.abort());
+  expect(
+    (screen.getByRole("button", { name: label }) as HTMLButtonElement).disabled,
+  ).toBe(false);
+});
+
+it("discards a delayed in-page authorization after its navigation was cancelled", async () => {
+  const navigation = new EventTarget();
+  vi.stubGlobal("navigation", navigation);
+  const earlier = Promise.withResolvers<typeof fixtureSession>();
+  const api = oauthFixture(false);
+  const authorization = vi
+    .fn()
+    .mockReturnValueOnce(earlier.promise)
+    .mockResolvedValue(fixtureSession);
+  render(<Console api={api} onAuthorization={authorization} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Continue with Google" }),
+  );
+  await waitFor(() => expect(authorization).toHaveBeenCalledTimes(1));
+  const attempt = navigationSignal(navigation);
+  act(() => attempt.abort());
+  fireEvent.click(screen.getByRole("button", { name: "Continue with GitHub" }));
+  await screen.findByRole("button", { name: "Sign out" });
+  await act(async () =>
+    earlier.resolve({
+      ...fixtureSession,
+      user: {
+        ...fixtureUser,
+        id: "discarded-account",
+        name: "Discarded account",
+      },
+    }),
+  );
+  expect(screen.queryByText("Discarded account")).toBeNull();
+  expect(screen.getByText(fixtureUser.name!)).toBeDefined();
+});
 
 it("shows explicit nullable account fields and stable linked identity IDs", async () => {
   const api = fixture({

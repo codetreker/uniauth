@@ -169,6 +169,10 @@ for (const viewport of [
       releaseSuccess.resolve();
       await expect(page).toHaveURL(returnProbe);
       await expectPending(2);
+      await page.screenshot({
+        path: `.tmp/oauth-recovery-${viewport.name}.png`,
+        fullPage: true,
+      });
       await page.locator(".oauth-button").evaluateAll((buttons) => {
         for (const button of buttons) (button as HTMLButtonElement).click();
       });
@@ -292,6 +296,173 @@ test("identity linking holds its account controls and list until external naviga
     releaseAPI.resolve();
   }
 });
+
+for (const operation of ["login", "link"] as const) {
+  for (const recovery of ["automatic", "manual"] as const) {
+    test(`cancelled OAuth ${operation} navigation restores controls with ${recovery} recovery`, async ({
+      page,
+    }) => {
+      if (recovery === "manual") {
+        await page.addInitScript(() => {
+          Object.defineProperty(window, "navigation", {
+            configurable: true,
+            value: undefined,
+          });
+        });
+      }
+      await page.goto("/console/");
+      if (operation === "link") {
+        await signIn(page, "Microsoft", "Identity without email");
+        await page
+          .getByRole("button", { name: "My account", exact: true })
+          .click();
+        await expect(page.locator(".identity-row")).toHaveCount(1);
+      }
+      let starts = 0;
+      page.on("request", (request) => {
+        if (
+          request.method() === "POST" &&
+          request
+            .url()
+            .endsWith(
+              operation === "login"
+                ? "/console/api/login"
+                : "/console/api/identities/link",
+            )
+        )
+          starts += 1;
+      });
+      const originalURL = page.url();
+      await page.evaluate(() => {
+        document.documentElement.dataset.navigationProbe = "original-document";
+      });
+      const authorizationStarted = Promise.withResolvers<void>();
+      const releaseAuthorization = Promise.withResolvers<void>();
+      const authorizationReleased = Promise.withResolvers<void>();
+      const authorizationRoute = "**/auth/authorize?**";
+      await page.route(authorizationRoute, async (route) => {
+        authorizationStarted.resolve();
+        try {
+          await releaseAuthorization.promise;
+          await route.continue();
+          authorizationReleased.resolve();
+        } catch (error) {
+          authorizationReleased.reject(error);
+        }
+      });
+      const recoveryPosition = Promise.withResolvers<{
+        x: number;
+        y: number;
+      }>();
+      if (recovery === "manual") {
+        await page.exposeFunction(
+          "reportOAuthRecovery",
+          (position: { x: number; y: number }) =>
+            recoveryPosition.resolve(position),
+        );
+        await page.evaluate((operation) => {
+          // Observe the original document while Playwright waits for navigation.
+          const observer = new MutationObserver(() => {
+            const button = [
+              ...document.querySelectorAll<HTMLButtonElement>("button"),
+            ].find((candidate) => candidate.textContent === "Cancel sign-in");
+            if (button === undefined) return;
+            observer.disconnect();
+            const providers = document.querySelectorAll<HTMLButtonElement>(
+              operation === "login"
+                ? ".oauth-button"
+                : ".link-providers button",
+            );
+            for (const provider of providers) provider.click();
+            const { x, y, width, height } = button.getBoundingClientRect();
+            void Reflect.get(
+              window,
+              "reportOAuthRecovery",
+            )({
+              x: x + width / 2,
+              y: y + height / 2,
+            });
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+        }, operation);
+      }
+      const cancelledNavigation = page.waitForEvent(
+        "requestfailed",
+        (request) => new URL(request.url()).pathname === "/auth/authorize",
+      );
+      const protocol = await page.context().newCDPSession(page);
+      try {
+        const startName =
+          operation === "login" ? "Continue with Google" : "Link GitHub";
+        await page
+          .getByRole("button", { name: startName, exact: true })
+          .evaluate((button) => (button as HTMLButtonElement).click());
+        await authorizationStarted.promise;
+        if (recovery === "manual") {
+          const position = await recoveryPosition.promise;
+          expect(starts).toBe(1);
+          for (const type of ["mousePressed", "mouseReleased"]) {
+            await protocol.send("Input.dispatchMouseEvent", {
+              type,
+              ...position,
+              button: "left",
+              clickCount: 1,
+            });
+          }
+        } else {
+          await protocol.send("Page.stopLoading");
+        }
+        expect((await cancelledNavigation).failure()?.errorText).toBe(
+          "net::ERR_ABORTED",
+        );
+        releaseAuthorization.resolve();
+        await authorizationReleased.promise;
+        await expect(page).toHaveURL(originalURL);
+        await expect(page.locator("html")).toHaveAttribute(
+          "data-navigation-probe",
+          "original-document",
+        );
+        expect(starts).toBe(1);
+        await expect(
+          page.getByRole("button", { name: startName, exact: true }),
+        ).toBeEnabled();
+        await expect(
+          page.getByRole("button", { name: "Connecting…", exact: true }),
+        ).toHaveCount(0);
+        if (operation === "link") {
+          await expect(
+            page.getByRole("button", { name: "Sign out", exact: true }),
+          ).toBeEnabled();
+          await expect(page.locator(".identity-row")).toHaveCount(1);
+          await page.getByRole("button", { name: /^Applications/ }).click();
+          await page
+            .getByRole("button", { name: "My account", exact: true })
+            .click();
+        } else {
+          await expect(page.locator(".oauth-button:disabled")).toHaveCount(0);
+        }
+      } finally {
+        releaseAuthorization.resolve();
+        await page.unroute(authorizationRoute);
+        await protocol.detach();
+      }
+      await page
+        .getByRole("button", {
+          name:
+            operation === "login" ? "Continue with Microsoft" : "Link Google",
+          exact: true,
+        })
+        .click();
+      await expect(
+        page.getByRole("heading", {
+          name: `Fixture identity for ${operation === "login" ? "microsoft" : "google"}`,
+          exact: true,
+        }),
+      ).toBeVisible();
+      expect(starts).toBe(2);
+    });
+  }
+}
 
 test("OAuth account manages applications and one-time credentials against the service", async ({
   page,

@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ProviderID } from "./api";
 
-export type OAuthOutcome = "blocked" | "redirecting" | "completed";
+export type OAuthOutcome =
+  "blocked" | "redirecting" | "completed" | "cancelled";
 
 export const providerNames: Record<ProviderID, string> = {
   microsoft: "Microsoft",
