@@ -17,7 +17,7 @@ replace github.com/codetreker/uniauth/sdk/go => ../uniauth/sdk/go
 A remote `go get` version requires a published module tag; this source delivery
 does not establish a registry release.
 
-## Start a browser login
+## Configure the client
 
 ```go
 client, err := uniauth.New(uniauth.Config{
@@ -28,7 +28,43 @@ client, err := uniauth.New(uniauth.Config{
 if err != nil {
     return err
 }
+```
 
+`BaseURL` must be an HTTPS origin, optionally ending in `/`, without credentials,
+query, fragment, or another path. `AllowLoopbackHTTP: true` permits HTTP gateway
+URLs only for localhost or loopback IPs; the service must also enable local HTTP.
+
+## Discover configured providers
+
+Use `Providers(ctx, redirectURI)` before presenting product-owned login choices:
+
+```go
+providers, err := client.Providers(ctx, "https://product.example/auth/callback")
+if err != nil {
+    return err
+}
+// Present these configured choices using product-owned login UI.
+```
+
+It returns `([]uniauth.Provider, error)` containing the current App allowlist's
+intersection with the configured service registry, ordered `Microsoft`, `Google`,
+`GitHub`. An empty slice is a valid result. Discovery creates no login transaction,
+identity result, browser cookie, or session and does not test upstream health.
+The gateway rechecks current App, provider, and callback eligibility when the
+browser starts authorization.
+
+The method validates the callback locally, preserves its exact string in JSON
+`redirect_uri`, and sends one context-bound `POST /auth/providers` using HTTP
+Basic App ID/Secret authentication. It never follows redirects or retries.
+The response is limited to 16 KiB and requires a non-null `providers` array of
+unique known provider strings. Unknown response fields are tolerated; duplicate
+JSON keys and missing, null, malformed, duplicate, or unknown provider entries
+are protocol errors. Gateway and transport failures remain errors rather
+than becoming an empty slice. Keep this operation on the confidential backend.
+
+## Start a browser login
+
+```go
 state := uniauth.GenerateState()
 // Store state as a pending login bound to the initiating browser, with expiry.
 authorizationURL, err := client.AuthorizationURL(uniauth.AuthorizationRequest{
@@ -47,10 +83,6 @@ are `Microsoft`, `Google`, and `GitHub`. `AuthorizationURL` validates provider,
 state, and callback syntax, then preserves the callback string exactly as the
 `redirect_uri` query value. It contains the App ID and never the App Secret.
 The gateway checks App registration and provider availability.
-
-`BaseURL` must be an HTTPS origin, optionally ending in `/`, without credentials,
-query, fragment, or another path. `AllowLoopbackHTTP: true` permits HTTP gateway
-URLs only for localhost or loopback IPs; the service must also enable local HTTP.
 
 Callback URLs accept HTTP or HTTPS without transport opt-in, contain 1–2048
 UTF-8 bytes, and exclude user information, fragments, and reserved query keys
@@ -145,8 +177,8 @@ and avatar data and other complete sources may exceed 8 MiB.
 Use `errors.As` to inspect `*APIError` (`StatusCode`, `Code`, `Message`,
 `RequestID`) for valid JSON gateway failures, including future error codes.
 `*ProtocolError` distinguishes unexpected HTTP status, content type, JSON,
-identity/error schema, and body failures using `Reason`. `*RequestError` retains
-transport and context failures. Both expose their underlying causes through
+identity/error/provider-list schema, response size, and body failures using
+`Reason`. `*RequestError` retains transport and context failures. Both expose their underlying causes through
 `errors.Is` and `errors.As`. Error strings omit request codes, credentials, and
 response data.
 

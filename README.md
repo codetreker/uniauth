@@ -83,9 +83,17 @@ create one later in the App's Secrets section. Each Secret has a name and an
 optional description for its purpose or rotation notes. Save its one-time value
 in the product backend before retrieving identities. The Console groups Secrets
 into `Active` and `Disabled` tabs, with revoked Secrets in `Disabled`. Both views
-let you edit their details without changing credential validity. Start a browser login at
-`/auth/authorize` with `app_id`, `provider`, `redirect_uri`, and a random `state`
-bound to that browser's pending product login.
+let you edit their details without changing credential validity.
+
+Before presenting login choices, a product backend can call `POST /auth/providers`
+using HTTP Basic App ID/Secret authentication and JSON
+`{"redirect_uri":"https://product.example/auth/callback"}`. It returns the
+current App-allowed providers that are configured on the service, in
+`microsoft`, `google`, `github` order. An empty array is valid; failures remain
+errors. This checks configuration, not upstream health, and creates no login
+state. Start a browser login at `/auth/authorize` with `app_id`, `provider`,
+`redirect_uri`, and a random `state` bound to that browser's pending product login.
+Authorization rechecks current eligibility when the browser arrives.
 
 For planned credential rotation, create a second Secret, update the product,
 then revoke the previous one. Reset an active Secret when its current key must
@@ -108,10 +116,14 @@ parameters, and retrieve complete identity results. The JavaScript package emits
 ESM and TypeScript declarations for Node.js 24 or later. Both use the existing
 HTTP protocol, expose the server's seven-field normalized identity and complete
 `origin`, and leave pending state, users, and sessions with the product. Missing
-standard fields or incompatible response types are SDK protocol errors.
+standard fields or incompatible response types are SDK protocol errors. The Go
+SDK also exposes `Providers(ctx, redirectURI)` for provider discovery. JavaScript
+and other product backends can use the HTTP endpoint directly; the JavaScript
+SDK has no provider-discovery method.
 
-Keep Secrets and result retrieval server-side. Atomically validate and consume the
-browser-bound pending login state before the one-time result request. A lost,
+Keep Secrets, provider discovery, and result retrieval server-side. Atomically
+validate and consume the browser-bound pending login state before the one-time
+result request. A lost,
 aborted, or malformed retrieval response may already have consumed the result;
 start a fresh login rather than retrying the code. See the
 [SDK reference](docs/reference/sdks.md) for API examples and local package use,
