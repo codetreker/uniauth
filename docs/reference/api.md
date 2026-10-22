@@ -39,6 +39,11 @@ belong to this transaction. A unique HttpOnly, SameSite=Lax flow cookie binds
 it to the browser; simultaneous login tabs have separate cookies. HTTPS flow
 cookies use the `__Host-` prefix and Secure attribute.
 
+Microsoft authorization always includes `prompt=select_account`, requesting an
+account chooser with remembered accounts and an option to use another account.
+This provider policy applies to product login, Console login, and identity linking
+through the shared gateway.
+
 The product's `state` is preserved independently. It must remain pending in the
 product and be validated against that browser before result retrieval. UniAuth
 does not establish the product's login session.

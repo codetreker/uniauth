@@ -48,7 +48,7 @@ func newMicrosoft(ctx context.Context, config Config, issuer, jwksURL string, en
 
 func (*Microsoft) Name() string { return "microsoft" }
 func (p *Microsoft) AuthorizationURL(request AuthorizationRequest) (string, error) {
-	return p.authorization(request)
+	return p.authorization(request, oauth2.SetAuthURLParam("prompt", "select_account"))
 }
 
 func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Identity, error) {

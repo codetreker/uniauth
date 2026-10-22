@@ -176,7 +176,12 @@ with `UNIAUTH_PUBLIC_URL`:
 
 Microsoft registration must support personal Microsoft accounts only
 (`PersonalMicrosoftAccount`). Authorization and token exchange use `consumers`
-endpoints. Signature and issuer validation use the fixed personal-account tenant
+endpoints. Every Microsoft authorization request includes `prompt=select_account`
+to request the account chooser, including remembered accounts and an option to
+use another account. This fixed provider policy covers product login, Console
+login, and identity linking through the shared gateway. It has no deployment,
+App, or SDK setting. Signature and issuer validation use the fixed
+personal-account tenant
 `9188040d-6c67-4c5b-b112-36a304b66dad`; organizational accounts are rejected.
 The validated token must contain that `tid` and a nonempty `oid`. Register the
 delegated Graph `User.Read` permission. Graph photo `404` is represented as

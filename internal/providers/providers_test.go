@@ -189,6 +189,13 @@ func TestProvidersCompleteIdentityAndAuthorization(t *testing.T) {
 			if name != "github" && query.Get("nonce") != "expected-nonce" {
 				t.Fatal("missing nonce")
 			}
+			if name == "microsoft" {
+				if got := query["prompt"]; len(got) != 1 || got[0] != "select_account" {
+					t.Fatalf("Microsoft account selection prompt: %v", got)
+				}
+			} else if query.Has("prompt") {
+				t.Fatalf("unexpected account selection prompt for %s: %v", name, query["prompt"])
+			}
 			identity, err := p.Exchange(context.Background(), exchangeRequest())
 			if err != nil {
 				t.Fatal(err)
