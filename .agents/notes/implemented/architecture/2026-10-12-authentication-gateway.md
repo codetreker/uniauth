@@ -9,7 +9,9 @@ Microsoft, Google, and GitHub identity verification and maintaining provider
 credentials. They need complete provider identity information while retaining
 control of their own user records, account linking, permissions, and sessions.
 Product registration and credential administration must remain independent of
-end-user authentication.
+end-user authentication. People with multiple Microsoft accounts also need an
+explicit account choice; a provider session must not silently determine which
+identity is used for a new login or link.
 
 ## Decision
 
@@ -74,6 +76,15 @@ collects complete source JSON under the granted scopes. Microsoft supports only
 personal accounts and uses the personal tenant plus `oid`; Google uses `sub`;
 GitHub uses its authenticated numeric user ID. Qualified IDs keep provider
 identities distinct. Each product controls cross-provider account linking.
+
+Microsoft authorization always sends `prompt=select_account` to request its
+account chooser with remembered accounts and an option to use another account.
+The shared adapter applies this policy to product login, Console login, and
+identity linking. This preserves the personal-account `consumers` authority,
+transaction state, PKCE, and OIDC nonce; it adds no configuration or protocol
+option. [Microsoft's authorization documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code)
+defines the chooser behavior and distinguishes it from forced credential entry.
+
 The original handover envelope exposed `provider`, `subject`, and `sources`,
 leaving products to interpret provider attributes. The
 [normalized identity decision](2026-10-13-normalized-identity.md) supersedes that
@@ -139,6 +150,15 @@ Multiple UniAuth replicas would still need a separate decision for transient
 authentication state; changing the durable configuration database alone would
 not establish that capability.
 
+**Default Microsoft session selection.** Omitting `prompt` lets Microsoft reuse
+an active session without offering a choice. That can authenticate or link the
+wrong intended account when a person uses several Microsoft accounts, so every
+new Microsoft authorization requests explicit selection.
+
+**Forced Microsoft credential entry.** `prompt=login` requests credential entry
+again. Account selection is the required interaction; forcing reauthentication
+would require credentials again even when the chosen account has a usable session.
+
 ## Consequences
 
 Products integrate one login-and-retrieval protocol and receive complete
@@ -157,6 +177,11 @@ No long-lived recovery, consumed-code history, token refresh, or central logout
 is provided. All requests in a login must reach the same process. Restart also
 invalidates Console sessions while retaining platform accounts, links, and owned
 App configuration.
+
+Microsoft login and linking request an account choice on each authorization,
+adding an upstream interaction while allowing the chosen account's existing
+session to remain usable. The request does not force credential entry or change
+identity mapping, App binding, or result handover.
 
 Provider fields and consent determine the available profile data. Product email
 or permission policy cannot be inferred from authentication success. Microsoft

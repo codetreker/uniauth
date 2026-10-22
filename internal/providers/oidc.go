@@ -17,11 +17,12 @@ type oidcProvider struct {
 	verifier *oidc.IDTokenVerifier
 }
 
-func (p *oidcProvider) authorization(request AuthorizationRequest) (string, error) {
+func (p *oidcProvider) authorization(request AuthorizationRequest, options ...oauth2.AuthCodeOption) (string, error) {
 	if err := validateAuthorization(request, true); err != nil {
 		return "", err
 	}
-	return p.oauth.AuthCodeURL(request.State, oauth2.S256ChallengeOption(request.CodeVerifier), oauth2.SetAuthURLParam("nonce", request.Nonce)), nil
+	options = append(options, oauth2.S256ChallengeOption(request.CodeVerifier), oauth2.SetAuthURLParam("nonce", request.Nonce))
+	return p.oauth.AuthCodeURL(request.State, options...), nil
 }
 
 func (p *oidcProvider) exchange(ctx context.Context, request ExchangeRequest) (*oauth2.Token, *oidc.IDToken, json.RawMessage, error) {

@@ -321,8 +321,13 @@ costs; the gateway decision continues to own authentication and handover.
 | GitHub | PKCE code exchange, authenticated `/user`, and every `/user/emails` page. Require a positive numeric profile ID. | `github:<id>` |
 
 Microsoft requests `openid profile email` and delegated Graph `User.Read`.
-Its App registration supports `PersonalMicrosoftAccount`; organization accounts
-fail the fixed personal-tenant and issuer validation. Graph photo `404` is an
+Authorization always includes `prompt=select_account` to request an account
+chooser with remembered accounts and an option to use another account, even when
+a provider session exists.
+This policy belongs to the shared Microsoft adapter and covers product login,
+Console login, and identity linking without adding configuration or protocol
+options. Its App registration supports `PersonalMicrosoftAccount`; organization
+accounts fail the fixed personal-tenant and issuer validation. Graph photo `404` is an
 explicit `null` in `origin`; successful photos include content type and standard
 Base64 bytes. The avatar data URL uses those same bytes and the parsed image
 media type, requiring no additional fetch. Other photo/profile retrieval
@@ -396,6 +401,7 @@ results rather than assuming checks passed.
 ## References
 
 - [Microsoft personal-account authority and OIDC flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)
+- [Microsoft authorization prompt behavior](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code)
 - [Microsoft application audience](https://learn.microsoft.com/en-us/entra/identity-platform/reference-app-manifest)
 - [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)
 - [Microsoft Graph profile](https://learn.microsoft.com/en-us/graph/api/user-get)
