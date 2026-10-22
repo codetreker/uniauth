@@ -16,6 +16,7 @@ import {
   ProviderMark,
   providerNames,
 } from "./ui";
+import type { OAuthOutcome } from "./ui";
 
 export const accountName = (account: Pick<Account, "name">) =>
   account.name === null ? "Unnamed account" : account.name;
@@ -46,6 +47,7 @@ export const AccountView = ({
   user,
   providers,
   blocked,
+  connecting,
   onLink,
   onUnauthorized,
 }: {
@@ -53,14 +55,13 @@ export const AccountView = ({
   user: Account;
   providers: Provider[];
   blocked: boolean;
-  onLink: (provider: ProviderID) => Promise<void>;
+  connecting?: ProviderID;
+  onLink: (provider: ProviderID) => Promise<OAuthOutcome>;
   onUnauthorized: (cause: unknown) => void;
 }) => {
   const [identities, setIdentities] = useState<LinkedIdentity[]>();
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
-  const [pending, setPending] = useState<ProviderID>();
-  const linking = useRef(false);
   useEffect(() => {
     let active = true;
     setIdentities(undefined);
@@ -81,20 +82,15 @@ export const AccountView = ({
     };
   }, [api, revision, user.id]);
   const link = async (provider: ProviderID) => {
-    if (blocked || linking.current) return;
-    linking.current = true;
-    setPending(provider);
+    if (blocked || connecting !== undefined) return;
     setError(undefined);
     try {
-      await onLink(provider);
-      setRevision((value) => value + 1);
+      if ((await onLink(provider)) === "completed")
+        setRevision((value) => value + 1);
     } catch (cause) {
       setError(message(cause));
       if (cause instanceof APIError && cause.status === 401)
         onUnauthorized(cause);
-    } finally {
-      linking.current = false;
-      setPending(undefined);
     }
   };
   return (
@@ -199,11 +195,11 @@ export const AccountView = ({
                     <button
                       key={id}
                       className="button secondary"
-                      disabled={blocked || pending !== undefined || linked}
+                      disabled={blocked || connecting !== undefined || linked}
                       onClick={() => void link(id)}
                     >
                       <ProviderMark provider={id} />
-                      {pending === id
+                      {connecting === id
                         ? "Connecting…"
                         : linked
                           ? `${providerNames[id]} linked`
