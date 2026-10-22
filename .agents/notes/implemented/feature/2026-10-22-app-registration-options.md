@@ -32,8 +32,9 @@ The [Secret metadata decision](2026-10-13-secret-metadata.md) retains ownership 
 names, descriptions, metadata editing, and migration history. This decision
 supersedes only its original requirement to issue a first Secret during App
 creation. Owners can issue a named Secret later through the existing credential
-endpoint. App credentials remain required for result retrieval; an App with no
-active credential cannot authenticate that operation. No authentication bypass
+endpoint. App credentials remain required for result retrieval and
+[App-aware provider discovery](2026-10-22-app-provider-discovery.md); an App with
+no active credential cannot authenticate either operation. No authentication bypass
 or stored-data migration is introduced.
 
 The [blueprint](../../../../docs/blueprint/README.md) owns the architecture. The
@@ -65,4 +66,5 @@ one-time retrieval remain required.
 Creation consumers must distinguish `{app}` from `{app, secret, secret_id}`.
 Issuance retains the existing atomic write and one-time disclosure behavior;
 metadata reads cannot recover plaintext. An App created without a Secret needs a
-later credential before a product backend can retrieve an identity result.
+later credential before a product backend can discover configured providers or
+retrieve an identity result.

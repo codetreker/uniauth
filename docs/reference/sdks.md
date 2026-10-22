@@ -3,6 +3,7 @@
 The Go and JavaScript SDKs connect confidential product backends to UniAuth's
 [existing HTTP protocol](api.md). They build authorization URLs, generate random
 state, validate callback parameters, and retrieve a one-time identity result.
+The Go SDK also discovers the configured providers for an App and callback.
 They do not store pending logins, users, account links, sessions, or credentials
 outside the configured client, and provide no Console management API.
 
@@ -18,6 +19,10 @@ release tag. A future Go SDK release uses the nested-module tag format, such as
 and [JavaScript README](../../sdk/js/README.md).
 
 ## Login ownership and sequence
+
+A product backend can discover current App-aware provider choices before starting
+a login. Discovery creates no pending state or session; the authorization request
+checks current eligibility again.
 
 1. Generate an unpredictable state and store it in a pending login bound to the
    initiating product browser. Both state helpers use 32 cryptographically random
@@ -47,7 +52,8 @@ Start a fresh login; SDKs do not retry the same code or recover a consumed resul
 
 Clients require the UniAuth base origin, Console-generated App ID, and product
 App Secret. These differ from UniAuth's deployment provider credentials. Secrets
-and retrieval remain on the product backend; authorization URLs contain no Secret.
+and authenticated discovery or retrieval remain on the product backend;
+authorization URLs contain no Secret.
 
 | Meaning | Go `Config` | JavaScript client options |
 | --- | --- | --- |
@@ -73,7 +79,9 @@ registered callback membership and provider availability remain service checks.
 JavaScript `timeoutMs` must be an integer from 1 to 2,147,483,647.
 
 Request construction remains fixed with a configured transport: one
-`POST /auth/result`, HTTP Basic App ID/Secret authentication, and JSON `code`.
+`POST /auth/result` with JSON `code`, or Go discovery
+`POST /auth/providers` with JSON `redirect_uri`, both using HTTP Basic App
+ID/Secret authentication.
 Redirects are not followed, and the SDK adds no automatic retry. Callers supplying
 a transport must preserve those properties and the configured destination.
 
@@ -92,8 +100,32 @@ if err != nil {
 }
 ```
 
-Import the package as `github.com/codetreker/uniauth/sdk/go`. `AuthorizationURL`
-accepts an `AuthorizationRequest` with provider, redirect URI, and state.
+Import the package as `github.com/codetreker/uniauth/sdk/go`.
+
+`client.Providers(ctx, redirectURI)` returns `([]uniauth.Provider, error)` and
+queries current App-aware provider configuration:
+
+```go
+providers, err := client.Providers(ctx, "https://product.example/auth/callback")
+if err != nil {
+    return err
+}
+// Present these configured choices using product-owned login UI.
+```
+
+The method validates callback syntax and the 1–2048 UTF-8 byte limit locally,
+preserves its exact string in JSON, and sends one context-bound POST with the
+configured App credentials. It does not follow redirects or retry. The response
+body is limited to 16 KiB and must contain a non-null `providers` array of unique
+known provider strings. Unknown response fields are tolerated, but duplicate
+JSON keys are rejected. An empty array is valid; missing, null, malformed,
+duplicate, or unknown provider entries produce `ProtocolError`. API failures use
+`APIError`; request-transport failures use `RequestError`, while response-body
+failures use `ProtocolError`, both retaining the original cause. The result reflects App allowlist and service registry configuration,
+not upstream health. Call authorization with a returned choice to begin login;
+UniAuth checks current eligibility again.
+
+`AuthorizationURL` accepts an `AuthorizationRequest` with provider, redirect URI, and state.
 `uniauth.GenerateState()` returns a string. Use provider constants `uniauth.Microsoft`,
 `uniauth.Google`, or `uniauth.GitHub`:
 
@@ -161,6 +193,10 @@ const client = createClient({
 const state = generateState();
 ```
 
+The JavaScript SDK has no provider-discovery method. A confidential backend may
+call [`POST /auth/providers`](api.md#discover-configured-providers) directly using
+the same App credentials; never make that authenticated call from browser code.
+
 The client provides `authorizationURL({ provider, redirectURI, state })`:
 
 ```ts
@@ -197,7 +233,9 @@ parser when the product needs that representation.
 ## Errors and one-time transport
 
 Rejected client or authorization input produces an ordinary Go error or JavaScript
-`TypeError` before retrieval. Callback validation uses `CallbackError` instead.
+`TypeError` before a request. Go discovery callback validation also returns an
+ordinary validation error before making a request. Callback validation uses
+`CallbackError` instead.
 
 Go exposes `*APIError` with `StatusCode`, `Code`, `Message`, and `RequestID`.
 Use `errors.As` to distinguish it from `*ProtocolError`, which has `StatusCode`,
@@ -216,16 +254,16 @@ Go field `Code` and JavaScript field `code` equal to `invalid_callback`,
 
 | Failure | SDK result |
 | --- | --- |
-| Invalid client configuration or authorization input | Explicit validation error before sending a result request. |
+| Invalid client configuration, authorization input, or Go discovery callback | Explicit validation error before sending a request. |
 | Invalid callback parameters or state | Typed callback validation error. |
 | Valid provider callback carrying `error` | Typed provider callback error preserving the category. |
 | Structured non-success UniAuth response | `APIError` carrying HTTP status, error code, message, and request ID. |
-| Malformed success/error JSON or identity envelope | `ProtocolError`. |
+| Malformed success/error JSON, identity envelope, or Go provider-discovery schema | `ProtocolError`. |
 | Network, deadline, cancellation, or response-body failure | Original transport cause remains available. |
 
 The request ID comes from `X-Request-ID` when supplied by UniAuth and supports
-server log correlation. Error classification does not reveal whether a network
-failure happened before or after server consumption. Parsing a successful reply
+server log correlation. For result retrieval, error classification does not reveal
+whether a network failure happened before or after server consumption. Parsing a successful reply
 can also fail after the result was removed. The product must initiate a new
 login rather than add a retry around retrieval.
 

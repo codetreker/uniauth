@@ -99,6 +99,10 @@ insertion into memory, bound to the App, and expires five minutes after creation
 Ownership and expiry checks and deletion occur atomically; one claim succeeds.
 Authentication failures and wrong-App claims do not consume another App's result.
 
+The [App provider discovery decision](../feature/2026-10-22-app-provider-discovery.md)
+adds a credential-authenticated configuration lookup for an exact callback. It
+creates no login or result state and does not change identity handover ownership.
+
 Product-facing Go and JavaScript SDKs expose that same HTTP handover without
 adding state, users, sessions, or administrator authority. Their callback parser
 checks expected state, while the product atomically validates and consumes its

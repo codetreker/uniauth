@@ -27,7 +27,7 @@ func (h *Handler) ConsumeResult(ctx context.Context, appID, secret, code string)
 	stop := context.AfterFunc(h.ctx, cancel)
 	defer stop()
 	defer cancel()
-	app, err := h.authenticateResult(ctx, appID, secret)
+	app, err := h.authenticateApp(ctx, appID, secret)
 	if err != nil {
 		if h.ctx.Err() != nil {
 			return RetrievedResult{}, ErrClosed
@@ -43,7 +43,7 @@ func (h *Handler) ConsumeResult(ctx context.Context, appID, secret, code string)
 	return entry, nil
 }
 
-func (h *Handler) authenticateResult(ctx context.Context, appID, secret string) (apps.App, error) {
+func (h *Handler) authenticateApp(ctx context.Context, appID, secret string) (apps.App, error) {
 	if len(appID) > 128 || len(secret) > 512 || appID == "" || secret == "" {
 		return apps.App{}, apps.ErrUnauthorized
 	}

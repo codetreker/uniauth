@@ -64,6 +64,8 @@ func TestExternalProduct(t *testing.T) {
 	if !errors.As(err, &callbackError) || callbackError.Code != "provider_denied" {
 		t.Fatal("callback error type is not available to an external product")
 	}
+	var discover func(context.Context, string) ([]uniauth.Provider, error) = client.Providers
+	_ = discover
 	var retrieve func(context.Context, string) (*uniauth.Identity, error) = client.Retrieve
 	_ = retrieve
 	identity := uniauth.Identity{Provider: uniauth.GitHub, ID: "github:123", Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"id":9007199254740993}`)}}

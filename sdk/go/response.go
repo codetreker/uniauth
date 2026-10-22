@@ -19,10 +19,10 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("uniauth: result retrieval failed (HTTP %d)", e.StatusCode)
+	return fmt.Sprintf("uniauth: app request failed (HTTP %d)", e.StatusCode)
 }
 
-// ProtocolError means the response cannot be interpreted as an identity or
+// ProtocolError means the response cannot be interpreted as an App response or
 // gateway failure. Cause retains JSON and body errors without printing payloads.
 type ProtocolError struct {
 	StatusCode int
@@ -32,7 +32,7 @@ type ProtocolError struct {
 }
 
 func (e *ProtocolError) Error() string {
-	return fmt.Sprintf("uniauth: invalid result response (%s, HTTP %d)", e.Reason, e.StatusCode)
+	return fmt.Sprintf("uniauth: invalid app response (%s, HTTP %d)", e.Reason, e.StatusCode)
 }
 
 func (e *ProtocolError) Unwrap() error { return e.Cause }
@@ -43,37 +43,16 @@ type RequestError struct {
 	Cause error
 }
 
-func (e *RequestError) Error() string { return "uniauth: result request failed" }
+func (e *RequestError) Error() string { return "uniauth: app request failed" }
 func (e *RequestError) Unwrap() error { return e.Cause }
 
 func parseResponse(status int, header http.Header, body []byte) (*Identity, error) {
+	fields, err := parseResponseEnvelope(status, header, body, objectFields)
+	if err != nil {
+		return nil, err
+	}
 	failure := func(reason string, cause error) (*Identity, error) {
 		return nil, &ProtocolError{StatusCode: status, RequestID: header.Get("X-Request-ID"), Reason: reason, Cause: cause}
-	}
-	if status != http.StatusOK && (status < 400 || status > 599) {
-		return failure("unexpected_status", nil)
-	}
-	contentType, _, err := mime.ParseMediaType(header.Get("Content-Type"))
-	if err != nil || contentType != "application/json" {
-		return failure("content_type", err)
-	}
-	if !utf8.Valid(body) {
-		return failure("json", errors.New("response JSON requires valid UTF-8"))
-	}
-	fields, err := objectFields(body)
-	if err != nil {
-		return failure("json", err)
-	}
-	if status != http.StatusOK {
-		errorFields, err := objectFields(fields["error"])
-		if err != nil {
-			return failure("error_schema", err)
-		}
-		var code, message string
-		if json.Unmarshal(errorFields["code"], &code) != nil || code == "" || json.Unmarshal(errorFields["message"], &message) != nil || message == "" {
-			return failure("error_schema", nil)
-		}
-		return nil, &APIError{StatusCode: status, Code: code, Message: message, RequestID: header.Get("X-Request-ID")}
 	}
 	for _, field := range []string{"provider", "id", "email", "email_verified", "name", "avatar_url", "origin"} {
 		if _, exists := fields[field]; !exists {
@@ -89,6 +68,38 @@ func parseResponse(status int, header http.Header, body []byte) (*Identity, erro
 	}
 	identity.RawJSON = json.RawMessage(body)
 	return &identity, nil
+}
+
+func parseResponseEnvelope(status int, header http.Header, body []byte, parseObject func([]byte) (map[string]json.RawMessage, error)) (map[string]json.RawMessage, error) {
+	failure := func(reason string, cause error) (map[string]json.RawMessage, error) {
+		return nil, &ProtocolError{StatusCode: status, RequestID: header.Get("X-Request-ID"), Reason: reason, Cause: cause}
+	}
+	if status != http.StatusOK && (status < 400 || status > 599) {
+		return failure("unexpected_status", nil)
+	}
+	contentType, _, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || contentType != "application/json" {
+		return failure("content_type", err)
+	}
+	if !utf8.Valid(body) {
+		return failure("json", errors.New("response JSON requires valid UTF-8"))
+	}
+	fields, err := parseObject(body)
+	if err != nil {
+		return failure("json", err)
+	}
+	if status != http.StatusOK {
+		errorFields, err := parseObject(fields["error"])
+		if err != nil {
+			return failure("error_schema", err)
+		}
+		var code, message string
+		if json.Unmarshal(errorFields["code"], &code) != nil || code == "" || json.Unmarshal(errorFields["message"], &message) != nil || message == "" {
+			return failure("error_schema", nil)
+		}
+		return nil, &APIError{StatusCode: status, Code: code, Message: message, RequestID: header.Get("X-Request-ID")}
+	}
+	return fields, nil
 }
 
 func objectFields(raw []byte) (map[string]json.RawMessage, error) {

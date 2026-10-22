@@ -71,6 +71,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/authorize", h.authorize)
 	mux.HandleFunc("GET /auth/callback/{provider}", h.callback)
 	mux.HandleFunc("POST /auth/result", h.retrieve)
+	mux.HandleFunc("POST /auth/providers", h.discoverProviders)
 }
 
 func (h *Handler) Close() error {
@@ -276,7 +277,7 @@ func (h *Handler) retrieve(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, 401, "invalid_app", "Application authentication failed.")
 		return
 	}
-	app, err := h.authenticateResult(r.Context(), appID, secret)
+	app, err := h.authenticateApp(r.Context(), appID, secret)
 	if err != nil {
 		if errors.Is(err, apps.ErrUnauthorized) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="uniauth"`)

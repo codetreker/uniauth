@@ -43,6 +43,7 @@ from live upstream verification.
 | R12 | Enforce owner-only access to Apps and Secrets, including for administrators. |
 | R13 | Claim initial administrator authority once through a configured verified email; allow only minimal user summaries and App counts to that administrator. |
 | R14 | Reset all existing Apps and Secrets through migration 3, then persist the final platform schema without legacy ownership rules. |
+| R15 | Let confidential product backends discover current App-allowed, service-configured providers for an exact registered callback without creating login state. |
 
 ## Architecture
 
@@ -64,7 +65,8 @@ flowchart LR
     Apps --> Gateway
 ```
 
-The downstream interface is a login-and-retrieval HTTP protocol. Microsoft and
+The downstream interface supports App-aware provider discovery and a
+login-and-retrieval HTTP protocol. Microsoft and
 Google use upstream OIDC; GitHub uses authorization-code OAuth followed by
 identity API calls. Keeping complete profiles in the backend response avoids
 callback URL size limits and shared encryption-key lifecycle complexity.
@@ -75,7 +77,7 @@ callback URL size limits and shared encryption-key lifecycle complexity.
 | `internal/server/` | Provider composition, HTTP routing, request logging, shutdown. |
 | `internal/apps/` | SQLite migrations, platform accounts and identity links, owned App configuration, credential lifecycle. |
 | `internal/providers/` | Three real provider adapters, source collection, and standard identity-field mapping. |
-| `internal/auth/` | Browser-bound transactions, result expiry and atomic handover. |
+| `internal/auth/` | App-aware provider discovery, browser-bound transactions, result expiry and atomic handover. |
 | `internal/console/` | OAuth Console login/linking, sessions, owner management API, minimal administrator listing. |
 | `web/console/` | React/TypeScript UI and embedded production assets. |
 | `sdk/go/` | Standalone standard-library Go product client module. |
@@ -115,7 +117,8 @@ owns this lifecycle and its response-loss cost.
 
 App creation may include initial Secret metadata to issue its first credential
 atomically, or omit it to register an App without credentials. An App without a
-Secret cannot authenticate result retrieval until its owner issues one.
+Secret cannot authenticate provider discovery or result retrieval until its
+owner issues one.
 Configuration replacement edits only the App. Later Secret creation and metadata
 updates have separate JSON requests. Names contain 1–128 valid UTF-8 bytes with
 no surrounding whitespace, CR, or LF. Descriptions contain up to 4096 valid UTF-8 bytes, preserving
@@ -240,6 +243,31 @@ named active and revoked credentials, multiline descriptions, enabled/disabled
 states, and error handling. Mockup fixtures are
 excluded from production assets.
 
+## App-aware provider discovery
+
+A product backend calls `POST /auth/providers` with HTTP Basic App ID/Secret
+credentials and JSON containing its exact registered `redirect_uri`. The service
+reads the current enabled App and live credential records, validates the callback,
+and returns the intersection of the App allowlist and configured provider
+registry in `microsoft`, `google`, `github` order. An empty intersection returns
+an empty array; an invalid App, credential, callback, unavailable service, or
+configuration read returns an explicit error.
+
+The App-specific answer prevents a product from displaying global Console
+provider flags that ignore its allowlist and callback registration, or maintaining
+a second provider configuration that can drift. It uses the same confidential
+credentials as result retrieval and requires no additional storage or deployment
+configuration. Requests and responses are bounded to 16 KiB, callbacks to 2048
+UTF-8 bytes, and request cancellation bounds configuration lookup.
+
+Discovery creates no transaction, identity result, cookie, or session, and does
+not contact an upstream provider to test credentials or health. Its answer is a
+configuration snapshot. Authorization rechecks current App, provider, and callback
+eligibility when the product sends the browser to UniAuth. The
+[provider discovery decision](../../.agents/notes/implemented/feature/2026-10-22-app-provider-discovery.md)
+owns the alternatives and operational costs; the [API reference](../reference/api.md)
+owns exact requests, limits, and errors.
+
 ## Authentication and identity handover
 
 1. The product binds a random `state` to the initiating browser's pending login
@@ -271,8 +299,9 @@ exact request limits, callback errors, and HTTP statuses.
 
 ## Product SDKs
 
-Go and JavaScript SDKs implement the existing product login-and-retrieval
-protocol. Their clients build validated authorization URLs, generate random state,
+Go and JavaScript SDKs implement the product login-and-retrieval protocol. The
+Go SDK also provides `Providers(ctx, redirectURI)` for App-aware configuration
+discovery; JavaScript and other backends can call its HTTP endpoint directly. Their clients build validated authorization URLs, generate random state,
 parse callback parameters against expected state, and issue one authenticated
 result request. They have no administrator helpers, user store, product session,
 or pending-login persistence. A product must atomically validate and consume its
@@ -292,7 +321,12 @@ HTTP status, machine code, message, and request ID; malformed responses are
 protocol errors, and transport causes remain available. A lost, aborted, or
 invalid response may follow successful server consumption and requires a fresh
 login. Default request deadlines are 30 seconds; Go accepts a configured HTTP
-client, and JavaScript accepts a timeout and caller AbortSignal.
+client, and JavaScript accepts a timeout and caller AbortSignal. Go discovery
+uses one context-bound POST without redirects or retries, preserves the exact
+validated callback string, and bounds its response to 16 KiB. A non-null array
+of unique known providers is required; an empty array is valid. Discovery API
+and protocol failures use the existing typed errors without inventing an empty
+provider list.
 
 The SDKs require all seven standard identity fields from the server. Missing
 fields or incompatible JSON types produce protocol errors; nullable strings,

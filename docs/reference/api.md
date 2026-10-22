@@ -1,19 +1,21 @@
 # API Reference
 
-UniAuth uses a small HTTP protocol for product login and one-time identity
-retrieval. Products need a confidential backend with an App Secret. Microsoft
-and Google use OIDC upstream; this downstream protocol does not issue ID tokens,
+UniAuth uses a small HTTP protocol for App-aware provider discovery, product
+login, and one-time identity retrieval. Products need a confidential backend with
+an App Secret. Microsoft and Google use OIDC upstream; this downstream protocol does not issue ID tokens,
 access tokens, refresh tokens, or central login sessions.
 
-[Go and JavaScript SDKs](sdks.md) implement these product endpoints without changing
-the protocol. They validate URLs and callback parameters and preserve complete
-identity data. Products retain atomic browser-bound pending-state consumption and
-session ownership. A retrieval SDK sends one POST and does not follow redirects
+[Go and JavaScript SDKs](sdks.md) implement product login and identity retrieval
+without changing the protocol. The Go SDK also provides provider discovery. They
+validate URLs and callback parameters and preserve complete identity data.
+Products retain atomic browser-bound pending-state consumption and session
+ownership. A retrieval SDK sends one POST and does not follow redirects
 or retry a consumed code.
 
 The gateway public origin requires HTTPS except for explicitly enabled loopback
 HTTP. Registered product callbacks accept HTTP or HTTPS independently.
-Authentication and Console API responses use `Cache-Control: no-store`. Requests have an `X-Request-ID` for log correlation.
+Authentication and Console API responses use `Cache-Control: no-store` and
+`Referrer-Policy: no-referrer`. Requests have an `X-Request-ID` for log correlation.
 Errors use this JSON shape unless an unsupported route or HTTP method is handled
 by the HTTP router itself:
 
@@ -22,6 +24,53 @@ by the HTTP router itself:
 ```
 
 ## Product login
+
+### Discover configured providers
+
+`POST /auth/providers` lets a confidential product backend obtain the currently
+configured login choices for its App and exact callback. Use HTTP Basic
+authentication with App ID as the username and App Secret as the password.
+Require `Content-Type: application/json` and exactly one JSON object containing
+only one `redirect_uri` field; duplicate or unknown fields are invalid. The request body is limited to 16 KiB; the callback contains
+1–2048 valid UTF-8 bytes and follows the same callback syntax and exact registered
+string matching as authorization.
+
+```http
+POST /auth/providers HTTP/1.1
+Host: auth.example
+Authorization: Basic BASE64_APP_ID_COLON_SECRET
+Content-Type: application/json
+
+{"redirect_uri":"https://product.example/auth/callback"}
+```
+
+A successful response is `200` with a non-null `providers` array:
+
+```json
+{"providers":["microsoft","github"]}
+```
+
+The array is the intersection of the current App's allowed providers and the
+service's configured provider registry, ordered `microsoft`, `google`, `github`.
+`{"providers":[]}` is a valid result when the intersection is empty. Discovery
+reads current App configuration and accepts only a currently enabled App and an
+unrevoked, current Secret; removed Apps and reset or revoked credentials stop
+working on subsequent requests.
+
+| HTTP status | Error code | Meaning |
+| --- | --- | --- |
+| `400` | `invalid_request` | Invalid JSON, content type, unsupported fields, callback syntax, or unregistered callback. |
+| `401` | `invalid_app` | Missing or invalid credentials, revoked or reset Secret, missing App, or disabled App. |
+| `503` | `service_unavailable` | Authentication service is shutting down or unavailable. |
+| `500` | `internal_error` | Application configuration could not be read. |
+
+Discovery creates no login transaction, identity result, browser cookie, or
+session. It reports configuration availability, not upstream credential health,
+consent, or the success of a future login. `GET /auth/authorize` rechecks the
+current App, provider, and callback when the browser navigates there. Products
+must expose discovery failures separately from a valid empty list and keep App
+Secrets on their backend. The public Console provider flags describe global
+configuration and are not an App-aware substitute.
 
 ### Start authorization
 
@@ -386,8 +435,8 @@ a credential in the same operation:
 Omit `initial_secret` to create an App with no credentials. The response then
 contains only `app`; `secret` and `secret_id` are absent. A supplied
 `initial_secret` must be an object with valid Secret metadata; `null` is invalid.
-An App without a Secret cannot authenticate `/auth/result` until its owner issues
-a credential through the Secret endpoint.
+An App without a Secret cannot authenticate `/auth/providers` or `/auth/result`
+until its owner issues a credential through the Secret endpoint.
 
 `PUT /console/api/apps/{id}` accepts only the application configuration fields
 `name`, `enabled`, `redirect_uris`, and `providers`; it does not create or edit a

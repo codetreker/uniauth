@@ -66,6 +66,8 @@ func (p *controlledProvider) Exchange(ctx context.Context, request providers.Exc
 }
 
 type gateway struct {
+	store      *apps.Store
+	ownerID    string
 	server     *httptest.Server
 	app, other apps.CreatedApp
 	clock      atomic.Int64
@@ -101,7 +103,7 @@ func newGateway(t *testing.T) *gateway {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &gateway{}
+	g := &gateway{store: store, ownerID: owner.ID}
 	g.clock.Store(time.Now().UnixNano())
 	for i, destination := range []*apps.CreatedApp{&g.app, &g.other} {
 		*destination, err = store.Create(t.Context(), owner.ID, apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: &apps.SecretInput{Name: "SDK fixture"}})

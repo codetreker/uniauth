@@ -16,8 +16,11 @@ validated independently from the Go gateway and Console source tree.
 The standalone Go module `github.com/codetreker/uniauth/sdk/go`, package `uniauth`,
 uses Go 1.27.1 and only the standard library. The JavaScript package
 `@codetreker/uniauth` emits ESM code and TypeScript declarations for Node.js 24
-or later, with no runtime dependencies. Both implement the existing product HTTP
-protocol without adding gateway endpoints or changing identity handover.
+or later, with no runtime dependencies. The original SDK delivery implemented
+the existing product HTTP protocol without adding gateway endpoints or changing identity handover. The
+[App provider discovery decision](2026-10-22-app-provider-discovery.md) adds a
+Go client method and gateway endpoint for current App-aware configuration
+availability while retaining this login-and-retrieval ownership.
 
 Clients require a UniAuth base origin and the product's App ID and Secret. They
 validate authorization URLs and callback parameters, provide a 32-byte random
@@ -38,6 +41,8 @@ and expose no administrator API. The
 continues to own the five-minute, in-memory, one-time result semantics.
 
 The clients do not follow result redirects or automatically retry retrieval.
+Go provider discovery also uses one context-bound request without redirects or
+retries, with a bounded provider-list response and existing typed errors.
 Go's default HTTP client has a 30-second timeout; a supplied client controls its
 timeout. JavaScript's default deadline is 30,000 milliseconds and composes caller
 cancellation. Typed API errors retain status, machine code, message, and request
