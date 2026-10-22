@@ -1420,16 +1420,6 @@ export const Console = ({
                                         <td>
                                           <div className="secret-details">
                                             <strong>{secret.name}</strong>
-                                            <p className="secret-description">
-                                              {secret.description === "" ? (
-                                                <span className="hint">
-                                                  No description
-                                                </span>
-                                              ) : (
-                                                secret.description
-                                              )}
-                                            </p>
-                                            <code>{secret.id}</code>
                                           </div>
                                         </td>
                                         <td>{date(secret.created_at)}</td>

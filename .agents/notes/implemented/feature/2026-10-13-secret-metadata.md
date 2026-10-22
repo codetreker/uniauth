@@ -62,8 +62,12 @@ operational upgrade and backup behavior.
 
 The Console optionally collects initial metadata with App creation and has
 separate creation and detail-editing forms for later credentials. Its `Active`
-tab lists unrevoked records; `Disabled` lists revoked history with its revocation timestamps. Both
-tabs show names, descriptions, IDs, and lifecycle state and permit detail editing.
+tab lists unrevoked records; `Disabled` lists revoked history with its revocation
+timestamps. Both tabs identify credentials by name only, alongside lifecycle
+metadata and management actions, to keep the list compact. Descriptions remain
+available through detail editing, and one-time credential displays retain both
+descriptions and Secret IDs. Management actions continue to use Secret IDs,
+including in accessible button labels, so duplicate names remain distinguishable.
 Each App opens on `Active`, and a newly issued credential selects that view.
 Both counts derive from the same metadata response, so view switching needs no
 separate request. `Disabled` is a presentation label for existing revoked rows.

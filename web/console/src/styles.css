@@ -968,10 +968,6 @@ tbody tr:last-child td {
 .secrets-panel td {
   padding: 15px 24px;
 }
-.secrets-panel td code {
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
 .secret-details {
   min-width: 210px;
   max-width: 440px;
@@ -987,10 +983,6 @@ tbody tr:last-child td {
   overflow-wrap: anywhere;
   line-height: 1.6;
   margin: 7px 0;
-}
-.secret-details code {
-  font-size: 10px;
-  overflow-wrap: anywhere;
 }
 .secret-actions {
   display: flex;
@@ -1792,9 +1784,6 @@ tbody tr:last-child td {
   .secrets-panel th,
   .secrets-panel td {
     padding: 13px 17px;
-  }
-  .secrets-panel td code {
-    font-size: 9px;
   }
   .secret-details {
     min-width: 0;
