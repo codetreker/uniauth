@@ -50,7 +50,7 @@ const login = async () => {
   await completed.arrayBuffer();
   assert.equal(completed.status, 302);
   const product = new URL(completed.headers.get("Location"));
-  assert.equal(product.origin, "https://product.example");
+  assert.equal(product.origin, "http://product.example");
   assert.equal(product.searchParams.get("existing"), "preserved");
   assert.throws(
     () => parseCallback(product.searchParams, "incorrect-state"),

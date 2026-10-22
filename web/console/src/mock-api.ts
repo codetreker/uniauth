@@ -170,7 +170,7 @@ export const createMockAPI = (
     for (const value of input.redirect_uris) {
       const url = new URL(value);
       if (
-        url.protocol !== "https:" ||
+        (url.protocol !== "https:" && url.protocol !== "http:") ||
         url.username !== "" ||
         url.password !== "" ||
         url.hash !== "" ||
@@ -179,7 +179,7 @@ export const createMockAPI = (
         throw new APIError(
           400,
           "invalid_input",
-          "Callback URLs must use HTTPS without user information, fragments, or reserved parameters.",
+          "Callback URLs must use HTTP or HTTPS without user information, fragments, or reserved parameters.",
         );
     }
   };
@@ -296,7 +296,8 @@ export const createMockAPI = (
       await wait();
       authorize();
       validate(input);
-      validateSecret(input.initial_secret);
+      if (input.initial_secret !== undefined)
+        validateSecret(input.initial_secret);
       const { initial_secret, ...configuration } = input;
       const now = new Date().toISOString();
       const app: Application = {
@@ -307,6 +308,7 @@ export const createMockAPI = (
       };
       apps = [...apps, app];
       credentials.set(app.id, []);
+      if (initial_secret === undefined) return { app: structuredClone(app) };
       const issued = issueSecret(app.id, initial_secret);
       return {
         app: structuredClone(app),

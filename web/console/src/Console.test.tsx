@@ -146,6 +146,11 @@ const pendingIssuanceAfterUnrelatedRefresh = async (initialSecret: boolean) => {
     fireEvent.change(within(editor).getByLabelText("Callback URLs"), {
       target: { value: created.redirect_uris[0] },
     });
+    fireEvent.click(
+      within(editor).getByRole("checkbox", {
+        name: /Create an initial secret/,
+      }),
+    );
     fireEvent.change(within(editor).getByLabelText("Secret name"), {
       target: { value: issued.name },
     });
@@ -198,6 +203,58 @@ const signInAgain = async () => {
 };
 
 describe("OAuth Console", () => {
+  it("creates an HTTP application without a secret and releases the editor for later credential creation", async () => {
+    const created = {
+      ...example,
+      id: "app_created",
+      name: "HTTP product",
+      redirect_uris: ["http://product.example/callback"],
+    };
+    const api = apiFixture({
+      createApp: vi.fn().mockResolvedValue({ app: created }),
+      listSecrets: vi.fn().mockResolvedValue([]),
+    });
+    render(<Console api={api} onAuthorization={completeAuthorization} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "New application" }),
+    );
+    const editor = screen.getByRole("dialog", { name: "Create application" });
+    const initialSecret = within(editor).getByRole("checkbox", {
+      name: /Create an initial secret/,
+    });
+    expect((initialSecret as HTMLInputElement).checked).toBe(false);
+    expect(within(editor).queryByLabelText("Secret name")).toBeNull();
+    fireEvent.change(within(editor).getByLabelText("Application name"), {
+      target: { value: created.name },
+    });
+    fireEvent.change(within(editor).getByLabelText("Callback URLs"), {
+      target: { value: created.redirect_uris[0] },
+    });
+    fireEvent.click(initialSecret);
+    fireEvent.change(within(editor).getByLabelText("Secret name"), {
+      target: { value: " invalid " },
+    });
+    fireEvent.click(initialSecret);
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Create application" }),
+    );
+    await screen.findByRole("heading", { name: created.name });
+    expect(api.createApp).toHaveBeenCalledExactlyOnceWith({
+      name: created.name,
+      enabled: true,
+      redirect_uris: created.redirect_uris,
+      providers: ["google", "github"],
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Save your app secret" }),
+    ).toBeNull();
+    await screen.findByText(
+      "No active secrets. Create a secret to connect this application.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
+    expect(screen.getByRole("dialog", { name: "Create secret" })).toBeDefined();
+  });
+
   it("keeps a newly created secret visible until the member explicitly saves it", async () => {
     const api = apiFixture({
       listSecrets: vi
@@ -215,6 +272,11 @@ describe("OAuth Console", () => {
     fireEvent.change(within(editor).getByLabelText("Callback URLs"), {
       target: { value: "https://created.test/callback" },
     });
+    fireEvent.click(
+      within(editor).getByRole("checkbox", {
+        name: /Create an initial secret/,
+      }),
+    );
     fireEvent.change(within(editor).getByLabelText("Secret name"), {
       target: { value: "Production" },
     });

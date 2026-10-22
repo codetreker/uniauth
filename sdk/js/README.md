@@ -93,17 +93,17 @@ recognized provider errors are `provider_denied`, `provider_failed`, and
 `createClient({ baseURL, appID, appSecret, allowLoopbackHTTP?, fetch?, timeoutMs? })`
 validates configuration before use. `baseURL` must be an HTTPS origin without
 credentials, a query, a fragment, or a non-root path. `allowLoopbackHTTP: true`
-permits HTTP only for `localhost`, IPv4 loopback addresses, IPv6 `::1`, and
-IPv4-mapped loopback addresses; the service must also enable local HTTP.
-App ID accepts 1–128 UTF-8 bytes and excludes
-colons. App Secret accepts 1–512 UTF-8 bytes. String inputs reject lone UTF-16
-surrogates rather than replacing them.
+permits HTTP gateway URLs only for `localhost`, IPv4 loopback addresses, IPv6
+`::1`, and IPv4-mapped loopback addresses; the service must also enable local
+HTTP. App ID accepts 1–128 UTF-8 bytes and excludes colons. App Secret accepts
+1–512 UTF-8 bytes. String inputs reject lone UTF-16 surrogates rather than
+replacing them.
 
 `client.authorizationURL({ provider, redirectURI, state })` accepts `microsoft`,
 `google`, or `github`. The callback must match the registered string exactly,
-contain 1–2048 UTF-8 bytes, use HTTPS or enabled loopback HTTP, and exclude user
-information, fragments, and reserved query parameters `code`, `state`, and
-`error`. Its original spelling is preserved as the `redirect_uri` query value,
+contain 1–2048 UTF-8 bytes, use HTTP or HTTPS without transport opt-in, and
+exclude user information, fragments, and reserved query parameters `code`,
+`state`, and `error`. Its original spelling is preserved as the `redirect_uri` query value,
 including casing, percent escapes, explicit ports, and existing query values.
 
 `client.retrieve(code, { signal? })` sends exactly one Basic-authenticated JSON

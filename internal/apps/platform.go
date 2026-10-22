@@ -32,7 +32,7 @@ func (s *Store) InitializePlatform(ctx context.Context, email string) error {
 
 func (s *Store) ProvisionConsole(ctx context.Context, callback string, providerNames []string) (CreatedApp, error) {
 	input := AppInput{Name: "UniAuth Console", Enabled: true, RedirectURIs: []string{callback}, Providers: providerNames}
-	if err := validateInput(input, s.allowLoopbackHTTP); err != nil {
+	if err := validateInput(input); err != nil {
 		return CreatedApp{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

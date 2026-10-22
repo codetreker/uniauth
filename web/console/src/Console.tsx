@@ -516,7 +516,7 @@ export const Console = ({
     };
   }, [selected, session, secretRevision, api]);
 
-  const saveApp = async (input: AppInput | CreateAppInput) => {
+  const saveApp = async (input: CreateAppInput) => {
     const owner = editorOwner.current;
     if (editor === undefined || owner === undefined)
       throw new Error("No application is being edited.");
@@ -525,19 +525,25 @@ export const Console = ({
     transition(owner, editor === "new" ? "issuing" : "saving");
     try {
       if (editor === "new") {
-        if (!("initial_secret" in input))
-          throw new Error("Initial secret details are required.");
         const created = await api.createApp(input);
         replaceApps([...snapshots.current, created.app]);
         setSelected(created.app.id);
-        setCredential({
-          app: created.app,
-          secret: created.secret,
-          id: created.secret_id,
-          ...input.initial_secret,
-        });
-        transition(owner, "credential");
-        credentialOwner.current = owner;
+        if (created.secret !== undefined) {
+          if (input.initial_secret === undefined)
+            throw new Error(
+              "Unexpected initial secret in application response.",
+            );
+          setCredential({
+            app: created.app,
+            secret: created.secret,
+            id: created.secret_id,
+            ...input.initial_secret,
+          });
+          transition(owner, "credential");
+          credentialOwner.current = owner;
+        } else {
+          release(owner);
+        }
       } else {
         const updated = await api.updateApp(editor.id, input);
         reconcile(updated);
@@ -1601,7 +1607,7 @@ export const Console = ({
                         </span>
                         <h2>Your products belong here</h2>
                         <p>
-                          Create an application to get its App ID and secret,
+                          Create an application to get its App ID,
                           <br />
                           then connect your product's login flow.
                         </p>

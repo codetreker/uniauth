@@ -86,12 +86,12 @@ func newFixture(t *testing.T, modify func(*Config)) *fixture {
 	}
 	f.ownerID = owner.ID
 	input := apps.AppInput{Name: "Product", Enabled: true, RedirectURIs: []string{"https://product.example/callback?existing=preserved"}, Providers: []string{"google", "github"}}
-	f.app, err = store.Create(context.Background(), f.ownerID, apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
+	f.app, err = store.Create(context.Background(), f.ownerID, apps.CreateAppInput{AppInput: input, InitialSecret: &apps.SecretInput{Name: "Auth fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	input.Name = "Other"
-	f.other, err = store.Create(context.Background(), f.ownerID, apps.CreateAppInput{AppInput: input, InitialSecret: apps.SecretInput{Name: "Auth fixture"}})
+	f.other, err = store.Create(context.Background(), f.ownerID, apps.CreateAppInput{AppInput: input, InitialSecret: &apps.SecretInput{Name: "Auth fixture"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +199,48 @@ func assertCode(t *testing.T, response *httptest.ResponseRecorder, status int, c
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Error.Code != code {
 		t.Fatalf("error = %s, want %s", response.Body, code)
 	}
+}
+
+func TestHTTPRedirectAndDeferredCredentialHandover(t *testing.T) {
+	f := newFixture(t, nil)
+	const redirectURI = "http://product.example:8080/callback?existing=preserved&return=%2Fhome"
+	created, err := f.store.Create(t.Context(), f.ownerID, apps.CreateAppInput{AppInput: apps.AppInput{Name: "HTTP product", Enabled: true, RedirectURIs: []string{redirectURI}, Providers: []string{"google"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.app = created
+	for _, unregistered := range []string{
+		"https://product.example:8080/callback?existing=preserved&return=%2Fhome",
+		"http://product.example/callback?existing=preserved&return=%2Fhome",
+		"http://product.example:8080/other?existing=preserved&return=%2Fhome",
+		"http://product.example:8080/callback?existing=preserved&return=/home",
+	} {
+		query := url.Values{"app_id": {created.App.ID}, "provider": {"google"}, "redirect_uri": {unregistered}, "state": {"http-login"}}
+		assertCode(t, f.call("GET", "/auth/authorize?"+query.Encode(), nil, nil, nil), http.StatusBadRequest, "invalid_request")
+	}
+	flow := f.start("http-login")
+	response := f.call("GET", "/auth/callback/google?"+url.Values{"state": {flow.state}, "code": {"upstream-code"}}.Encode(), nil, []*http.Cookie{flow.cookie}, nil)
+	if response.Code != http.StatusFound {
+		t.Fatalf("HTTP callback = %d: %s", response.Code, response.Body)
+	}
+	location, err := url.Parse(response.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := location.Query().Get("code")
+	if location.Scheme != "http" || location.Host != "product.example:8080" || location.Path != "/callback" || location.Query().Get("state") != flow.productState || location.Query().Get("existing") != "preserved" || location.Query().Get("return") != "/home" || code == "" {
+		t.Fatalf("incorrect HTTP product redirect: %s", location)
+	}
+	assertCode(t, f.retrieve(code, &f.app), http.StatusUnauthorized, "invalid_app")
+	issued, err := f.store.CreateSecret(t.Context(), f.ownerID, created.App.ID, apps.SecretInput{Name: "Product backend"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.app.Secret, f.app.SecretID = issued.Secret, issued.ID
+	if response := f.retrieve(code, &f.app); response.Code != http.StatusOK {
+		t.Fatalf("later credential handover = %d: %s", response.Code, response.Body)
+	}
+	assertCode(t, f.retrieve(code, &f.app), http.StatusGone, "result_unavailable")
 }
 
 func TestBrowserBindingsAndProductHandover(t *testing.T) {

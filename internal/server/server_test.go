@@ -302,7 +302,7 @@ func TestConsoleProvisioningAcrossRestarts(t *testing.T) {
 	}
 	product, err := first.store.Create(ctx, owner.ID, apps.CreateAppInput{
 		AppInput:      apps.AppInput{Name: "Persistent product", Enabled: true, RedirectURIs: []string{"https://product.example/callback"}, Providers: []string{"github"}},
-		InitialSecret: apps.SecretInput{Name: "Backend", Description: "Restart fixture"},
+		InitialSecret: &apps.SecretInput{Name: "Backend", Description: "Restart fixture"},
 	})
 	if err != nil {
 		t.Fatal(err)

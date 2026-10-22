@@ -27,7 +27,7 @@ import (
 
 const profileJSON = `{"id":9007199254740993,"unknown":{"nested":[null,false,{"text":"original"}]},"email":null,"verified":false}`
 
-const productRedirect = "https://product.example/callback?existing=preserved"
+const productRedirect = "http://product.example/callback?existing=preserved"
 
 type controlledProvider struct {
 	mu       sync.Mutex
@@ -104,7 +104,7 @@ func newGateway(t *testing.T) *gateway {
 	g := &gateway{}
 	g.clock.Store(time.Now().UnixNano())
 	for i, destination := range []*apps.CreatedApp{&g.app, &g.other} {
-		*destination, err = store.Create(t.Context(), owner.ID, apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: apps.SecretInput{Name: "SDK fixture"}})
+		*destination, err = store.Create(t.Context(), owner.ID, apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: &apps.SecretInput{Name: "SDK fixture"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func (g *gateway) login(t *testing.T, client *uniauth.Client) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if product.Scheme != "https" || product.Host != "product.example" || product.Query().Get("existing") != "preserved" {
+	if product.Scheme != "http" || product.Host != "product.example" || product.Query().Get("existing") != "preserved" {
 		t.Fatalf("product redirect changed: %s", product)
 	}
 	if _, err := uniauth.ParseCallback(product.Query(), "incorrect-state"); err == nil {

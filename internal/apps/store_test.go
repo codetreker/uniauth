@@ -34,16 +34,17 @@ func validSecretInput() apps.SecretInput {
 }
 
 func createInput(input apps.AppInput) apps.CreateAppInput {
-	return apps.CreateAppInput{AppInput: input, InitialSecret: validSecretInput()}
+	secret := validSecretInput()
+	return apps.CreateAppInput{AppInput: input, InitialSecret: &secret}
 }
 
 func validCreateInput() apps.CreateAppInput {
 	return createInput(validInput())
 }
 
-func openStore(t *testing.T, loopback bool) *apps.Store {
+func openStore(t *testing.T) *apps.Store {
 	t.Helper()
-	store, err := apps.Open(t.Context(), apps.Config{Path: filepath.Join(t.TempDir(), "apps.sqlite"), AllowLoopbackHTTP: loopback})
+	store, err := apps.Open(t.Context(), apps.Config{Path: filepath.Join(t.TempDir(), "apps.sqlite")})
 	require.NoError(t, err)
 	testOwnerID(t, store)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -162,7 +163,7 @@ func TestRegistryPersistenceAndCredentialLifecycle(t *testing.T) {
 }
 
 func TestAppIsolationAndMissingRecords(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	first, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	second, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
@@ -203,7 +204,7 @@ func TestAppIsolationAndMissingRecords(t *testing.T) {
 }
 
 func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
-	store := openStore(t, false)
+	store := openStore(t)
 	invalid := map[string]func(*apps.AppInput){
 		"empty name":          func(i *apps.AppInput) { i.Name = "" },
 		"whitespace name":     func(i *apps.AppInput) { i.Name = " Product " },
@@ -229,8 +230,8 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 		})
 	}
 	for _, uri := range []string{
-		"", "https://" + strings.Repeat("a", 2048), "/relative", "http://product.example/callback",
-		"http://localhost:8080/callback", "ftp://product.example/callback", "https://name:password@product.example/callback",
+		"", "https://" + strings.Repeat("a", 2048), "/relative",
+		"ftp://product.example/callback", "https://name:password@product.example/callback",
 		"https://product.example/callback#fragment", "https://product.example/callback#", "https://:443/callback",
 		"https://product.example/callback?code=existing", "https://product.example/callback?state=existing",
 		"https://product.example/callback?error=existing", "https://product.example/callback?%63ode=existing",
@@ -258,23 +259,67 @@ func TestInputValidationAndExactCallbackPreservation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, created.App, stored)
 
-	loopbackStore := openStore(t, true)
-	for _, uri := range []string{"http://localhost:8080/callback", "http://127.0.0.1:8080/callback", "http://127.2.3.4/callback", "http://[::1]:8080/callback", "https://product.example/callback"} {
-		input := validInput()
-		input.RedirectURIs = []string{uri}
-		_, err := loopbackStore.Create(t.Context(), testOwnerID(t, loopbackStore), createInput(input))
-		require.NoError(t, err)
-	}
-	for _, uri := range []string{"http://localhost.example/callback", "http://192.168.1.1/callback", "http://product.example/callback"} {
-		input := validInput()
-		input.RedirectURIs = []string{uri}
-		_, err := loopbackStore.Create(t.Context(), testOwnerID(t, loopbackStore), createInput(input))
-		require.ErrorIs(t, err, apps.ErrInvalid)
+	for _, uri := range []string{"http://localhost:8080/callback", "http://127.0.0.1:8080/callback", "http://127.2.3.4/callback", "http://[::1]:8080/callback", "http://localhost.example/callback", "http://192.168.1.1/callback", "http://product.example:8080/callback?return=%2Fhome", "https://product.example/callback"} {
+		t.Run(uri, func(t *testing.T) {
+			input := validInput()
+			input.RedirectURIs = []string{uri}
+			created, err := store.Create(t.Context(), testOwnerID(t, store), createInput(input))
+			require.NoError(t, err)
+			assert.Equal(t, []string{uri}, created.App.RedirectURIs)
+			updated, err := store.Update(t.Context(), testOwnerID(t, store), created.App.ID, input)
+			require.NoError(t, err)
+			assert.Equal(t, []string{uri}, updated.RedirectURIs)
+		})
 	}
 }
 
+func TestCreateWithoutInitialSecretPersistsAndSupportsLaterCredential(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "apps.sqlite")
+	store, err := apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	owner := testOwnerID(t, store)
+	created, err := store.Create(ctx, owner, apps.CreateAppInput{AppInput: validInput()})
+	require.NoError(t, err)
+	assert.Empty(t, created.Secret)
+	assert.Empty(t, created.SecretID)
+	encoded, err := json.Marshal(created)
+	require.NoError(t, err)
+	var response map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &response))
+	assert.Len(t, response, 1)
+	assert.Contains(t, response, "app")
+	require.NoError(t, store.Close())
+
+	store, err = apps.Open(ctx, apps.Config{Path: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	stored, err := store.GetOwned(ctx, owner, created.App.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.App, stored)
+	secrets, err := store.ListSecrets(ctx, owner, stored.ID)
+	require.NoError(t, err)
+	assert.Empty(t, secrets)
+	for _, secret := range []string{"", "unissued"} {
+		_, err := store.Authenticate(ctx, stored.ID, secret)
+		require.ErrorIs(t, err, apps.ErrUnauthorized)
+	}
+	issued, err := store.CreateSecret(ctx, owner, stored.ID, validSecretInput())
+	require.NoError(t, err)
+	authenticated, err := store.Authenticate(ctx, stored.ID, issued.Secret)
+	require.NoError(t, err)
+	assert.Equal(t, stored, authenticated)
+	secrets, err = store.ListSecrets(ctx, owner, stored.ID)
+	require.NoError(t, err)
+	require.Len(t, secrets, 1)
+	assert.Equal(t, issued.ID, secrets[0].ID)
+	require.NoError(t, store.RevokeSecret(ctx, owner, stored.ID, issued.ID))
+	_, err = store.Authenticate(ctx, stored.ID, issued.Secret)
+	require.ErrorIs(t, err, apps.ErrUnauthorized)
+}
+
 func TestConcurrentRotationAndRevocation(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
@@ -325,7 +370,7 @@ func TestConcurrentRotationAndRevocation(t *testing.T) {
 }
 
 func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	otherInput := apps.SecretInput{Name: "Backup backend", Description: "Independent credential"}
@@ -395,7 +440,7 @@ func TestResetSecretReplacesOnlySelectedCredential(t *testing.T) {
 }
 
 func TestConcurrentResetSecretIssuesOneReplacement(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	start := make(chan struct{})
@@ -442,7 +487,7 @@ func TestConcurrentResetSecretIssuesOneReplacement(t *testing.T) {
 }
 
 func TestDeleteOrdersConcurrentSecretCreation(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	const workers = 16
@@ -485,7 +530,7 @@ func TestDatabaseErrorsRetainCauses(t *testing.T) {
 	cancel()
 	_, err = apps.Open(ctx, apps.Config{Path: filepath.Join(t.TempDir(), "apps.sqlite")})
 	require.ErrorIs(t, err, context.Canceled)
-	store := openStore(t, false)
+	store := openStore(t)
 	for _, operation := range []func() error{
 		func() error { _, err := store.Create(ctx, testOwnerID(t, store), validCreateInput()); return err },
 		func() error { _, err := store.Get(ctx, "missing"); return err },
@@ -641,7 +686,7 @@ func TestSecretMetadataUpdatesPreserveCredentialsAndLifecycle(t *testing.T) {
 }
 
 func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	invalid := map[string]apps.SecretInput{
@@ -659,7 +704,7 @@ func TestSecretMetadataValidationIsAtomicAndPreservesExactValues(t *testing.T) {
 	for name, input := range invalid {
 		t.Run(name, func(t *testing.T) {
 			creation := validCreateInput()
-			creation.InitialSecret = input
+			creation.InitialSecret = &input
 			_, err := store.Create(ctx, testOwnerID(t, store), creation)
 			require.ErrorIs(t, err, apps.ErrInvalid)
 			_, err = store.CreateSecret(ctx, testOwnerID(t, store), created.App.ID, input)
@@ -766,7 +811,7 @@ func TestSecretMetadataReadFailureRollsBackWrite(t *testing.T) {
 }
 
 func TestConcurrentMetadataUpdatesAndRevocation(t *testing.T) {
-	store, ctx := openStore(t, false), t.Context()
+	store, ctx := openStore(t), t.Context()
 	created, err := store.Create(ctx, testOwnerID(t, store), validCreateInput())
 	require.NoError(t, err)
 	const workers = 16

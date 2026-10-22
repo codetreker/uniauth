@@ -119,6 +119,9 @@ test("final Console components provide an interactive desktop preview", async ({
   });
   await editor.getByLabel("Application name").fill("New workspace");
   await editor
+    .getByRole("checkbox", { name: /Create an initial secret/ })
+    .check();
+  await editor
     .getByLabel("Secret name", { exact: true })
     .fill("Production service");
   await editor
@@ -139,6 +142,30 @@ test("final Console components provide an interactive desktop preview", async ({
   await credential.getByRole("button", { name: "Done" }).click();
   await expect(
     page.getByRole("heading", { name: "New workspace", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "← All applications" }).click();
+  await page.getByRole("button", { name: "New application" }).click();
+  const noSecretEditor = page.getByRole("dialog", {
+    name: "Create application",
+    exact: true,
+  });
+  await noSecretEditor.getByLabel("Application name").fill("HTTP preview");
+  await noSecretEditor
+    .getByLabel("Callback URLs", { exact: true })
+    .fill("http://preview-product.example/callback");
+  await noSecretEditor
+    .getByRole("button", { name: "Create application", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "HTTP preview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Save your app secret" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "No active secrets. Create a secret to connect this application.",
+    ),
   ).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(

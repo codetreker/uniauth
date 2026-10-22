@@ -37,12 +37,7 @@ const loopback = (authority: string): boolean => {
   );
 };
 
-export const validateURL = (
-  raw: string,
-  allowLoopbackHTTP: boolean,
-  originOnly: boolean,
-): URL => {
-  const name = originOnly ? "baseURL" : "redirectURI";
+const parseURL = (raw: string, name: "baseURL" | "redirectURI") => {
   if (typeof raw !== "string" || !raw.isWellFormed()) {
     throw new TypeError(`${name} must be a valid URL.`);
   }
@@ -64,27 +59,36 @@ export const validateURL = (
   } catch {
     throw new TypeError(`${name} must be a valid URL.`);
   }
+  return { parsed, authority, path: parts[3]!, query: parts[4] };
+};
+
+export const validateBaseURL = (
+  raw: string,
+  allowLoopbackHTTP: boolean,
+): URL => {
+  const { parsed, authority, path, query } = parseURL(raw, "baseURL");
   if (
     parsed.protocol !== "https:" &&
     !(allowLoopbackHTTP && parsed.protocol === "http:" && loopback(authority))
   ) {
-    throw new TypeError(`${name} requires HTTPS or enabled loopback HTTP.`);
+    throw new TypeError("baseURL requires HTTPS or enabled loopback HTTP.");
   }
-  if (originOnly) {
-    if ((parts[3] !== "" && parts[3] !== "/") || parts[4] !== undefined) {
-      throw new TypeError(
-        "baseURL must be an origin without a query or fragment.",
-      );
-    }
-  } else {
-    if (parts[4]?.includes(";")) {
-      throw new TypeError("redirectURI query parameters are invalid.");
-    }
-    for (const reserved of ["code", "state", "error"]) {
-      if (parsed.searchParams.has(reserved)) {
-        throw new TypeError("redirectURI contains a reserved query parameter.");
-      }
-    }
+  if ((path !== "" && path !== "/") || query !== undefined) {
+    throw new TypeError(
+      "baseURL must be an origin without a query or fragment.",
+    );
   }
   return parsed;
+};
+
+export const validateRedirectURI = (raw: string): void => {
+  const { parsed, query } = parseURL(raw, "redirectURI");
+  if (query?.includes(";")) {
+    throw new TypeError("redirectURI query parameters are invalid.");
+  }
+  for (const reserved of ["code", "state", "error"]) {
+    if (parsed.searchParams.has(reserved)) {
+      throw new TypeError("redirectURI contains a reserved query parameter.");
+    }
+  }
 };

@@ -2,13 +2,12 @@ package apps
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 	"unicode/utf8"
 )
 
-func validateInput(input AppInput, allowLoopbackHTTP bool) error {
+func validateInput(input AppInput) error {
 	if input.Name == "" || input.Name != strings.TrimSpace(input.Name) || !utf8.ValidString(input.Name) || len(input.Name) > 128 {
 		return fmt.Errorf("%w: name must contain 1 to 128 bytes without surrounding whitespace", ErrInvalid)
 	}
@@ -21,7 +20,7 @@ func validateInput(input AppInput, allowLoopbackHTTP bool) error {
 			return fmt.Errorf("%w: duplicate redirect URI", ErrInvalid)
 		}
 		seen[uri] = true
-		if err := validateRedirectURI(uri, allowLoopbackHTTP); err != nil {
+		if err := validateRedirectURI(uri); err != nil {
 			return err
 		}
 	}
@@ -53,7 +52,7 @@ func validateSecretInput(input SecretInput) error {
 	return nil
 }
 
-func validateRedirectURI(raw string, allowLoopbackHTTP bool) error {
+func validateRedirectURI(raw string) error {
 	if raw == "" || len(raw) > 2048 || !utf8.ValidString(raw) {
 		return fmt.Errorf("%w: redirect URI must contain 1 to 2048 UTF-8 bytes", ErrInvalid)
 	}
@@ -64,8 +63,8 @@ func validateRedirectURI(raw string, allowLoopbackHTTP bool) error {
 	if u.Hostname() == "" || u.Opaque != "" || u.User != nil || strings.Contains(raw, "#") {
 		return fmt.Errorf("%w: redirect URI requires a host and excludes credentials and fragments", ErrInvalid)
 	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && allowLoopbackHTTP && isLoopback(u.Hostname())) {
-		return fmt.Errorf("%w: redirect URI requires HTTPS or explicitly enabled loopback HTTP", ErrInvalid)
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("%w: redirect URI requires HTTP or HTTPS", ErrInvalid)
 	}
 	query, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
@@ -77,12 +76,4 @@ func validateRedirectURI(raw string, allowLoopbackHTTP bool) error {
 		}
 	}
 	return nil
-}
-
-func isLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }

@@ -18,13 +18,17 @@ bytes, without surrounding whitespace, CR, or LF. Descriptions contain up to
 descriptions become the empty string; supplied `null` is invalid. Names may
 repeat because the generated Secret ID identifies the credential.
 
-App creation includes required `initial_secret` metadata in the same operation
-as the App and first credential. App configuration replacement remains independent
-of Secret management. Additional credential creation accepts name and description,
-and returns both with the one-time plaintext value. App creation retains its
-existing `{app, secret, secret_id}` response; the Console already has the
-submitted initial metadata for the one-time display. Every metadata read and
-detail-update response includes name and description, including revoked records.
+The original metadata delivery required `initial_secret` metadata when creating
+an App, so App creation and the first credential were one operation. The
+[App registration options decision](2026-10-22-app-registration-options.md)
+supersedes that coupling: initial issuance is optional, while supplied metadata
+still issues the credential atomically. App configuration replacement remains
+independent of Secret management. Additional credential creation accepts name and
+description, and returns both with the one-time plaintext value. An App created
+with a credential returns `{app, secret, secret_id}`; an App created without one
+returns `{app}`. The Console retains submitted initial metadata for a one-time
+display. Every metadata read and detail-update response includes name and
+description, including revoked records.
 
 A separate Secret item `PUT` edits details for active or revoked credentials.
 It changes neither the verification digest nor credential validity, creation or
@@ -56,9 +60,9 @@ old-row fallback or added foreign key. The
 [configuration reference](../../../../docs/reference/configuration.md) owns
 operational upgrade and backup behavior.
 
-The Console collects initial metadata with App creation and has separate creation
-and detail-editing forms for later credentials. Its `Active` tab lists unrevoked
-records; `Disabled` lists revoked history with its revocation timestamps. Both
+The Console optionally collects initial metadata with App creation and has
+separate creation and detail-editing forms for later credentials. Its `Active`
+tab lists unrevoked records; `Disabled` lists revoked history with its revocation timestamps. Both
 tabs show names, descriptions, IDs, and lifecycle state and permit detail editing.
 Each App opens on `Active`, and a newly issued credential selects that view.
 Both counts derive from the same metadata response, so view switching needs no
@@ -104,9 +108,10 @@ to another account's metadata. Logs exclude that context.
 The metadata-only migration preserved old credentials and supplied labels that
 identified records without recovering historical purpose. The subsequent platform
 upgrade deliberately resets those records, requiring product registrations and
-credentials to be recreated. API clients creating Apps must supply initial Secret
-metadata, and clients issuing or editing credentials must send the metadata JSON
-object. Product login, result retrieval, and SDK configuration remain unchanged.
+credentials to be recreated. API clients creating Apps may omit initial Secret
+issuance; clients issuing or editing credentials must send the metadata JSON
+object. Product login, result retrieval, and SDK credential requirements remain
+unchanged.
 
 Per-App UI ownership prevents overlapping local actions and retains one-time
 plaintext until saved, including successful pending issuance after another

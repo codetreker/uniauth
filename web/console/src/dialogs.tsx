@@ -183,6 +183,7 @@ export const AppEditor = ({
     app === "new" ? "" : app.redirect_uris.join("\n"),
   );
   const [enabled, setEnabled] = useState(app === "new" ? true : app.enabled);
+  const [createSecret, setCreateSecret] = useState(false);
   const [secret, setSecret] = useState<SecretInput>({
     name: "",
     description: "",
@@ -231,7 +232,7 @@ export const AppEditor = ({
       setError("Each callback URL must be unique.");
       return;
     }
-    if (app === "new") {
+    if (app === "new" && createSecret) {
       const validation = secretInputSchema.safeParse(secret);
       if (!validation.success) {
         setError(validation.error.issues[0].message);
@@ -248,7 +249,9 @@ export const AppEditor = ({
         providers: selected,
       };
       await onSave(
-        app === "new" ? { ...input, initial_secret: secret } : input,
+        app === "new" && createSecret
+          ? { ...input, initial_secret: secret }
+          : input,
       );
     } catch (cause) {
       if (cause instanceof APIError && cause.status === 401)
@@ -295,8 +298,7 @@ export const AppEditor = ({
               onChange={(event) => setCallbacks(event.target.value)}
             />
             <span id={callbackHintID} className="hint">
-              One URL per line. HTTPS is required; loopback HTTP depends on
-              deployment settings. URLs must match exactly.
+              One HTTP or HTTPS URL per line. URLs must match exactly.
             </span>
           </label>
           <fieldset className="provider-picker">
@@ -345,12 +347,23 @@ export const AppEditor = ({
           </label>
           {app === "new" && (
             <section className="initial-secret">
-              <h3>Initial secret</h3>
-              <p className="hint">
-                Give the first credential a name and a note about where it will
-                be used.
-              </p>
-              <SecretFields value={secret} onChange={setSecret} />
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={createSecret}
+                  onChange={(event) => setCreateSecret(event.target.checked)}
+                />
+                <span>
+                  <strong>Create an initial secret</strong>
+                  <small>
+                    Optional. You can create secrets later. A secret is required
+                    to retrieve identities from your backend.
+                  </small>
+                </span>
+              </label>
+              {createSecret && (
+                <SecretFields value={secret} onChange={setSecret} />
+              )}
             </section>
           )}
         </div>

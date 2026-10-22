@@ -15,8 +15,7 @@ var (
 )
 
 type Config struct {
-	Path              string
-	AllowLoopbackHTTP bool
+	Path string
 }
 
 type AppInput struct {
@@ -35,7 +34,7 @@ type SecretInput struct {
 
 type CreateAppInput struct {
 	AppInput
-	InitialSecret SecretInput `json:"initial_secret"`
+	InitialSecret *SecretInput `json:"initial_secret,omitempty"`
 }
 
 type App struct {
@@ -58,8 +57,8 @@ type Secret struct {
 
 type CreatedApp struct {
 	App      App    `json:"app"`
-	Secret   string `json:"secret"`
-	SecretID string `json:"secret_id"`
+	Secret   string `json:"secret,omitempty"`
+	SecretID string `json:"secret_id,omitempty"`
 }
 
 type IssuedSecret struct {

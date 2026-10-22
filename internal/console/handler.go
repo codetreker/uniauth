@@ -1,6 +1,7 @@
 package console
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -139,16 +140,27 @@ func (h *Handler) apps(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		apps.AppInput
-		InitialSecret secretInput `json:"initial_secret"`
+		InitialSecret json.RawMessage `json:"initial_secret"`
 	}
 	if !readJSON(w, r, &input) {
 		return
 	}
-	metadata, err := input.InitialSecret.metadata()
-	if storeError(w, err) {
-		return
+	creation := apps.CreateAppInput{AppInput: input.AppInput}
+	if len(input.InitialSecret) != 0 {
+		var secret *secretInput
+		decoder := json.NewDecoder(bytes.NewReader(input.InitialSecret))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&secret); err != nil || secret == nil {
+			storeError(w, apps.ErrInvalid)
+			return
+		}
+		metadata, err := secret.metadata()
+		if storeError(w, err) {
+			return
+		}
+		creation.InitialSecret = &metadata
 	}
-	created, err := h.store.Create(r.Context(), requestSession(r).accountID, apps.CreateAppInput{AppInput: input.AppInput, InitialSecret: metadata})
+	created, err := h.store.Create(r.Context(), requestSession(r).accountID, creation)
 	if !storeError(w, err) {
 		w.(*auditResponse).appID = created.App.ID
 		writeJSON(w, http.StatusCreated, created)

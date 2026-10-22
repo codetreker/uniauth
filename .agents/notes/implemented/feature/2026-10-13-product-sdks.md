@@ -22,9 +22,13 @@ protocol without adding gateway endpoints or changing identity handover.
 Clients require a UniAuth base origin and the product's App ID and Secret. They
 validate authorization URLs and callback parameters, provide a 32-byte random
 state helper, and send one JSON result POST using HTTP Basic authentication.
-HTTPS is required except explicitly enabled loopback HTTP. Validated callback
-strings remain unchanged as authorization query values because callback
-registration uses exact matching.
+The gateway base origin requires HTTPS except explicitly enabled loopback HTTP.
+The original SDK policy applied that restriction to product callbacks as well.
+The [App registration options decision](2026-10-22-app-registration-options.md)
+supersedes the callback restriction: callbacks accept absolute HTTP or HTTPS URLs
+with a host independently of the base-origin option. Validated callback strings
+remain unchanged as authorization query values because callback registration
+uses exact matching.
 
 Expected-state checking does not give an SDK ownership of product storage.
 Products atomically validate and consume the pending login bound to the browser

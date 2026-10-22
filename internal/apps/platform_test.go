@@ -54,7 +54,7 @@ func platformAccount(t *testing.T, store *Store, identity providers.Identity) Ac
 }
 
 func platformInput(name string) CreateAppInput {
-	return CreateAppInput{AppInput: AppInput{Name: name, Enabled: true, RedirectURIs: []string{"https://example.com/callback"}, Providers: []string{"google", "github"}}, InitialSecret: SecretInput{Name: "Backend", Description: "Product server"}}
+	return CreateAppInput{AppInput: AppInput{Name: name, Enabled: true, RedirectURIs: []string{"https://example.com/callback"}, Providers: []string{"google", "github"}}, InitialSecret: &SecretInput{Name: "Backend", Description: "Product server"}}
 }
 
 func platformCreate(t *testing.T, store *Store, owner, name string) CreatedApp {
@@ -372,11 +372,11 @@ func TestPlatformOwnerAndSystemIsolation(t *testing.T) {
 		{"delete", func(actor, app, secret string) error { return store.Delete(ctx, actor, app) }},
 		{"list-secrets", func(actor, app, secret string) error { _, err := store.ListSecrets(ctx, actor, app); return err }},
 		{"create-secret", func(actor, app, secret string) error {
-			_, err := store.CreateSecret(ctx, actor, app, input.InitialSecret)
+			_, err := store.CreateSecret(ctx, actor, app, *input.InitialSecret)
 			return err
 		}},
 		{"update-secret", func(actor, app, secret string) error {
-			_, err := store.UpdateSecret(ctx, actor, app, secret, input.InitialSecret)
+			_, err := store.UpdateSecret(ctx, actor, app, secret, *input.InitialSecret)
 			return err
 		}},
 		{"revoke-secret", func(actor, app, secret string) error { return store.RevokeSecret(ctx, actor, app, secret) }},
@@ -822,8 +822,8 @@ func TestPlatformProvisionConfigurationAndDatabaseErrors(t *testing.T) {
 	ctx := context.Background()
 	t.Run("invalid-configuration", func(t *testing.T) {
 		store := platformOpen(t, "admin@example.com")
-		if _, err := store.ProvisionConsole(ctx, "http://auth.example.com/callback", []string{"google"}); !errors.Is(err, ErrInvalid) {
-			t.Fatalf("insecure Console callback = %v", err)
+		if _, err := store.ProvisionConsole(ctx, "ftp://auth.example.com/callback", []string{"google"}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("unsupported Console callback scheme = %v", err)
 		}
 		if _, err := store.ProvisionConsole(ctx, "https://auth.example.com/callback", []string{"unknown"}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("unsupported Console provider = %v", err)

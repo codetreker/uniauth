@@ -36,7 +36,7 @@ export const secretInputSchema = z.object({
     ),
 });
 export type SecretInput = z.infer<typeof secretInputSchema>;
-export type CreateAppInput = AppInput & { initial_secret: SecretInput };
+export type CreateAppInput = AppInput & { initial_secret?: SecretInput };
 const secretSchema = z.object({
   id: z.string().min(1),
   ...secretInputSchema.shape,
@@ -51,11 +51,18 @@ const issuedSchema = z.object({
   created_at: timestamp,
 });
 export type IssuedSecret = z.infer<typeof issuedSchema>;
-const createdSchema = z.object({
-  app: appSchema,
-  secret: z.string().min(1),
-  secret_id: z.string().min(1),
-});
+const createdSchema = z.union([
+  z.object({
+    app: appSchema,
+    secret: z.string().min(1),
+    secret_id: z.string().min(1),
+  }),
+  z.object({
+    app: appSchema,
+    secret: z.never().optional(),
+    secret_id: z.never().optional(),
+  }),
+]);
 export type CreatedApp = z.infer<typeof createdSchema>;
 const providerSchema = z.object({ id: providerID, available: z.boolean() });
 export type Provider = z.infer<typeof providerSchema>;
