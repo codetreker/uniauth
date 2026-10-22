@@ -29,29 +29,32 @@ const jsonResponse = (body = identityJSON, status = 200) =>
 const callbackError = (code) => (error) =>
   error instanceof CallbackError && error.code === code;
 
-test("authorization preserves callback spelling, Unicode, and query encoding", () => {
-  const callback =
-    "https://PRODUCT.example:443/%61uth/callback?tag=a%2fb&repeat=1&repeat=2&label=%E6%B5%8B%E8%AF%95";
+test("authorization preserves HTTP and HTTPS callback spelling, Unicode, and query encoding", () => {
   const state = "state + / & 中文 😀";
   const client = createClient({ ...config, appID: "产品" });
-  const url = new URL(
-    client.authorizationURL({
-      provider: "github",
-      redirectURI: callback,
-      state,
-    }),
-  );
-  assert.equal(url.origin, config.baseURL);
-  assert.equal(url.pathname, "/auth/authorize");
-  assert.deepEqual(
-    [...url.searchParams],
-    [
-      ["app_id", "产品"],
-      ["provider", "github"],
-      ["redirect_uri", callback],
-      ["state", state],
-    ],
-  );
+  for (const callback of [
+    "https://PRODUCT.example:443/%61uth/callback?tag=a%2fb&repeat=1&repeat=2&label=%E6%B5%8B%E8%AF%95",
+    "http://PRODUCT.example:80/%61uth/callback?tag=a%2fb&repeat=1&repeat=2&label=%E6%B5%8B%E8%AF%95",
+  ]) {
+    const url = new URL(
+      client.authorizationURL({
+        provider: "github",
+        redirectURI: callback,
+        state,
+      }),
+    );
+    assert.equal(url.origin, config.baseURL);
+    assert.equal(url.pathname, "/auth/authorize");
+    assert.deepEqual(
+      [...url.searchParams],
+      [
+        ["app_id", "产品"],
+        ["provider", "github"],
+        ["redirect_uri", callback],
+        ["state", state],
+      ],
+    );
+  }
 });
 
 test("base origins, loopback opt-in, and registered callback rules are enforced", () => {
@@ -94,6 +97,15 @@ test("base origins, loopback opt-in, and registered callback rules are enforced"
   const client = createClient(config);
   for (const redirectURI of [
     "http://product.example/callback",
+    "http://localhost/callback",
+    "http://192.168.1.1/callback",
+  ]) {
+    assert.doesNotThrow(() =>
+      client.authorizationURL({ provider: "google", redirectURI, state: "s" }),
+    );
+  }
+  for (const redirectURI of [
+    "ftp://product.example/callback",
     "https://user@product.example/callback",
     "https://product.example/callback#",
     "https://product.example/callback?%63ode=reserved",

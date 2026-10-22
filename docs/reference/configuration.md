@@ -22,7 +22,7 @@ later initialization failure or permit separate instances to share one database.
 | `UNIAUTH_INITIAL_ADMIN_EMAIL` | Required | Plain email address for one-time administrator bootstrap, up to 254 bytes and without whitespace or display-name syntax. |
 | `UNIAUTH_LISTEN_ADDR` | `:8080` | HTTP listener address in `host:port` form. |
 | `UNIAUTH_DATABASE_PATH` | `uniauth.db` | SQLite database path; parent directory must exist. |
-| `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for loopback public origins and registered product callbacks. |
+| `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for the loopback public origin. |
 | `UNIAUTH_MICROSOFT_CLIENT_ID` | Optional pair | Personal-account Microsoft application Client ID. |
 | `UNIAUTH_MICROSOFT_CLIENT_SECRET` | Optional pair | Microsoft application Client Secret. |
 | `UNIAUTH_GOOGLE_CLIENT_ID` | Optional pair | Google OAuth client ID. |
@@ -35,10 +35,12 @@ omitted. Partial pairs or surrounding credential whitespace fail startup. Omitte
 unavailable in the Console and cannot authorize product requests. Upstream
 Secrets are deployment credentials and are not stored in SQLite.
 
-The public origin and product callbacks require HTTPS except for explicitly
-enabled `localhost` or loopback IP development addresses. The server listener
-uses HTTP; terminate TLS at a reverse proxy and configure the actual external
-origin. The service does not infer its public origin from forwarded headers.
+The public origin requires HTTPS except for explicitly enabled `localhost` or
+loopback IP development addresses. Registered product callbacks independently
+accept absolute HTTP or HTTPS URLs for any host; `UNIAUTH_ALLOW_LOOPBACK_HTTP`
+does not control callbacks. The server listener uses HTTP; terminate TLS at a
+reverse proxy and configure the actual external origin. The service does not
+infer its public origin from forwarded headers.
 
 The [Docker Compose deployment reference](deployment.md) defines image publication,
 environment deployment directories, and VM-owned `.env` configuration.
@@ -149,9 +151,10 @@ App ID, and App Secret from the Console. They do not use upstream provider Clien
 IDs or Secrets and do not load service environment configuration automatically.
 Products choose how to inject these three values into their client constructors.
 
-Both clients require HTTPS unless loopback HTTP is explicitly enabled. Go uses
-`AllowLoopbackHTTP`; JavaScript uses `allowLoopbackHTTP`. The default request
-deadline is 30 seconds. A Go caller-provided HTTP client controls its timeout;
+Both clients require HTTPS for their gateway base origin unless loopback HTTP
+is explicitly enabled. Go uses `AllowLoopbackHTTP`; JavaScript uses
+`allowLoopbackHTTP`. Product callback URLs accept HTTP or HTTPS independently
+of those options. The default request deadline is 30 seconds. A Go caller-provided HTTP client controls its timeout;
 JavaScript uses `timeoutMs` and composes the per-request caller AbortSignal with
 its deadline. The SDK performs no automatic result retry or redirect following.
 A failed response may mean the server already consumed the code, so the product

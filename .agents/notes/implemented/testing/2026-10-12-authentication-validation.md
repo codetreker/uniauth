@@ -30,9 +30,10 @@ claims, concurrent consumption, capacity, credentials, sessions, and lifecycle
 ordering. Credential metadata assertions cover validation limits and exact
 multiline description preservation, the deliberate migration-3 reset of existing
 Apps and Secrets, and detail updates that do not reissue, revoke, or expose
-credentials. Management API assertions cover required initial
-metadata, active and revoked editing, record ownership, and `secret.update`
-audit events without names or descriptions. Platform assertions cover durable
+credentials. Management API assertions cover App creation with or without an
+initial credential, supplied metadata validation, HTTP and HTTPS callbacks, active
+and revoked editing, record ownership, and `secret.update` audit events without
+names or descriptions. Platform assertions cover durable
 provider-ID accounts, no email-based merging, verified-email bootstrap with one
 concurrent winner, startup-email changes before and after claim, explicit linking
 conflicts, owner-only App and Secret operations, and administrator summaries
@@ -69,9 +70,10 @@ plaintext accessible through Saved and Done; a failed pending operation must
 release ownership and leave login usable. Idle drafts are discarded without
 releasing owners still held by outstanding requests.
 
-SDK assertions exercise callback ambiguity, state mismatches, exact callback
-string preservation, HTTP Basic and JSON request construction, redirect rejection,
-request deadlines and cancellation, typed errors, lost-response behavior, and
+SDK assertions exercise callback ambiguity, state mismatches, independent HTTP
+callback and gateway-origin policies, exact callback string preservation, HTTP
+Basic and JSON request construction, redirect rejection, request deadlines and
+cancellation, typed errors, lost-response behavior, and
 the mandatory seven-field normalized identity envelope and complete `origin`
 JSON. Missing standard fields and incompatible types fail as protocol errors;
 nullable profile values and explicit verification `false` survive decoding. Go

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { APIError, createAPI } from "./api";
+import type { Application } from "./api";
 import { fixtureUser } from "./test-fixtures";
 
-const app = {
+const app: Application = {
   id: "app_example",
   name: "Example",
   enabled: true,
@@ -18,6 +19,48 @@ const response = (value: unknown, status = 200) =>
   });
 
 describe("Console transport", () => {
+  it("creates Apps with optional initial secrets and rejects partial credential responses", async () => {
+    const {
+      id: _id,
+      created_at: _created,
+      updated_at: _updated,
+      ...input
+    } = app;
+    const metadata = { name: "Production", description: "" };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ app }, 201))
+      .mockResolvedValueOnce(
+        response({ app, secret: "plaintext", secret_id: "sec_new" }, 201),
+      )
+      .mockResolvedValueOnce(response({ app, secret: "plaintext" }, 201))
+      .mockResolvedValueOnce(response({ app, secret_id: "sec_new" }, 201));
+    const api = createAPI(fetcher);
+    await expect(api.createApp(input)).resolves.toEqual({ app });
+    expect(fetcher).toHaveBeenLastCalledWith(
+      "/console/api/apps",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+    await expect(
+      api.createApp({ ...input, initial_secret: metadata }),
+    ).resolves.toEqual({
+      app,
+      secret: "plaintext",
+      secret_id: "sec_new",
+    });
+    expect(fetcher).toHaveBeenLastCalledWith(
+      "/console/api/apps",
+      expect.objectContaining({
+        body: JSON.stringify({ ...input, initial_secret: metadata }),
+      }),
+    );
+    await expect(api.createApp(input)).rejects.toThrow();
+    await expect(api.createApp(input)).rejects.toThrow();
+  });
+
   it("sends secret metadata with CSRF and encoded application and secret IDs", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

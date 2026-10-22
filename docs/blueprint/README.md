@@ -91,9 +91,12 @@ App ownership, serialization, expiry, and single consumption.
 ## Application registry and Console
 
 Each App has a generated ID, name, enabled state, exact callback URLs, and allowed
-providers. Separate environments use separate registrations. Apps are confidential
-backend integrations; their Secrets remain server-side. Random 256-bit Secrets
-are shown only when issued. SQLite retains SHA-256 verification digests,
+providers. Callbacks accept absolute HTTP or HTTPS URLs with a host, no user
+information or fragment, and no reserved `code`, `state`, or `error` query
+parameters. Matching preserves the registered string exactly. Separate environments
+use separate registrations. Apps are confidential backend integrations; their
+Secrets remain server-side. Random 256-bit Secrets are shown only when issued.
+SQLite retains SHA-256 verification digests,
 compared in constant time, with names, descriptions, and creation and revocation
 metadata. Every credential has an operator-supplied name; an optional description
 records its purpose or rotation notes. Names may repeat because the generated
@@ -110,15 +113,19 @@ credential and displays the replacement once. The
 [reset decision](../../.agents/notes/implemented/feature/2026-10-13-secret-reset.md)
 owns this lifecycle and its response-loss cost.
 
-App creation requires initial Secret metadata; configuration replacement edits
-only the App. Later Secret creation and metadata updates have separate JSON
-requests. Names contain 1–128 valid UTF-8 bytes with no surrounding whitespace,
-CR, or LF. Descriptions contain up to 4096 valid UTF-8 bytes, preserving
+App creation may include initial Secret metadata to issue its first credential
+atomically, or omit it to register an App without credentials. An App without a
+Secret cannot authenticate result retrieval until its owner issues one.
+Configuration replacement edits only the App. Later Secret creation and metadata
+updates have separate JSON requests. Names contain 1–128 valid UTF-8 bytes with
+no surrounding whitespace, CR, or LF. Descriptions contain up to 4096 valid UTF-8 bytes, preserving
 whitespace and line breaks; omission means an empty description. Response
 metadata always includes both fields. This keeps credential purpose available
 after its one-time plaintext display. The
 [Secret metadata decision](../../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md)
-owns these contracts and the upgrade rationale.
+owns credential metadata and the upgrade rationale. The
+[App registration options decision](../../.agents/notes/implemented/feature/2026-10-22-app-registration-options.md)
+owns HTTP callback support and optional initial issuance.
 
 SQLite persists Console platform accounts, linked normalized identity profiles,
 App ownership, configuration, and Secret verification records. Migration 3 clears
@@ -241,8 +248,9 @@ excluded from production assets.
 8. The product applies its own user, linking, authorization, and session policy.
 
 Distinct flow cookies permit multiple login tabs without overwriting transaction
-bindings. HTTPS is required in production; loopback HTTP is an explicit local
-configuration. Callback parameters contain no identity payload or credentials.
+bindings. The gateway public origin requires HTTPS except for explicitly enabled
+loopback HTTP. Product callbacks independently accept HTTP or HTTPS. Callback
+parameters contain no identity payload or credentials.
 Responses are not cacheable. The [API reference](../reference/api.md) defines
 exact request limits, callback errors, and HTTP statuses.
 
@@ -259,8 +267,9 @@ The Go module is `github.com/codetreker/uniauth/sdk/go`, package `uniauth`, with
 Go 1.27.1 and standard-library dependencies only. The JavaScript package is
 `@codetreker/uniauth`, with ESM output and TypeScript declarations for Node.js 24
 or later and no runtime dependencies. Both reject callback ambiguity and invalid
-origins, require HTTPS except explicitly enabled loopback HTTP, and keep Secrets
-out of authorization URLs.
+origins, require HTTPS for the gateway base origin except explicitly enabled
+loopback HTTP, and accept HTTP or HTTPS product callbacks. They keep Secrets out
+of authorization URLs.
 
 Result retrieval uses HTTP Basic authentication and JSON over a single POST;
 the SDKs do not follow redirects or retry consumption. Typed API errors retain

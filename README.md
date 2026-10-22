@@ -77,13 +77,13 @@ settings, the one-time Public package setting, and VM prerequisites.
 
 ## Connect a product
 
-Create an App in the Console, name its initial Secret, and optionally describe
-its purpose or rotation notes. Save the one-time Secret value in the product
-backend. Later credentials also have names and descriptions; the Console groups
-them into `Active` and `Disabled` tabs, with revoked Secrets in `Disabled`. Both
-views let you edit their details without changing credential validity. Register
-the exact callback URL and select allowed
-providers. Start a browser login at
+Create an App in the Console, register its exact HTTP or HTTPS callback URLs,
+and select allowed providers. Creating an initial Secret is optional; you can
+create one later in the App's Secrets section. Each Secret has a name and an
+optional description for its purpose or rotation notes. Save its one-time value
+in the product backend before retrieving identities. The Console groups Secrets
+into `Active` and `Disabled` tabs, with revoked Secrets in `Disabled`. Both views
+let you edit their details without changing credential validity. Start a browser login at
 `/auth/authorize` with `app_id`, `provider`, `redirect_uri`, and a random `state`
 bound to that browser's pending product login.
 

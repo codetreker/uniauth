@@ -61,35 +61,38 @@ func TestConfiguration(t *testing.T) {
 
 func TestAuthorizationPreservesExactCallbackAndExcludesSecret(t *testing.T) {
 	c := clientFor(t, "https://auth.example/", nil)
-	callback := "https://PRODUCT.example:443/a%2fb?z=last&x=a%20b&x=%2B&flag"
-	for _, provider := range []uniauth.Provider{uniauth.Microsoft, uniauth.Google, uniauth.GitHub} {
-		address, err := c.AuthorizationURL(uniauth.AuthorizationRequest{Provider: provider, RedirectURI: callback, State: "browser + state"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		u, err := url.Parse(address)
-		if err != nil || u.Path != "/auth/authorize" || len(u.Query()) != 4 || u.Query().Get("redirect_uri") != callback || u.Query().Get("state") != "browser + state" || u.Query().Get("app_id") != "product" || u.Query().Get("provider") != string(provider) || strings.Contains(address, "private-secret") {
-			t.Fatalf("authorization changed the callback or exposed a secret: %v", err)
+	for _, callback := range []string{"https://PRODUCT.example:443/a%2fb?z=last&x=a%20b&x=%2B&flag", "http://PRODUCT.example:80/a%2fb?z=last&x=a%20b&x=%2B&flag"} {
+		for _, provider := range []uniauth.Provider{uniauth.Microsoft, uniauth.Google, uniauth.GitHub} {
+			address, err := c.AuthorizationURL(uniauth.AuthorizationRequest{Provider: provider, RedirectURI: callback, State: "browser + state"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := url.Parse(address)
+			if err != nil || u.Path != "/auth/authorize" || len(u.Query()) != 4 || u.Query().Get("redirect_uri") != callback || u.Query().Get("state") != "browser + state" || u.Query().Get("app_id") != "product" || u.Query().Get("provider") != string(provider) || strings.Contains(address, "private-secret") {
+				t.Fatalf("authorization changed the callback or exposed a secret: %v", err)
+			}
 		}
 	}
 	for _, callback := range []string{"http://127.0.0.1/cb", "http://[::1]/cb", "http://localhost/cb"} {
 		if _, err := c.AuthorizationURL(uniauth.AuthorizationRequest{Provider: uniauth.GitHub, RedirectURI: callback, State: "state"}); err != nil {
-			t.Fatalf("enabled loopback callback rejected: %v", err)
+			t.Fatalf("loopback callback rejected: %v", err)
 		}
 	}
 	strict, err := uniauth.New(uniauth.Config{BaseURL: "https://auth.example", AppID: "product", AppSecret: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := strict.AuthorizationURL(uniauth.AuthorizationRequest{Provider: uniauth.GitHub, RedirectURI: "http://localhost/cb", State: "state"}); err == nil {
-		t.Fatal("HTTP callback accepted without opt-in")
+	for _, callback := range []string{"http://product.example/cb", "http://localhost/cb", "http://192.168.1.1/cb"} {
+		if _, err := strict.AuthorizationURL(uniauth.AuthorizationRequest{Provider: uniauth.GitHub, RedirectURI: callback, State: "state"}); err != nil {
+			t.Fatalf("HTTP callback rejected without gateway transport opt-in: %v", err)
+		}
 	}
 }
 
 func TestAuthorizationValidation(t *testing.T) {
 	c := clientFor(t, "https://auth.example", nil)
 	valid := uniauth.AuthorizationRequest{Provider: uniauth.GitHub, RedirectURI: "https://product.example/cb", State: "state"}
-	for _, callback := range []string{"", strings.Repeat("a", 2049), "https://product.example/" + string([]byte{255}), "https://", "https:opaque", "https://name:secret@product.example/cb", "https://product.example/cb#", "https://product.example/%zz", "http://product.example/cb", "ftp://product.example/cb", "https://product.example/cb?x=%zz", "https://product.example/cb?x=a;b", "https://product.example/cb?code=", "https://product.example/cb?%73tate=x", "https://product.example/cb?error"} {
+	for _, callback := range []string{"", strings.Repeat("a", 2049), "https://product.example/" + string([]byte{255}), "https://", "https:opaque", "https://name:secret@product.example/cb", "https://product.example/cb#", "https://product.example/%zz", "ftp://product.example/cb", "https://product.example/cb?x=%zz", "https://product.example/cb?x=a;b", "https://product.example/cb?code=", "https://product.example/cb?%73tate=x", "https://product.example/cb?error"} {
 		request := valid
 		request.RedirectURI = callback
 		if _, err := c.AuthorizationURL(request); err == nil {

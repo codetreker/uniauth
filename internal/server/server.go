@@ -50,7 +50,7 @@ func New(ctx context.Context, cfg Config, registry map[string]providers.Provider
 	if len(registry) == 0 {
 		return nil, errors.New("at least one OAuth provider must be available")
 	}
-	store, err := apps.Open(ctx, apps.Config{Path: cfg.DatabasePath, AllowLoopbackHTTP: cfg.AllowLoopbackHTTP})
+	store, err := apps.Open(ctx, apps.Config{Path: cfg.DatabasePath})
 	if err != nil {
 		return nil, err
 	}

@@ -23,8 +23,7 @@ import (
 var migrations embed.FS
 
 type Store struct {
-	db                *sql.DB
-	allowLoopbackHTTP bool
+	db *sql.DB
 }
 
 func Open(ctx context.Context, config Config) (*Store, error) {
@@ -58,7 +57,7 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 	if _, err := provider.Up(ctx); err != nil {
 		return fail(fmt.Errorf("migrate app database: %w", err))
 	}
-	return &Store{db: db, allowLoopbackHTTP: config.AllowLoopbackHTTP}, nil
+	return &Store{db: db}, nil
 }
 
 func (s *Store) Close() error {
@@ -66,15 +65,16 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) Create(ctx context.Context, ownerID string, input CreateAppInput) (CreatedApp, error) {
-	if err := validateInput(input.AppInput, s.allowLoopbackHTTP); err != nil {
+	if err := validateInput(input.AppInput); err != nil {
 		return CreatedApp{}, err
 	}
-	if err := validateSecretInput(input.InitialSecret); err != nil {
-		return CreatedApp{}, err
+	if input.InitialSecret != nil {
+		if err := validateSecretInput(*input.InitialSecret); err != nil {
+			return CreatedApp{}, err
+		}
 	}
 	id := randomToken(16)
-	issued, digest := newCredential(input.InitialSecret)
-	now := issued.CreatedAt
+	now := time.Now().UTC()
 	app := App{ID: id, Name: input.Name, Enabled: input.Enabled, RedirectURIs: slices.Clone(input.RedirectURIs), Providers: slices.Clone(input.Providers), CreatedAt: now, UpdatedAt: now}
 	redirects, providers := encodeLists(input.AppInput)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -88,13 +88,19 @@ func (s *Store) Create(ctx context.Context, ownerID string, input CreateAppInput
 	if _, err := tx.ExecContext(ctx, `INSERT INTO apps (id, name, enabled, redirect_uris, providers, created_at, updated_at, owner_id, system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`, id, input.Name, input.Enabled, redirects, providers, now.UnixNano(), now.UnixNano(), ownerID); err != nil {
 		return CreatedApp{}, fmt.Errorf("create app: %w", err)
 	}
-	if err := insertCredential(ctx, tx, id, issued, digest); err != nil {
-		return CreatedApp{}, err
+	created := CreatedApp{App: app}
+	if input.InitialSecret != nil {
+		issued, digest := newCredential(*input.InitialSecret)
+		issued.CreatedAt = now
+		if err := insertCredential(ctx, tx, id, issued, digest); err != nil {
+			return CreatedApp{}, err
+		}
+		created.Secret, created.SecretID = issued.Secret, issued.ID
 	}
 	if err := tx.Commit(); err != nil {
 		return CreatedApp{}, fmt.Errorf("commit app creation: %w", err)
 	}
-	return CreatedApp{App: app, Secret: issued.Secret, SecretID: issued.ID}, nil
+	return created, nil
 }
 
 const appColumns = "id, name, enabled, redirect_uris, providers, created_at, updated_at"
@@ -128,7 +134,7 @@ func (s *Store) List(ctx context.Context, ownerID string) ([]App, error) {
 }
 
 func (s *Store) Update(ctx context.Context, ownerID, id string, input AppInput) (App, error) {
-	if err := validateInput(input, s.allowLoopbackHTTP); err != nil {
+	if err := validateInput(input); err != nil {
 		return App{}, err
 	}
 	redirects, providers := encodeLists(input)

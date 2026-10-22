@@ -46,6 +46,9 @@ const createApplication = async (page: Page, name: string) => {
     exact: true,
   });
   await editor.getByLabel("Application name").fill(name);
+  await editor
+    .getByRole("checkbox", { name: /Create an initial secret/ })
+    .check();
   await editor.getByLabel("Secret name", { exact: true }).fill("Backend");
   await editor
     .getByLabel("Callback URLs", { exact: true })
@@ -56,6 +59,112 @@ const createApplication = async (page: Page, name: string) => {
     .click();
   return saveCredential(page);
 };
+
+test("an HTTP application can be created without credentials and receive a secret later", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/console/");
+  await signIn(page, "Microsoft", "User B");
+  await page
+    .getByRole("button", { name: "New application", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", {
+    name: "Create application",
+    exact: true,
+  });
+  await editor
+    .getByLabel("Application name")
+    .fill("HTTP product without credentials");
+  await editor
+    .getByLabel("Callback URLs", { exact: true })
+    .fill("http://product.example/auth/callback?environment=dev");
+  const initialSecret = editor.getByRole("checkbox", {
+    name: /Create an initial secret/,
+  });
+  await expect(initialSecret).not.toBeChecked();
+  await expect(editor.getByLabel("Secret name", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: ".tmp/app-create-no-secret.png",
+    fullPage: true,
+  });
+  const creation = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/console/api/apps") &&
+      response.request().method() === "POST",
+  );
+  await editor
+    .getByRole("button", { name: "Create application", exact: true })
+    .click();
+  const response = await creation;
+  expect(response.status()).toBe(201);
+  expect(response.request().postDataJSON()).not.toHaveProperty(
+    "initial_secret",
+  );
+  const body = await response.json();
+  expect(Object.keys(body)).toEqual(["app"]);
+  await expect(
+    page.getByRole("heading", {
+      name: "HTTP product without credentials",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "Save your app secret" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(
+      "No active secrets. Create a secret to connect this application.",
+    ),
+  ).toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("button", {
+      name: "Manage HTTP product without credentials",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByText("http://product.example/auth/callback?environment=dev", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    await (
+      await context.request.get(`/console/api/apps/${body.app.id}/secrets`)
+    ).json(),
+  ).toEqual({ secrets: [] });
+  await page
+    .getByRole("button", { name: "Create secret", exact: true })
+    .click();
+  const secretEditor = page.getByRole("dialog", {
+    name: "Create secret",
+    exact: true,
+  });
+  await secretEditor
+    .getByLabel("Secret name", { exact: true })
+    .fill("Later backend credential");
+  await secretEditor
+    .getByRole("button", { name: "Create secret", exact: true })
+    .click();
+  const issued = await saveCredential(page);
+  expect(issued.appID).toBe(body.app.id);
+  await expect(
+    page.getByRole("row").filter({ hasText: issued.id }),
+  ).toContainText("Later backend credential");
+  await page
+    .getByRole("button", { name: "Delete application", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: "Delete application?" })
+    .getByRole("button", { name: "Delete application", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Your products belong here" }),
+  ).toBeVisible();
+});
 
 test("OAuth account manages applications and one-time credentials against the service", async ({
   page,
@@ -138,6 +247,9 @@ test("OAuth account manages applications and one-time credentials against the se
     exact: true,
   });
   await editor.getByLabel("Application name").fill("Browser product");
+  await editor
+    .getByRole("checkbox", { name: /Create an initial secret/ })
+    .check();
   await editor
     .getByLabel("Secret name", { exact: true })
     .fill("Production backend");

@@ -1,7 +1,12 @@
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { APIError, CallbackError, ProtocolError } from "./errors.js";
-import { requireText, validText, validateURL } from "./validation.js";
+import {
+  requireText,
+  validText,
+  validateBaseURL,
+  validateRedirectURI,
+} from "./validation.js";
 
 export { APIError, CallbackError, ProtocolError } from "./errors.js";
 export type { CallbackErrorCode } from "./errors.js";
@@ -187,7 +192,7 @@ export const createClient = (options: ClientOptions): Client => {
   if (typeof allowLoopbackHTTP !== "boolean") {
     throw new TypeError("allowLoopbackHTTP must be a boolean.");
   }
-  const baseURL = validateURL(options.baseURL, allowLoopbackHTTP, true);
+  const baseURL = validateBaseURL(options.baseURL, allowLoopbackHTTP);
   const fetcher =
     options.fetch === undefined ? globalThis.fetch : options.fetch;
   if (typeof fetcher !== "function")
@@ -214,7 +219,7 @@ export const createClient = (options: ClientOptions): Client => {
     }: AuthorizationOptions) => {
       if (!provider(name)) throw new TypeError("provider is unsupported.");
       requireText(redirectURI, 2048, "redirectURI");
-      validateURL(redirectURI, allowLoopbackHTTP, false);
+      validateRedirectURI(redirectURI);
       requireText(state, 2048, "state");
       const url = new URL("/auth/authorize", baseURL);
       url.searchParams.set("app_id", appID);

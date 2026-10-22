@@ -35,15 +35,14 @@ type Config struct {
 
 // Client is safe for concurrent use when its supplied HTTP transport and jar are.
 type Client struct {
-	baseURL           url.URL
-	appID             string
-	appSecret         string
-	allowLoopbackHTTP bool
-	httpClient        http.Client
+	baseURL    url.URL
+	appID      string
+	appSecret  string
+	httpClient http.Client
 }
 
 // New requires an HTTPS origin and valid App credentials. Loopback HTTP requires
-// explicit opt-in for both gateway and callback URLs.
+// explicit opt-in for the gateway URL.
 func New(config Config) (*Client, error) {
 	baseURL, err := validateBaseURL(config.BaseURL, config.AllowLoopbackHTTP)
 	if err != nil {
@@ -62,7 +61,7 @@ func New(config Config) (*Client, error) {
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &Client{baseURL: *baseURL, appID: config.AppID, appSecret: config.AppSecret, allowLoopbackHTTP: config.AllowLoopbackHTTP, httpClient: httpClient}, nil
+	return &Client{baseURL: *baseURL, appID: config.AppID, appSecret: config.AppSecret, httpClient: httpClient}, nil
 }
 
 // GenerateState returns 32 cryptographically random bytes encoded as unpadded
@@ -85,7 +84,7 @@ func (c *Client) AuthorizationURL(request AuthorizationRequest) (string, error) 
 	if !supportedProvider(request.Provider) {
 		return "", errors.New("uniauth: unsupported provider")
 	}
-	if err := validateRedirectURI(request.RedirectURI, c.allowLoopbackHTTP); err != nil {
+	if err := validateRedirectURI(request.RedirectURI); err != nil {
 		return "", err
 	}
 	if !validValue(request.State, 2048) {

@@ -27,7 +27,7 @@ func validateBaseURL(raw string, allowLoopbackHTTP bool) (*url.URL, error) {
 	return u, nil
 }
 
-func validateRedirectURI(raw string, allowLoopbackHTTP bool) error {
+func validateRedirectURI(raw string) error {
 	if !validValue(raw, 2048) {
 		return errors.New("uniauth: callback URL requires 1 to 2048 UTF-8 bytes")
 	}
@@ -35,8 +35,8 @@ func validateRedirectURI(raw string, allowLoopbackHTTP bool) error {
 	if err != nil || u.Hostname() == "" || u.Opaque != "" || u.User != nil || strings.Contains(raw, "#") {
 		return errors.New("uniauth: callback URL requires a host and excludes credentials and fragments")
 	}
-	if !allowedScheme(u, allowLoopbackHTTP) {
-		return errors.New("uniauth: callback URL requires HTTPS or explicitly enabled loopback HTTP")
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("uniauth: callback URL requires HTTP or HTTPS")
 	}
 	query, err := url.ParseQuery(u.RawQuery)
 	if err != nil {

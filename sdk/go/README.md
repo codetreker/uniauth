@@ -49,10 +49,13 @@ state, and callback syntax, then preserves the callback string exactly as the
 The gateway checks App registration and provider availability.
 
 `BaseURL` must be an HTTPS origin, optionally ending in `/`, without credentials,
-query, fragment, or another path. Callback URLs require HTTPS and exclude user
-information, fragments, and reserved query keys `code`, `state`, and `error`.
-`AllowLoopbackHTTP: true` permits HTTP only for localhost or loopback IPs, for
-both URLs. The service must also permit and register that exact callback.
+query, fragment, or another path. `AllowLoopbackHTTP: true` permits HTTP gateway
+URLs only for localhost or loopback IPs; the service must also enable local HTTP.
+
+Callback URLs accept HTTP or HTTPS without transport opt-in, contain 1–2048
+UTF-8 bytes, and exclude user information, fragments, and reserved query keys
+`code`, `state`, and `error`. The callback must match its registered string
+exactly, including scheme, spelling, explicit ports, and existing query values.
 
 ## Complete the callback
 

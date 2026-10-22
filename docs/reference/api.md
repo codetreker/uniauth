@@ -11,8 +11,9 @@ identity data. Products retain atomic browser-bound pending-state consumption an
 session ownership. A retrieval SDK sends one POST and does not follow redirects
 or retry a consumed code.
 
-Production traffic requires HTTPS. Authentication and Console API responses use
-`Cache-Control: no-store`. Requests have an `X-Request-ID` for log correlation.
+The gateway public origin requires HTTPS except for explicitly enabled loopback
+HTTP. Registered product callbacks accept HTTP or HTTPS independently.
+Authentication and Console API responses use `Cache-Control: no-store`. Requests have an `X-Request-ID` for log correlation.
 Errors use this JSON shape unless an unsupported route or HTTP method is handled
 by the HTTP router itself:
 
@@ -353,8 +354,8 @@ another account's App or the protected system Console App returns `404 not_found
 including for an administrator. Ownership and system-App checks occur within the
 same query or transaction as each operation.
 
-App creation requires application configuration and metadata for its initial
-Secret:
+App creation requires application configuration. Include `initial_secret` to issue
+a credential in the same operation:
 
 ```json
 {
@@ -369,13 +370,19 @@ Secret:
 }
 ```
 
+Omit `initial_secret` to create an App with no credentials. The response then
+contains only `app`; `secret` and `secret_id` are absent. A supplied
+`initial_secret` must be an object with valid Secret metadata; `null` is invalid.
+An App without a Secret cannot authenticate `/auth/result` until its owner issues
+a credential through the Secret endpoint.
+
 `PUT /console/api/apps/{id}` accepts only the application configuration fields
 `name`, `enabled`, `redirect_uris`, and `providers`; it does not create or edit a
 Secret. App names contain 1–128 UTF-8 bytes without surrounding whitespace.
 Each App has 1–16 unique callbacks and 1–3 unique supported provider IDs. Callback
-URLs require HTTPS, a host, and no user information or fragment. Explicit
-loopback HTTP is allowed only when enabled by deployment configuration. Callback
-query parameters `code`, `state`, and `error` are reserved and cannot be
+URLs must be absolute HTTP or HTTPS URLs with a host and no user information or
+fragment. HTTP callbacks are accepted for any host without deployment opt-in.
+Callback query parameters `code`, `state`, and `error` are reserved and cannot be
 registered. Matching is against the registered string exactly; there are no
 wildcard rules.
 
@@ -388,8 +395,9 @@ Secret creation and detail updates accept this JSON object:
 }
 ```
 
-The initial Secret object and every Secret name are required. A Secret name
-contains 1–128 valid UTF-8 bytes, with no surrounding whitespace, CR, or LF.
+Every issued Secret requires a name, including when optional `initial_secret`
+metadata is supplied during App creation. A Secret name contains 1–128 valid
+UTF-8 bytes, with no surrounding whitespace, CR, or LF.
 `description` is optional: omission stores the empty string; a supplied value
 must be a JSON string containing at most 4096 valid UTF-8 bytes. Empty
 strings, surrounding whitespace, and multiline descriptions are preserved
@@ -399,7 +407,7 @@ Secret ID identifies a particular credential.
 | Method and path | Success |
 | --- | --- |
 | `GET /console/api/apps` | `200 {"apps":[...]}`. |
-| `POST /console/api/apps` | `201 {"app":{...},"secret":"...","secret_id":"..."}`, including the one-time plaintext and its ID. |
+| `POST /console/api/apps` | `201 {"app":{...}}` without `initial_secret`; supplying it adds `"secret":"...","secret_id":"..."` with the one-time plaintext and its ID. |
 | `GET /console/api/apps/{id}` | `200` App object. |
 | `PUT /console/api/apps/{id}` | `200` replaced App object; App ID and creation time remain unchanged. |
 | `DELETE /console/api/apps/{id}` | `204`, App and its Secrets deleted. |
@@ -434,10 +442,11 @@ retrieved after the response. If the response is lost after commit, the operator
 must create another Secret and update the product; retrying the old ID does not
 recover the replacement.
 
-The Console collects initial Secret metadata alongside App configuration. For
-later credentials it provides separate creation and detail-editing forms. App
-secrets has an `Active` tab for unrevoked records and a `Disabled` tab for revoked
-records, with counts and separate empty states. Opening an App selects `Active`;
+The Console offers optional initial Secret issuance alongside App configuration.
+Skipping it creates the App directly; choosing it requires credential metadata
+and displays the new value once. For later credentials the Console provides
+separate creation and detail-editing forms. App Secrets has an `Active` tab for
+unrevoked records and a `Disabled` tab for revoked records, with counts and separate empty states. Opening an App selects `Active`;
 new issuance returns to that tab. Both views show name, description, ID, creation
 time, and revocation status, and permit metadata editing. Reset and revocation
 remain available only for active records. Tab selection supports arrow keys,

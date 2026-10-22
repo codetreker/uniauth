@@ -54,14 +54,15 @@ and retrieval remain on the product backend; authorization URLs contain no Secre
 | UniAuth base origin | `BaseURL` | `baseURL` |
 | Product App ID | `AppID` | `appID` |
 | Product App Secret | `AppSecret` | `appSecret` |
-| Explicit development HTTP | `AllowLoopbackHTTP` | `allowLoopbackHTTP` |
+| Explicit development HTTP for the gateway base origin | `AllowLoopbackHTTP` | `allowLoopbackHTTP` |
 | Custom request transport | `HTTPClient` | `fetch` |
 | Request deadline | Default HTTP client: 30 seconds; supplied client controls its timeout. | `timeoutMs`, default 30,000 milliseconds. |
 
 Base URLs are absolute origins without user information, query, fragment, or
 application path. HTTPS is required unless loopback HTTP is explicitly enabled.
-Authorization callback validation applies the same HTTPS/loopback rule and rejects
-credentials, fragments, and reserved `code`, `state`, or `error` query parameters.
+Authorization callbacks accept absolute HTTP or HTTPS URLs with a host,
+independently of the base-origin option. They reject credentials, fragments, and
+reserved `code`, `state`, or `error` query parameters.
 The validated callback's original string is retained as the `redirect_uri` query
 value, because the service matches registration strings exactly.
 

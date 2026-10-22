@@ -43,7 +43,7 @@ func newTestConsole(t *testing.T, change func(*Config)) *testConsole {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	store, err := apps.Open(context.Background(), apps.Config{Path: filepath.Join(dir, "apps.sqlite"), AllowLoopbackHTTP: true})
+	store, err := apps.Open(context.Background(), apps.Config{Path: filepath.Join(dir, "apps.sqlite")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,6 +489,40 @@ func TestOriginCSRFAndStrictInput(t *testing.T) {
 	}
 }
 
+func TestCreateAppWithoutInitialSecret(t *testing.T) {
+	e := newTestConsole(t, nil)
+	e.login(t)
+	body := strings.Replace(appBody, "https://product.example/callback", "http://product.example:8080/callback?return=%2Fhome", 1)
+	response := e.request("POST", "/console/api/apps", body, nil)
+	requireStatus(t, response, http.StatusCreated)
+	fields := decodeResponse[map[string]json.RawMessage](t, response)
+	if len(fields) != 1 || fields["app"] == nil {
+		t.Fatalf("credentialless creation disclosed unexpected fields: %s", response.Body)
+	}
+	created := decodeResponse[apps.CreatedApp](t, response)
+	appPath := "/console/api/apps/" + created.App.ID
+	response = e.request("GET", appPath+"/secrets", "", nil)
+	requireStatus(t, response, http.StatusOK)
+	if response.Body.String() != "{\"secrets\":[]}\n" {
+		t.Fatalf("credentialless application has credentials: %s", response.Body)
+	}
+	if _, err := e.store.Authenticate(t.Context(), created.App.ID, ""); !errors.Is(err, apps.ErrUnauthorized) {
+		t.Fatalf("credentialless authentication = %v", err)
+	}
+	response = e.request("POST", appPath+"/secrets", secretBody, nil)
+	requireStatus(t, response, http.StatusCreated)
+	issued := decodeResponse[apps.IssuedSecret](t, response)
+	if _, err := e.store.Authenticate(t.Context(), created.App.ID, issued.Secret); err != nil {
+		t.Fatalf("later credential authentication = %v", err)
+	}
+	response = e.request("PUT", appPath, body, nil)
+	requireStatus(t, response, http.StatusOK)
+	updated := decodeResponse[apps.App](t, response)
+	if len(updated.RedirectURIs) != 1 || updated.RedirectURIs[0] != "http://product.example:8080/callback?return=%2Fhome" {
+		t.Fatalf("HTTP redirect changed: %+v", updated.RedirectURIs)
+	}
+}
+
 func TestCredentialMetadataValidationAndOwnership(t *testing.T) {
 	e := newTestConsole(t, nil)
 	e.login(t)
@@ -527,7 +561,7 @@ func TestCredentialMetadataValidationAndOwnership(t *testing.T) {
 			}
 		})
 	}
-	for _, body := range []string{appBody, strings.TrimSuffix(appBody, "}") + `,"initial_secret":null}`, strings.TrimSuffix(appBody, "}") + `,"initial_secret":[]}`} {
+	for _, body := range []string{strings.TrimSuffix(appBody, "}") + `,"initial_secret":null}`, strings.TrimSuffix(appBody, "}") + `,"initial_secret":[]}`} {
 		requireStatus(t, e.request("POST", "/console/api/apps", body, nil), http.StatusBadRequest)
 	}
 	requireStatus(t, e.request("PUT", appPath, createAppBody, nil), http.StatusBadRequest)
