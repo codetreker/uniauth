@@ -459,11 +459,13 @@ The Console offers optional initial Secret issuance alongside App configuration.
 Skipping it creates the App directly; choosing it requires credential metadata
 and displays the new value once. For later credentials the Console provides
 separate creation and detail-editing forms. App Secrets has an `Active` tab for
-unrevoked records and a `Disabled` tab for revoked records, with counts and separate empty states. Opening an App selects `Active`;
-new issuance returns to that tab. Both views show name, description, ID, creation
-time, and revocation status, and permit metadata editing. Reset and revocation
-remain available only for active records. Tab selection supports arrow keys,
-Home, and End and waits for owned dialogs to finish or close.
+unrevoked records and a `Disabled` tab for revoked records, with counts and
+separate empty states. Opening an App selects `Active`; new issuance returns to
+that tab. Both views identify credentials by name only, alongside creation time,
+revocation status, and management actions. Descriptions remain available in the
+detail editor; descriptions and Secret IDs are omitted from list cells. Reset
+and revocation remain available only for active records. Tab selection supports
+arrow keys, Home, and End and waits for owned dialogs to finish or close.
 
 Revocation and reset confirmations identify the named credential. Reset requires
 explicit confirmation that its current key stops working immediately. One-time

@@ -1,4 +1,13 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+
+const secretRow = (page: Page, id: string) =>
+  page.getByRole("row").filter({
+    has: page.getByRole("button", {
+      name: `Edit details for secret ${id}`,
+      exact: true,
+    }),
+  });
 
 test("final Console components provide an interactive desktop preview", async ({
   page,
@@ -26,15 +35,17 @@ test("final Console components provide an interactive desktop preview", async ({
   await expect(
     page.getByRole("tab", { name: "Disabled 1", exact: true }),
   ).toBeVisible();
+  await expect(secretRow(page, "sec_0_previous")).toHaveCount(0);
   await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_previous" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_current" }),
-  ).toContainText("Production backend");
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_staging" }),
-  ).toContainText("No description");
+    secretRow(page, "sec_0_current").getByRole("cell").first(),
+  ).toHaveText("Production backend");
+  await expect(page.locator(".secrets-panel")).not.toContainText("sec_0_");
+  await expect(page.locator(".secrets-panel")).not.toContainText(
+    "Owner: Platform team",
+  );
+  await expect(page.locator(".secrets-panel")).not.toContainText(
+    "No description",
+  );
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: ".tmp/mockup-detail.png", fullPage: true });
   await page.screenshot({
@@ -44,9 +55,7 @@ test("final Console components provide an interactive desktop preview", async ({
   await page.getByRole("tab", { name: /^Active/ }).focus();
   await page.keyboard.press("End");
   await expect(page.getByRole("tab", { name: /^Disabled/ })).toBeFocused();
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_previous" }),
-  ).toContainText("Revoked");
+  await expect(secretRow(page, "sec_0_previous")).toContainText("Revoked");
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: ".tmp/mockup-secrets-disabled.png",
@@ -81,16 +90,10 @@ test("final Console components provide an interactive desktop preview", async ({
     .innerText();
   await resetCredential.getByRole("checkbox").check();
   await resetCredential.getByRole("button", { name: "Done" }).click();
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_current" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("row").filter({ hasText: replacementID }),
-  ).toContainText("Active");
+  await expect(secretRow(page, "sec_0_current")).toHaveCount(0);
+  await expect(secretRow(page, replacementID)).toContainText("Active");
   await page.getByRole("tab", { name: /^Disabled/ }).click();
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_current" }),
-  ).toContainText("Revoked");
+  await expect(secretRow(page, "sec_0_current")).toContainText("Revoked");
   await page
     .getByRole("button", {
       name: "Edit details for secret sec_0_previous",
@@ -107,9 +110,19 @@ test("final Console components provide an interactive desktop preview", async ({
   });
   await details.getByRole("button", { name: "Save details" }).click();
   await expect(details).not.toBeVisible();
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_0_previous" }),
-  ).toContainText("Retained deployment history");
+  await expect(secretRow(page, "sec_0_previous")).not.toContainText(
+    "Retained deployment history",
+  );
+  await page
+    .getByRole("button", {
+      name: "Edit details for secret sec_0_previous",
+      exact: true,
+    })
+    .click();
+  await expect(details.getByLabel("Description", { exact: true })).toHaveValue(
+    "Retained deployment history\nOwner: Platform team",
+  );
+  await details.getByRole("button", { name: "Cancel" }).click();
 
   await page.getByRole("button", { name: "← All applications" }).click();
   await page.getByRole("button", { name: "New application" }).click();
@@ -193,9 +206,7 @@ test("preview remains usable on a mobile viewport", async ({ page }) => {
   }));
   expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
   await page.getByRole("button", { name: "Manage Biz Table" }).click();
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_2_unicode" }),
-  ).toContainText("开发环境");
+  await expect(secretRow(page, "sec_2_unicode")).toContainText("开发环境");
   await page.screenshot({
     path: ".tmp/mockup-secret-mobile.png",
     fullPage: true,
@@ -208,9 +219,7 @@ test("preview remains usable on a mobile viewport", async ({ page }) => {
     detailDimensions.viewport,
   );
   await page.getByRole("tab", { name: "Disabled 1", exact: true }).click();
-  await expect(
-    page.getByRole("row").filter({ hasText: "sec_2_previous" }),
-  ).toContainText("Revoked");
+  await expect(secretRow(page, "sec_2_previous")).toContainText("Revoked");
   await expect(page.getByRole("button", { name: /^Reset secret/ })).toHaveCount(
     0,
   );

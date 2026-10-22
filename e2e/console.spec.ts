@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 
+const secretRow = (page: Page, id: string) =>
+  page.getByRole("row").filter({
+    has: page.getByRole("button", {
+      name: `Edit details for secret ${id}`,
+      exact: true,
+    }),
+  });
+
 const signIn = async (page: Page, provider: string, persona: string) => {
   await page
     .getByRole("button", { name: `Continue with ${provider}`, exact: true })
@@ -151,9 +159,9 @@ test("an HTTP application can be created without credentials and receive a secre
     .click();
   const issued = await saveCredential(page);
   expect(issued.appID).toBe(body.app.id);
-  await expect(
-    page.getByRole("row").filter({ hasText: issued.id }),
-  ).toContainText("Later backend credential");
+  await expect(secretRow(page, issued.id)).toContainText(
+    "Later backend credential",
+  );
   await page
     .getByRole("button", { name: "Delete application", exact: true })
     .click();
@@ -711,9 +719,7 @@ test("OAuth account manages applications and one-time credentials against the se
   await expect(
     page.locator(".configuration").getByText("Not configured", { exact: true }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("row").filter({ hasText: first.id }),
-  ).toContainText("Active");
+  await expect(secretRow(page, first.id)).toContainText("Active");
 
   await page
     .getByRole("button", { name: "Edit application", exact: true })
@@ -907,8 +913,8 @@ test("OAuth account manages applications and one-time credentials against the se
   expect(metadata).not.toHaveProperty("secret");
   await expect(details).not.toBeVisible();
   await expect(
-    page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toContainText("No description");
+    secretRow(page, replacement.id).getByRole("cell").first(),
+  ).toHaveText("Production replacement");
   expect(replacement.secret).not.toBe(first.secret);
   expect(replacement.id).not.toBe(first.id);
   await page
@@ -924,9 +930,7 @@ test("OAuth account manages applications and one-time credentials against the se
   await expect(reset).toContainText("shown once");
   await reset.getByRole("button", { name: "Cancel" }).click();
   await expect(reset).not.toBeVisible();
-  await expect(
-    page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toContainText("Active");
+  await expect(secretRow(page, replacement.id)).toContainText("Active");
   const afterCancel = await context.request.get(
     `/console/api/apps/${first.appID}/secrets`,
   );
@@ -951,16 +955,10 @@ test("OAuth account manages applications and one-time credentials against the se
   const resetCredential = await saveCredential(page);
   expect(resetCredential.secret).not.toBe(replacement.secret);
   expect(resetCredential.id).not.toBe(replacement.id);
-  await expect(
-    page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("row").filter({ hasText: resetCredential.id }),
-  ).toContainText("Active");
+  await expect(secretRow(page, replacement.id)).toHaveCount(0);
+  await expect(secretRow(page, resetCredential.id)).toContainText("Active");
   await page.getByRole("tab", { name: /^Disabled/ }).click();
-  await expect(
-    page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toContainText("Revoked");
+  await expect(secretRow(page, replacement.id)).toContainText("Revoked");
   await page.getByRole("tab", { name: /^Active/ }).click();
   const retrieveWith = async (secret: string) => {
     const response = await context.request.post("/auth/result", {
@@ -989,19 +987,11 @@ test("OAuth account manages applications and one-time credentials against the se
     .getByRole("button", { name: "Revoke secret", exact: true })
     .click();
   await expect(revoke).not.toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: first.id })).toHaveCount(
-    0,
-  );
-  await expect(
-    page.getByRole("row").filter({ hasText: resetCredential.id }),
-  ).toContainText("Active");
+  await expect(secretRow(page, first.id)).toHaveCount(0);
+  await expect(secretRow(page, resetCredential.id)).toContainText("Active");
   await page.getByRole("tab", { name: /^Disabled/ }).click();
-  await expect(
-    page.getByRole("row").filter({ hasText: first.id }),
-  ).toContainText("Revoked");
-  await expect(
-    page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toContainText("Revoked");
+  await expect(secretRow(page, first.id)).toContainText("Revoked");
+  await expect(secretRow(page, replacement.id)).toContainText("Revoked");
   await page
     .getByRole("button", {
       name: `Edit details for secret ${first.id}`,
@@ -1016,9 +1006,7 @@ test("OAuth account manages applications and one-time credentials against the se
     .fill("  Retained for audit\n替换记录  ");
   await details.getByRole("button", { name: "Save details" }).click();
   await expect(details).not.toBeVisible();
-  await expect(
-    page.getByRole("row").filter({ hasText: first.id }),
-  ).toContainText("Retired production");
+  await expect(secretRow(page, first.id)).toContainText("Retired production");
   expect(secretCreations).toBe(1);
   await page.reload();
   await expect(
@@ -1034,9 +1022,7 @@ test("OAuth account manages applications and one-time credentials against the se
     "aria-selected",
     "true",
   );
-  await expect(
-    page.getByRole("row").filter({ hasText: resetCredential.id }),
-  ).toContainText("Active");
+  await expect(secretRow(page, resetCredential.id)).toContainText("Active");
   await expect(page.getByText(first.secret, { exact: true })).toHaveCount(0);
   await expect(page.getByText(replacement.secret, { exact: true })).toHaveCount(
     0,
@@ -1072,12 +1058,10 @@ test("OAuth account manages applications and one-time credentials against the se
     ]),
   );
   await page.getByRole("tab", { name: /^Disabled/ }).click();
+  await expect(secretRow(page, first.id)).toContainText("Retired production");
   await expect(
-    page.getByRole("row").filter({ hasText: first.id }),
-  ).toContainText("Retired production");
-  await expect(
-    page.getByRole("row").filter({ hasText: replacement.id }),
-  ).toContainText("No description");
+    secretRow(page, replacement.id).getByRole("cell").first(),
+  ).toHaveText("Production replacement");
   const listing = JSON.stringify(listedBody);
   expect(listing).not.toContain(first.secret);
   expect(listing).not.toContain(replacement.secret);

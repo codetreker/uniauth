@@ -99,7 +99,9 @@ const openApp = async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Manage Example" }),
   );
-  await screen.findByText("sec_original");
+  await screen.findByRole("button", {
+    name: "Edit details for secret sec_original",
+  });
 };
 
 const pendingIssuanceAfterUnrelatedRefresh = async (initialSecret: boolean) => {
@@ -160,7 +162,9 @@ const pendingIssuanceAfterUnrelatedRefresh = async (initialSecret: boolean) => {
     await waitFor(() => expect(api.createApp).toHaveBeenCalledTimes(1));
   } else {
     fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
-    await screen.findByText("sec_original");
+    await screen.findByRole("button", {
+      name: "Edit details for secret sec_original",
+    });
     fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
     const editor = screen.getByRole("dialog", { name: "Create secret" });
     fireEvent.change(within(editor).getByLabelText("Secret name"), {
@@ -539,7 +543,16 @@ describe("OAuth Console", () => {
     expect(active.getAttribute("aria-selected")).toBe("true");
     expect(active.tabIndex).toBe(0);
     expect(disabled.tabIndex).toBe(-1);
-    expect(screen.queryByText("sec_retired")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit details for secret sec_retired",
+      }),
+    ).toBeNull();
+    expect(screen.getByRole("cell", { name: "Production" }).textContent).toBe(
+      "Production",
+    );
+    expect(screen.queryByText("sec_original")).toBeNull();
+    expect(screen.queryByText("No description")).toBeNull();
     expect(screen.getByRole("tabpanel").id).toBe(
       active.getAttribute("aria-controls"),
     );
@@ -552,8 +565,21 @@ describe("OAuth Console", () => {
     expect(disabled.getAttribute("aria-selected")).toBe("true");
     expect(disabled.tabIndex).toBe(0);
     expect(active.tabIndex).toBe(-1);
-    expect(screen.getByText("sec_retired")).toBeDefined();
-    expect(screen.queryByText("sec_original")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Edit details for secret sec_retired",
+      }),
+    ).toBeDefined();
+    expect(screen.getByRole("cell", { name: "Retired" }).textContent).toBe(
+      "Retired",
+    );
+    expect(screen.queryByText("sec_retired")).toBeNull();
+    expect(screen.queryByText("Audit history")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit details for secret sec_original",
+      }),
+    ).toBeNull();
     expect(screen.getByRole("tabpanel").id).toBe(
       disabled.getAttribute("aria-controls"),
     );
@@ -581,7 +607,9 @@ describe("OAuth Console", () => {
     fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     fireEvent.click(screen.getByRole("button", { name: "← All applications" }));
     fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
-    await screen.findByText("sec_original");
+    await screen.findByRole("button", {
+      name: "Edit details for secret sec_original",
+    });
     expect(
       screen
         .getByRole("tab", { name: /^Active/ })
@@ -664,7 +692,9 @@ describe("OAuth Console", () => {
     expect(active.getAttribute("aria-selected")).toBe("true");
     fireEvent.click(within(credential).getByRole("checkbox"));
     fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
-    await screen.findByText("sec_created_tab");
+    await screen.findByRole("button", {
+      name: "Edit details for secret sec_created_tab",
+    });
     expect(
       screen
         .getByRole("tab", { name: "Active 2" })
@@ -983,7 +1013,11 @@ describe("OAuth Console", () => {
         },
       ]),
     );
-    expect(screen.queryByText("sec_stale")).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit details for secret sec_stale",
+      }),
+    ).toBeNull();
     await act(async () => resolveIssue(issued));
     const credential = await screen.findByRole("dialog", {
       name: "Save your app secret",
@@ -991,8 +1025,14 @@ describe("OAuth Console", () => {
     expect(within(credential).getByText("latest-only-once")).toBeDefined();
     fireEvent.click(within(credential).getByRole("checkbox"));
     fireEvent.click(within(credential).getByRole("button", { name: "Done" }));
-    await screen.findByText("sec_current");
-    expect(screen.queryByText("sec_stale")).toBeNull();
+    await screen.findByRole("button", {
+      name: "Edit details for secret sec_current",
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit details for secret sec_stale",
+      }),
+    ).toBeNull();
   });
   it.each([
     { initialSecret: true, earlyLogin: false },
@@ -1116,7 +1156,9 @@ describe("OAuth Console", () => {
       const editor = screen.getByRole("dialog", { name: "Create application" });
       fireEvent.click(within(editor).getByRole("button", { name: "Cancel" }));
       fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
-      await screen.findByText("sec_original");
+      await screen.findByRole("button", {
+        name: "Edit details for secret sec_original",
+      });
       fireEvent.click(screen.getByRole("button", { name: "Create secret" }));
       const secretEditor = screen.getByRole("dialog", {
         name: "Create secret",
@@ -1250,8 +1292,14 @@ describe("OAuth Console", () => {
     await waitFor(() =>
       expect(screen.queryByText("reset-only-once")).toBeNull(),
     );
-    await screen.findByText("sec_replacement");
-    expect(screen.queryByText("sec_original")).toBeNull();
+    await screen.findByRole("button", {
+      name: "Edit details for secret sec_replacement",
+    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit details for secret sec_original",
+      }),
+    ).toBeNull();
     fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     await screen.findByText("Revoked");
     fireEvent.click(screen.getByRole("tab", { name: /^Active/ }));
@@ -1359,7 +1407,11 @@ describe("OAuth Console", () => {
       within(confirmation).getByRole("button", { name: "Close" }),
     );
     expect(resetSecret).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("sec_replacement")).toBeDefined();
+    expect(
+      screen.getByRole("button", {
+        name: "Edit details for secret sec_replacement",
+      }),
+    ).toBeDefined();
     fireEvent.click(screen.getByRole("tab", { name: /^Disabled/ }));
     expect(screen.getByText("Revoked")).toBeDefined();
     expect(screen.queryByText("reset-only-once")).toBeNull();
@@ -1440,7 +1492,9 @@ describe("OAuth Console", () => {
         screen.getByRole("button", { name: "← All applications" }),
       );
       fireEvent.click(screen.getByRole("button", { name: "Manage Other" }));
-      await screen.findByText("sec_original");
+      await screen.findByRole("button", {
+        name: "Edit details for secret sec_original",
+      });
       fireEvent.click(
         screen.getByRole("button", { name: "Reset secret sec_original" }),
       );
