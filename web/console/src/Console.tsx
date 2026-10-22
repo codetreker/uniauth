@@ -32,6 +32,7 @@ import {
   ProviderMark,
   providerNames,
 } from "./ui";
+import type { OAuthOutcome } from "./ui";
 
 const loginErrors: Record<string, string> = {
   invalid_callback:
@@ -66,6 +67,10 @@ const secretTabs: { id: SecretTab; label: string }[] = [
 ];
 type SecretDraft = { app: Application; secret: Secret | "new" };
 type AppOwner = { key: string | symbol; token: symbol };
+type OAuthOwner = {
+  phase: "requesting" | "redirecting";
+  cleanup?: () => void;
+};
 const newApplication = Symbol("new application");
 
 const date = (value: string) =>
@@ -88,7 +93,8 @@ export const Console = ({
 }: {
   api: ConsoleAPI;
   preview?: boolean;
-  onAuthorization?: (url: string) => Promise<Session>;
+  // A session completes authorization in-page; undefined means navigation has started.
+  onAuthorization?: (url: string) => Promise<Session | undefined>;
 }) => {
   const [session, setSession] = useState<
     "loading" | "signed-out" | "signed-in"
@@ -97,8 +103,10 @@ export const Console = ({
   const [providersLoading, setProvidersLoading] = useState(true);
   const [providersError, setProvidersError] = useState<string>();
   const [providerRevision, setProviderRevision] = useState(0);
-  const oauthPending = useRef(false);
-  const [oauthLoading, setOauthLoading] = useState(false);
+  const oauthPending = useRef<OAuthOwner>(undefined);
+  const [oauthProvider, setOauthProvider] = useState<ProviderID>();
+  const [oauthRedirecting, setOauthRedirecting] = useState(false);
+  const oauthLoading = oauthProvider !== undefined;
   const [apps, setApps] = useState<Application[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -266,7 +274,7 @@ export const Console = ({
     setEditor(undefined);
   };
   const dialogOwned = () =>
-    oauthPending.current ||
+    oauthPending.current !== undefined ||
     editorOwner.current !== undefined ||
     secretEditorOwner.current !== undefined ||
     confirmationOwner.current !== undefined ||
@@ -788,35 +796,96 @@ export const Console = ({
       },
     });
   };
-  const startOAuth = async (provider: ProviderID, link = false) => {
+  const releaseOAuth = (owner: OAuthOwner) => {
+    if (oauthPending.current !== owner) return;
+    owner.cleanup?.();
+    oauthPending.current = undefined;
+    setOauthProvider(undefined);
+    setOauthRedirecting(false);
+  };
+  const watchOAuthNavigation = (owner: OAuthOwner) => {
+    const navigation = window.navigation;
+    if (navigation === undefined) return;
+    // Browser Stop aborts this signal without restoring the document through pageshow.
+    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#abort-a-navigateevent
+    const started = (event: NavigateEvent) => {
+      navigation.removeEventListener("navigate", started);
+      if (oauthPending.current !== owner) return;
+      owner.phase = "redirecting";
+      setOauthRedirecting(true);
+      const cancelled = () => releaseOAuth(owner);
+      owner.cleanup = () =>
+        event.signal.removeEventListener("abort", cancelled);
+      event.signal.addEventListener("abort", cancelled, { once: true });
+      if (event.signal.aborted) cancelled();
+    };
+    owner.cleanup = () => navigation.removeEventListener("navigate", started);
+    navigation.addEventListener("navigate", started, { once: true });
+  };
+  const cancelOAuth = () => {
+    const owner = oauthPending.current;
+    if (owner?.phase !== "redirecting") return;
+    // Stop the old load before another operation can acquire the Console.
+    window.stop();
+    releaseOAuth(owner);
+  };
+  useEffect(() => {
+    const restore = (event: PageTransitionEvent) => {
+      const owner = oauthPending.current;
+      if (event.persisted && owner?.phase === "redirecting")
+        releaseOAuth(owner);
+    };
+    window.addEventListener("pageshow", restore);
+    return () => {
+      window.removeEventListener("pageshow", restore);
+      oauthPending.current?.cleanup?.();
+      oauthPending.current = undefined;
+    };
+  }, []);
+  const startOAuth = async (
+    provider: ProviderID,
+    link = false,
+  ): Promise<OAuthOutcome> => {
     if (
       owners.current.size !== 0 ||
       logoutPending.current ||
       oauthPending.current
     )
-      return;
-    oauthPending.current = true;
-    setOauthLoading(true);
+      return "blocked";
+    const owner: OAuthOwner = { phase: "requesting" };
+    oauthPending.current = owner;
+    setOauthProvider(provider);
     setCallbackError(undefined);
     try {
       const result = await (link
         ? api.linkIdentity(provider)
         : api.login(provider));
-      if (onAuthorization === undefined)
+      if (oauthPending.current !== owner) return "cancelled";
+      watchOAuthNavigation(owner);
+      let nextSession: Session | undefined;
+      if (onAuthorization === undefined) {
+        owner.phase = "redirecting";
+        setOauthRedirecting(true);
         window.location.assign(result.authorization_url);
-      else {
-        const nextSession = await onAuthorization(result.authorization_url);
-        setUser(nextSession.user);
-        setSession("signed-in");
-        setError(undefined);
-        if (!link) {
-          setSection("apps");
-          setSelected(undefined);
-        }
+      } else nextSession = await onAuthorization(result.authorization_url);
+      if (oauthPending.current !== owner) return "cancelled";
+      if (nextSession === undefined) {
+        owner.phase = "redirecting";
+        setOauthRedirecting(true);
+        return "redirecting";
       }
-    } finally {
-      oauthPending.current = false;
-      setOauthLoading(false);
+      setUser(nextSession.user);
+      setSession("signed-in");
+      setError(undefined);
+      if (!link) {
+        setSection("apps");
+        setSelected(undefined);
+      }
+      releaseOAuth(owner);
+      return "completed";
+    } catch (cause) {
+      releaseOAuth(owner);
+      throw cause;
     }
   };
   const signOut = async () => {
@@ -880,7 +949,8 @@ export const Console = ({
           error={error}
           notice={callbackNotice}
           preview={preview}
-          blocked={operations.size !== 0 || oauthLoading}
+          blocked={operations.size !== 0}
+          connecting={oauthProvider}
           onLogin={(provider) => startOAuth(provider)}
         />
       ) : (
@@ -1022,7 +1092,8 @@ export const Console = ({
                   api={api}
                   user={user}
                   providers={providers}
-                  blocked={operations.size !== 0 || oauthLoading}
+                  blocked={operations.size !== 0}
+                  connecting={oauthProvider}
                   onLink={(provider) => startOAuth(provider, true)}
                   onUnauthorized={reportError}
                 />
@@ -1652,6 +1723,14 @@ export const Console = ({
               <span>Your applications. Your credentials.</span>
             </footer>
           </div>
+        </div>
+      )}
+      {oauthRedirecting && oauthProvider !== undefined && (
+        <div className="oauth-navigation" role="status">
+          <span>Opening {providerNames[oauthProvider]}…</span>
+          <button className="button secondary" onClick={cancelOAuth}>
+            Cancel sign-in
+          </button>
         </div>
       )}
       {editor !== undefined && session === "signed-in" && (

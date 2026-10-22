@@ -195,6 +195,21 @@ CSRF checks protect Console mutations. The expected origin uses lowercase IDNA
 domain names, canonical IPv6 literals, and normalized ports with default ports
 omitted; incoming Origin headers are compared exactly.
 
+The Console owns one active OAuth initiation across sign-in and linking. The
+selected button shows `Connecting…` and conflicting controls remain disabled
+through the start request and external navigation, without changing the sign-in
+card layout. This progress is separate from unfinished App work and its Secret
+saving prompt. A failed start or completed interactive preview releases the
+controls. Navigation cancellation releases only the attempt bound to its
+Navigation API signal; browsers without that API retain an explicit recovery
+path. During navigation, a fixed `Cancel sign-in` control stops the pending
+browser load before releasing ownership, without moving the card. It also
+recovers navigations that remain on the document without reporting cancellation.
+A page restored from the browser history cache releases its navigation owner.
+Late signals or completions from older attempts cannot release or replace a
+newer attempt. Linking preserves its displayed identities during navigation;
+only a completed in-page preview reloads them.
+
 Console configuration editing, enable/disable changes, deletion, and Secret
 creation, detail updates, reset, and revocation share one operation owner for
 each App. Ownership is acquired before asynchronous work or render updates, so

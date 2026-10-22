@@ -70,6 +70,16 @@ plaintext accessible through Saved and Done; a failed pending operation must
 release ownership and leave login usable. Idle drafts are discarded without
 releasing owners still held by outstanding requests.
 
+OAuth component assertions distinguish ordinary progress from unfinished App
+work, retain errors and permit retry, preserve synchronous duplicate guards, and
+exercise in-page preview completion. Navigation aborts restore login and linking
+without a history event. Explicit recovery stops the old load before releasing
+its owner, including without Navigation API. Old signals and delayed preview
+results cannot affect a later attempt. A persisted history event cannot release
+an outstanding start request. Existing issuance regressions retain the
+Secret-saving warning and ownership when a separate request invalidates the
+session.
+
 SDK assertions exercise callback ambiguity, state mismatches, independent HTTP
 callback and gateway-origin policies, exact callback string preservation, HTTP
 Basic and JSON request construction, redirect rejection, request deadlines and
@@ -117,6 +127,22 @@ assertions cover keyboard selection, per-App defaults, and movement between view
 after reset or revocation. A separate mockup uses production components and styles
 for account, App, credential, and responsive interaction. These injected adapters
 exercise local composition rather than live Microsoft, Google, or GitHub services.
+Sign-in transition scenarios hold the real start API response, then replace the
+returned authorization URL with a same-document target to observe the return
+from `location.assign`. This probe avoids inspection waits
+observed when pausing a cross-document navigation. Tests compare card/button
+geometry on desktop and mobile, require the selected button to remain pending,
+reject duplicate starts, and preserve linked identities without an early reload.
+They then follow the saved real authorization URL to the controlled provider and
+require browser Back to leave controls usable. Separate real-navigation cases
+hold `/auth/authorize`, stop loading before document commit, and require the same
+login or account document to regain working controls and permit retry. They
+exercise cancellation signals and explicit recovery with Navigation API absent.
+Recovery screenshots and the existing geometry checks cover desktop and mobile.
+Component tests inject persisted `pageshow` events to check cached-document
+restoration; those events do not establish that the browser used its history
+cache during the real Back operation.
+
 Existing browsers or repository-local temporary browser installations prevent
 task tooling from leaving a permanent installation.
 

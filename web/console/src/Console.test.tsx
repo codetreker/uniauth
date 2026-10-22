@@ -1015,6 +1015,11 @@ describe("OAuth Console", () => {
       );
       await screen.findByRole("button", { name: "Continue with Google" });
       expect(screen.queryByRole("dialog")).toBeNull();
+      expect(
+        screen.getByText(
+          /Finish the pending operation and save any issued secret/,
+        ),
+      ).toBeDefined();
       const login = screen.getByRole("button", {
         name: "Continue with Google",
       });

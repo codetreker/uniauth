@@ -40,6 +40,32 @@ credential validation, five-minute expiry, and atomic single consumption apply
 to that operation and `/auth/result`. An internal network request is unnecessary.
 The external product HTTP protocol and SDK contracts remain unchanged.
 
+One Console-owned provider and synchronous operation owner represent OAuth
+progress for both sign-in and linking. The selected button shows `Connecting…`
+while the start request and external navigation are pending. Unfinished App work
+retains its separate Secret-saving warning; starting OAuth does not insert that
+warning or change sign-in card geometry. Initiation failures and completed
+in-page previews release the owner. External navigation retains ownership after
+`location.assign` returns because the browser has not necessarily left the page.
+
+Each attempt owns its Navigation API observer and the next navigation's abort
+listener. Browser Stop cancels that signal without a history restoration event,
+as specified by [aborting a NavigateEvent](https://html.spec.whatwg.org/multipage/nav-history-apis.html#abort-a-navigateevent).
+Cancellation releases only the captured attempt. Completion, cancellation,
+history restoration, and unmount remove its observers; identity checks prevent
+old signals or delayed preview results from changing a later attempt. A
+persisted `pageshow` also releases navigation ownership after history restoration,
+but cannot release a start request that is still pending.
+
+Navigation signals are not available in every browser and do not cover every
+response that leaves the document in place. A fixed `Cancel sign-in` action
+remains available during navigation. It calls `window.stop()` before releasing
+ownership, so the previous load cannot complete after a competing action starts.
+The control is outside document flow and preserves the card and button geometry.
+Unfinished server transactions retain their ordinary expiry. Linking reloads
+identities only after a completed in-page preview, preserving the displayed list
+during navigation and cancellation.
+
 SQLite persists platform accounts and linked normalized profiles for Console
 users only. Stable provider-qualified identity IDs identify accounts; emails are
 attributes and never merge accounts. A signed-in account may explicitly link an
@@ -109,6 +135,20 @@ and [configuration](../../../../docs/reference/configuration.md) own their curre
 requirements and consumer contracts.
 
 ## Alternatives
+
+**Releasing OAuth progress when the start handler returns.** Returning from
+`location.assign` only schedules navigation. Releasing progress there briefly
+restores buttons and allows another start before departure; linking also reloads
+its identity list unnecessarily. The navigation owner lasts until departure,
+cancellation, explicit recovery, or history restoration, while previews explicitly
+report in-page completion.
+
+**Using history restoration alone for navigation recovery.** Browser Stop before
+a document commits does not restore a cached page, so `pageshow` leaves the
+Console locked. The attempt's navigation signal handles cancellation. An explicit
+recovery action covers browsers without that signal and responses that never
+commit a document or report failure; timeout and focus heuristics cannot prove
+whether a navigation was cancelled.
 
 **Retaining password login.** Deployment password login had removed encoded-hash
 setup errors, but one shared credential supplied administrator-level management
