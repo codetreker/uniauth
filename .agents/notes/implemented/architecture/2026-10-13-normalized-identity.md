@@ -15,8 +15,11 @@ features that a common profile cannot represent.
 
 Each provider adapter returns an identity with seven always-present fields:
 `provider`, `id`, `email`, `email_verified`, `name`, `avatar_url`, and `origin`.
-The `id` value is the existing provider-qualified identifier, unchanged by the
-response format. Missing, null, and empty standard strings become `null`.
+The original normalization decision retained each existing provider-qualified
+identifier while renaming the response field to `id`. The later
+[Microsoft identity-key decision](2026-11-11-microsoft-identity-key.md) changes
+Microsoft values to `msft:<oid>@<tid>` and owns their persisted-key migration.
+Missing, null, and empty standard strings become `null`.
 Verification remains nullable: unknown, `false`, and `true` are distinct values.
 Known fields used for normalization reject incompatible non-null JSON types,
 including lower-priority fields; malformed data never becomes fabricated
@@ -81,8 +84,10 @@ wire-field rename requires coordinated consumer updates, even though identity
 keys retain their values. That normalization delivery had no persisted user data
 to migrate. The
 [public platform decision](2026-10-13-public-oauth-platform.md) subsequently adds
-Console accounts keyed by those identities. Future changes to qualified ID values
-require explicit migrations for Console links and any affected product identities.
+Console accounts keyed by those identities. The Microsoft identity-key decision
+migrates Console links while preserving their account ownership. External products
+own the migration of their stored keys. Any further qualified-ID change also
+requires explicit migrations for affected Console and product identities.
 
 Microsoft photo data appears in both the standard data URL and `origin.photo`.
 This gives products a directly usable avatar without changing the source photo

@@ -15,6 +15,7 @@ Administrator visibility is limited to minimal user summaries and App counts.
 | [Public platform decision](../.agents/notes/implemented/architecture/2026-10-13-public-oauth-platform.md) | OAuth-only Console, stable-ID accounts and linking, one-time administrator bootstrap, owner isolation, and deliberate data reset. |
 | [Administrator password decision](../.agents/notes/implemented/simplification/2026-10-13-direct-administrator-password.md) | Historical direct-password format simplification, superseded by OAuth-only platform login. |
 | [Normalized identity decision](../.agents/notes/implemented/architecture/2026-10-13-normalized-identity.md) | Standard profile mapping, complete original data, and wire-format costs. |
+| [Microsoft identity key](../.agents/notes/implemented/architecture/2026-11-11-microsoft-identity-key.md) | Tenant-qualified Microsoft ID syntax and transactional Console link migration. |
 | [Secret metadata decision](../.agents/notes/implemented/feature/2026-10-13-secret-metadata.md) | Credential names and descriptions, creation and detail-update contracts, and migration of existing credentials. |
 | [Product SDK decision](../.agents/notes/implemented/feature/2026-10-13-product-sdks.md) | SDK responsibilities, transport and normalized data contracts, and package-consumer validation. |
 | [App provider discovery decision](../.agents/notes/implemented/feature/2026-10-22-app-provider-discovery.md) | App-authenticated configuration availability, exact callback checks, Go discovery client, and scope. |

@@ -206,7 +206,7 @@ func TestProvidersCompleteIdentityAndAuthorization(t *testing.T) {
 			}
 			switch name {
 			case "microsoft":
-				if identity.ID != "microsoft:"+microsoftTenant+":object-123" || string(identity.Origin["profile"]) != f.profile {
+				if identity.ID != "msft:object-123@"+microsoftTenant || string(identity.Origin["profile"]) != f.profile {
 					t.Fatalf("identity: %+v", identity)
 				}
 				var photo struct {

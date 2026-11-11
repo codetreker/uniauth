@@ -73,7 +73,7 @@ func TestRetrieveRequestAndLosslessIdentity(t *testing.T) {
 }
 
 func TestRetrieveLargeIdentity(t *testing.T) {
-	body := `{"provider":"microsoft","id":"microsoft:tenant:oid","email":null,"email_verified":null,"name":null,"avatar_url":null,"origin":{"photo":{"data_base64":"` + strings.Repeat("A", 9<<20) + `"}}}`
+	body := `{"provider":"microsoft","id":"msft:oid@tenant","email":null,"email_verified":null,"name":null,"avatar_url":null,"origin":{"photo":{"data_base64":"` + strings.Repeat("A", 9<<20) + `"}}}`
 	c := clientFor(t, "https://auth.example", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return response(200, "application/json", body), nil })})
 	identity, err := c.Retrieve(context.Background(), "code")
 	if err != nil || identity == nil || len(identity.RawJSON) != len(body) {

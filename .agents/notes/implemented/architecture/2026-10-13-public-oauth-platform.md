@@ -111,7 +111,10 @@ Migration 3 intentionally removes all existing Apps and Secrets and establishes
 the final platform schema. There is no legacy owner, seed account, preserved
 credential, or application-code compatibility branch. Products recreate their
 registrations and backend credentials. Subsequent restarts preserve platform
-accounts, links, and newly owned Apps.
+accounts, links, and newly owned Apps. The
+[Microsoft identity-key decision](2026-11-11-microsoft-identity-key.md) subsequently
+migrates Microsoft link keys in place; it preserves platform accounts, metadata,
+bootstrap authority, and App ownership, and rejects key collisions.
 
 Console sessions remain eight-hour in-memory state, using HttpOnly,
 SameSite=Strict cookies and Secure under HTTPS. Pending login/link state is

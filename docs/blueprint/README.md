@@ -374,9 +374,18 @@ costs; the gateway decision continues to own authentication and handover.
 
 | Provider | Validation and `origin` sources | Stable `id` |
 | --- | --- | --- |
-| Microsoft | Personal-account `consumers` authorization and token endpoints; RS256 signature, fixed personal issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require personal `tid` and `oid`; retain ID claims, Graph `/me`, and photo bytes. | `microsoft:9188040d-6c67-4c5b-b112-36a304b66dad:<oid>` |
+| Microsoft | Personal-account `consumers` authorization and token endpoints; RS256 signature, fixed personal issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require personal `tid` and `oid`; retain ID claims, Graph `/me`, and photo bytes. | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` |
 | Google | OIDC discovery and token validation; UserInfo `sub` must match the token. Retain complete ID claims and UserInfo. | `google:<sub>` |
 | GitHub | PKCE code exchange, authenticated `/user`, and every `/user/emails` page. Require a positive numeric profile ID. | `github:<id>` |
+
+Microsoft IDs use `msft:<oid>@<tid>` while the provider remains `microsoft`.
+The tenant remains the fixed personal-account tenant. Embedded migration 4
+rewrites existing Console link keys in place, preserving account IDs, linked
+profiles, administrator authority, and App ownership. Key collisions abort the
+migration and startup; accounts and links are never merged or discarded. External
+products own their persisted identity-key migrations. The
+[Microsoft identity decision](../../.agents/notes/implemented/architecture/2026-11-11-microsoft-identity-key.md)
+owns the key-format rationale and compatibility costs.
 
 Microsoft requests `openid profile email` and delegated Graph `User.Read`.
 Authorization always includes `prompt=select_account` to request an account

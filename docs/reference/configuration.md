@@ -215,6 +215,17 @@ administrator, and no old-data compatibility branch is retained. Later startups
 preserve newly created user accounts and Apps while rotating the private Console
 credential.
 
+Migration 4 rewrites Microsoft Console link keys from `microsoft:<tid>:<oid>` to
+`msft:<oid>@<tid>` for the supported personal tenant. It preserves the linked
+account, profile metadata, link time, administrator authority, owned Apps, and
+credentials. An existing target key causes the transactional migration and
+startup to fail; no conflicting link is merged or deleted. Resolve that conflict
+explicitly before restarting. External products own their stored identity keys
+and must coordinate a migration or normalize both wire forms before consuming
+the new output. The
+[Microsoft identity decision](../../.agents/notes/implemented/architecture/2026-11-11-microsoft-identity-key.md)
+records the key migration.
+
 Back up the live SQLite database with a SQLite-aware method or stop the process
 before copying its files. A backup preserves the old registration data for
 reference; the new schema does not reuse those credentials. The

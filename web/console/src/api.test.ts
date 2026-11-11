@@ -347,7 +347,7 @@ it("uses CSRF for explicit identity binding and encodes opaque user pagination c
 it("requires every account profile field and preserves nullable verification in linked identities", async () => {
   const identity = {
     provider: "microsoft",
-    id: "microsoft:tenant:oid",
+    id: "msft:oid@tenant",
     email: null,
     name: null,
     email_verified: null,
