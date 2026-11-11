@@ -144,7 +144,10 @@ restoration; those events do not establish that the browser used its history
 cache during the real Back operation.
 
 Existing browsers or repository-local temporary browser installations prevent
-task tooling from leaving a permanent installation.
+task tooling from leaving a permanent installation. The
+[supported CI runner decision](../process/2026-11-11-supported-check-runner.md)
+pins the Check job to Ubuntu 24.04 so its operating system remains compatible
+with the pinned Playwright browser installer; all browser checks remain required.
 
 The [configuration reference](../../../../docs/reference/configuration.md) owns
 validation commands and limits. The

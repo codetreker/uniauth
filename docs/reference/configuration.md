@@ -305,6 +305,13 @@ pinned in [go.mod](../../go.mod), [root package.json](../../package.json), and
 [Console package.json](../../web/console/package.json). Build caches, dependency
 stores, test artifacts, and temporary browser data belong under `.tmp/`.
 
+The GitHub Actions Check job runs on `ubuntu-24.04`, supported by the pinned
+Playwright 1.58.2 browser and system-dependency installer. It runs `make setup`,
+`make build check test`, Chromium installation with system dependencies, and
+`pnpm test:browser`. Browser downloads use the workspace's `.tmp/browsers/`.
+The [runner decision](../../.agents/notes/implemented/process/2026-11-11-supported-check-runner.md)
+records why the operating-system label is explicit.
+
 `make coverage` invokes go-cov `v0.1.0` using [.go-cov.toml](../../.go-cov.toml)
 separately for the service module and standalone Go SDK module, with `GOWORK=off`.
 The profiles are `.tmp/coverage.out` and `.tmp/sdk-go-coverage.out`.

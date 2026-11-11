@@ -20,6 +20,7 @@ Administrator visibility is limited to minimal user summaries and App counts.
 | [Product SDK decision](../.agents/notes/implemented/feature/2026-10-13-product-sdks.md) | SDK responsibilities, transport and normalized data contracts, and package-consumer validation. |
 | [App provider discovery decision](../.agents/notes/implemented/feature/2026-10-22-app-provider-discovery.md) | App-authenticated configuration availability, exact callback checks, Go discovery client, and scope. |
 | [Secret reset decision](../.agents/notes/implemented/feature/2026-10-13-secret-reset.md) | Immediate App credential replacement, confirmation, and response-loss cost. |
+| [Supported CI runner](../.agents/notes/implemented/process/2026-11-11-supported-check-runner.md) | Explicit Check operating system compatible with the pinned Playwright installer. |
 | [Compose release decision](../.agents/notes/implemented/process/2026-10-13-compose-releases.md) | Manual release initiation and Compose deployment ownership. |
 | [Tag-reference decision](../.agents/notes/implemented/process/2026-10-13-tag-image-references.md) | UTC date, published-tag sequence, and commit hash allocation shared by publication, anonymous pull, and deployment. |
 | [Public GHCR decision](../.agents/notes/implemented/process/2026-10-13-public-ghcr-images.md) | Public image access and package visibility ownership. |
