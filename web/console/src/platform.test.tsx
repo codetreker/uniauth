@@ -25,7 +25,7 @@ const providers: Provider[] = [
 ];
 const identity: LinkedIdentity = {
   provider: "microsoft",
-  id: "microsoft:tenant:stable-id",
+  id: "msft:stable-id@tenant",
   email: null,
   email_verified: null,
   name: null,

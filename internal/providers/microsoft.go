@@ -121,7 +121,7 @@ func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Iden
 			return Identity{}, failure("photo encoding", err)
 		}
 	}
-	return Identity{Provider: p.Name(), ID: p.Name() + ":" + microsoftTenant + ":" + objectID,
+	return Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + microsoftTenant,
 		Email: email, Name: name, AvatarURL: avatarURL,
 		Origin: map[string]json.RawMessage{"id_token_claims": claims, "profile": profile, "photo": encodedPhoto}}, nil
 }

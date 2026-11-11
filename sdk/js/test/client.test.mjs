@@ -376,7 +376,7 @@ test("identity responses larger than 8 MiB are supported", async () => {
   const photo = "a".repeat(9 * 1024 * 1024);
   const raw = JSON.stringify({
     provider: "microsoft",
-    id: "microsoft:tenant:oid",
+    id: "msft:oid@tenant",
     email: null,
     email_verified: null,
     name: null,

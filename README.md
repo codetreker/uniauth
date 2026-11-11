@@ -56,6 +56,12 @@ Database migration 3 clears all existing Apps and Secrets when upgrading to the
 platform schema. Recreate product registrations and replace their backend
 credentials after upgrading. Platform accounts and newly created Apps then persist
 across restarts; transient logins, results, and Console sessions do not.
+Migration 4 preserves those accounts and rewrites Microsoft linked IDs from
+`microsoft:<tid>:<oid>` to `msft:<oid>@<tid>`. Duplicate target keys fail startup
+without merging accounts or deleting links. Products storing Microsoft IDs must
+coordinate their stored mappings or normalize both wire forms before accepting
+the new gateway output; see the
+[identity contract](docs/reference/api.md#stable-identity-and-original-sources).
 
 ## Release with Docker Compose
 

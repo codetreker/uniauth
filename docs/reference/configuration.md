@@ -215,6 +215,17 @@ administrator, and no old-data compatibility branch is retained. Later startups
 preserve newly created user accounts and Apps while rotating the private Console
 credential.
 
+Migration 4 rewrites Microsoft Console link keys from `microsoft:<tid>:<oid>` to
+`msft:<oid>@<tid>` for the supported personal tenant. It preserves the linked
+account, profile metadata, link time, administrator authority, owned Apps, and
+credentials. An existing target key causes the transactional migration and
+startup to fail; no conflicting link is merged or deleted. Resolve that conflict
+explicitly before restarting. External products own their stored identity keys
+and must coordinate a migration or normalize both wire forms before consuming
+the new output. The
+[Microsoft identity decision](../../.agents/notes/implemented/architecture/2026-11-11-microsoft-identity-key.md)
+records the key migration.
+
 Back up the live SQLite database with a SQLite-aware method or stop the process
 before copying its files. A backup preserves the old registration data for
 reference; the new schema does not reuse those credentials. The
@@ -293,6 +304,13 @@ required for building, not serving that executable. Dependency versions are
 pinned in [go.mod](../../go.mod), [root package.json](../../package.json), and
 [Console package.json](../../web/console/package.json). Build caches, dependency
 stores, test artifacts, and temporary browser data belong under `.tmp/`.
+
+The GitHub Actions Check job runs on `ubuntu-24.04`, supported by the pinned
+Playwright 1.58.2 browser and system-dependency installer. It runs `make setup`,
+`make build check test`, Chromium installation with system dependencies, and
+`pnpm test:browser`. Browser downloads use the workspace's `.tmp/browsers/`.
+The [runner decision](../../.agents/notes/implemented/process/2026-11-11-supported-check-runner.md)
+records why the operating-system label is explicit.
 
 `make coverage` invokes go-cov `v0.1.0` using [.go-cov.toml](../../.go-cov.toml)
 separately for the service module and standalone Go SDK module, with `GOWORK=off`.

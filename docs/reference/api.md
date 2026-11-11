@@ -243,7 +243,7 @@ email-ownership, or permission policy; each product owns those decisions.
 
 | Provider | Stable `id` | `origin` |
 | --- | --- | --- |
-| Microsoft | `microsoft:9188040d-6c67-4c5b-b112-36a304b66dad:<oid>` | Complete validated `id_token_claims`, Graph `/me` as `profile`, and `photo`. |
+| Microsoft | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` | Complete validated `id_token_claims`, Graph `/me` as `profile`, and `photo`. |
 | Google | `google:<sub>` | Complete validated `id_token_claims` and fetched `userinfo`, whose `sub` must match the ID token. |
 | GitHub | `github:<numeric id>` | Authenticated `/user` as `profile`, and all pages of `/user/emails` as `emails`. |
 
@@ -263,7 +263,18 @@ IDs are independent of product App Secrets. Email, display name, and login name
 are attributes, not identity keys. Microsoft requires the personal tenant and a
 validated `oid`; there is no fallback identifier. OAuth credentials, raw signed
 ID tokens, upstream authorization codes, and access or refresh tokens are
-excluded from the identity package.
+excluded from the identity package. The Microsoft `provider` value remains
+`microsoft`; `msft` is the identity-key prefix, not a provider name.
+
+Microsoft IDs use `msft:<oid>@<tid>`, where `tid` is the validated fixed personal
+tenant shown above. Upgrades from `microsoft:<tid>:<oid>` migrate Console identity
+links transactionally without changing their platform account or ownership.
+Conflicting old and new keys fail startup without merging or deleting identities.
+External products own their stored identity mappings and must migrate those keys
+or explicitly normalize both wire forms before accepting the new output. UniAuth
+cannot migrate product databases.
+The [Microsoft identity decision](../../.agents/notes/implemented/architecture/2026-11-11-microsoft-identity-key.md)
+records the format and migration guarantees.
 
 ## Console API
 

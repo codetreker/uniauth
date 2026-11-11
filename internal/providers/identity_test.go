@@ -185,7 +185,7 @@ func TestProviderNormalizedIdentity(t *testing.T) {
 					t.Errorf("%s: got %s want %s", field, fields[field], value)
 				}
 			}
-			wantID := map[string]string{"google": "google:user-123", "microsoft": "microsoft:" + microsoftTenant + ":object-123", "github": "github:123"}[tc.provider]
+			wantID := map[string]string{"google": "google:user-123", "microsoft": "msft:object-123@" + microsoftTenant, "github": "github:123"}[tc.provider]
 			if identity.Provider != tc.provider || identity.ID != wantID {
 				t.Fatalf("stable identity changed: %+v", identity)
 			}
