@@ -22,6 +22,7 @@ later initialization failure or permit separate instances to share one database.
 | `UNIAUTH_INITIAL_ADMIN_EMAIL` | Required | Plain email address for one-time administrator bootstrap, up to 254 bytes and without whitespace or display-name syntax. |
 | `UNIAUTH_LISTEN_ADDR` | `:8080` | HTTP listener address in `host:port` form. |
 | `UNIAUTH_DATABASE_PATH` | `uniauth.db` | SQLite database path; parent directory must exist. |
+| `UNIAUTH_LOG_FILE` | Empty; Compose defaults to `/data/uniauth.log` | Optional rotating JSON log file alongside stderr; parent directory must exist. |
 | `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for the loopback public origin. |
 | `UNIAUTH_MICROSOFT_CLIENT_ID` | Optional pair | Personal-account Microsoft application Client ID. |
 | `UNIAUTH_MICROSOFT_CLIENT_SECRET` | Optional pair | Microsoft application Client Secret. |
@@ -272,12 +273,55 @@ explicit failures. No retry store recovers an already consumed result.
 
 ## Logs and readiness
 
-The service writes structured JSON logs to stderr. HTTP logs contain sanitized
-operation names, request IDs, status, method, and duration. Authentication logs
-also carry available login operation ID, App ID, provider, phase, and safe error
-categories. A successful result claim inherits its operation ID from the live
-result; later unavailable claims cannot recover that correlation after deletion.
-Cleanup logs report aggregate expired-entry counts.
+The service writes structured JSON logs to stderr. Setting `UNIAUTH_LOG_FILE`
+also appends those records to a file. Its parent directory must already exist
+and be writable. New files use mode `0600`; existing files retain their
+permissions. A successful listener reservation precedes opening the log file,
+and opening the file precedes stateful service initialization. An invalid or
+unwritable configured file fails startup. A runtime output failure cancels the
+service, drains accepted requests, and returns the original logging failure.
+
+Each active file is limited to 10 MiB. Before a record would exceed that limit,
+the service rotates the active file to `.1`, shifts older backups to `.2` and
+`.3`, and removes the oldest backup. Files remain uncompressed. Restart appends
+to the active file and preserves the same retention limit. Rotation failures
+propagate like write failures. Only one process may own a configured log path.
+Compose enables `/data/uniauth.log` in its persistent volume even when an existing
+VM `.env` omits `UNIAUTH_LOG_FILE`; explicitly setting the variable to an empty
+string selects stderr only. See [deployment diagnostics](deployment.md#diagnostic-log-files)
+for collection commands.
+
+HTTP logs contain sanitized operation names, request IDs, status, method, and
+duration. Authentication logs also carry available login operation ID, App ID,
+provider, phase, and safe error categories. A successful result claim inherits
+its operation ID from the live result; later unavailable claims cannot recover
+that correlation after deletion. Cleanup logs report aggregate expired-entry counts.
+
+Provider diagnostics emit `provider operation` records with `component=provider`,
+`request_id`, `operation_id`, `app_id`, and `provider`. Each observed stage has
+`phase=started` and `phase=completed`. Stage names identify `token_exchange`,
+`identity_verification`, `profile_retrieval`, and `photo_retrieval`; shared OIDC
+stages also cover Google. `elapsed_ms` measures time since provider exchange
+started. Completion includes `duration_ms`, `outcome`, and sanitized
+`error_cause` and `error_type` on failure. `budget_remaining_ms`, when a context
+deadline exists, measures the remaining shared budget at that record's event.
+ID verification duration includes waiting for the shared JWKS cache. The keyset
+fetches in a shared background context, so those requests do not inherit an
+individual login's HTTP trace. Microsoft retains its existing 20-second total
+provider budget inside the 30-second gateway callback deadline; diagnostics do
+not extend either deadline.
+
+Observed HTTP fields identify where time was spent. `dns_start_ms`, `dns_done_ms`,
+`connect_start_ms`, `connect_done_ms`, `tls_start_ms`, `tls_done_ms`,
+`connection_ms`, `request_written_ms`, `first_byte_ms`, `headers_ms`, and
+`body_complete_ms` are offsets from stage start. `body_duration_ms` measures body
+reading. Available response and connection fields include `status`, `protocol`,
+`connection_reused`, `remote_ip`, and `remote_family`. Unobserved measurements
+are omitted, including network work skipped by a cached signing key or reused
+connection. Status and protocol remain available when response-body reading fails.
+A profile stage starting with little remaining budget implicates earlier work;
+a promptly written request with no first byte implicates response waiting;
+received headers followed by a body timeout identify response-body waiting.
 
 Authorized management mutations emit `console management operation` events with
 `operation_id`, `request_id`, `action`, `actor_account_id`, `affected_app_id`,
@@ -292,8 +336,11 @@ Secret names and descriptions.
 
 Management audit includes the opaque platform account ID for actor correlation.
 Identity payloads, upstream identity IDs, email addresses, Secrets, tokens, result
-codes, states, and full URLs with sensitive query parameters are excluded from
-application logs. Configure reverse-proxy logs to preserve that policy as well.
+codes, states, request and response bodies, raw upstream error text, and full
+URLs with sensitive query parameters are excluded from application logs. Typed
+error categories and numeric upstream IP addresses support diagnosis without
+recording credentials or provider payloads. Configure reverse-proxy logs to
+preserve that policy as well.
 Health and readiness routes are described in the [API reference](api.md).
 
 ## Build and validation

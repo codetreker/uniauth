@@ -34,9 +34,12 @@ Deployment copies `deploy/docker-compose.yml` as `docker-compose.yml` to the
 environment's `DEPLOY_PATH` and runs `docker compose up -d` there. The template
 declares `container_name: uniauth`; prod retains that name, and staging renders
 `container_name: uniauth-staging`. The Compose projects are `uniauth-prod` and
-`uniauth-staging`, with respective SQLite volumes `uniauth-prod_data` and
-`uniauth-staging_data`. Distinct container names let operators address both
-services directly on the same VM. GitHub owns image publication and file
+`uniauth-staging`, with respective data volumes `uniauth-prod_data` and
+`uniauth-staging_data`. Those volumes hold SQLite and the default rotating
+`/data/uniauth.log` files. The
+[diagnostics decision](../feature/2026-11-13-authentication-diagnostics.md)
+owns log retention and failure behavior. Distinct container names let operators
+address both services directly on the same VM. GitHub owns image publication and file
 transfer. The VM owns `.env`, persistent volumes, and Caddy configuration.
 The [public GHCR decision](2026-10-13-public-ghcr-images.md)
 replaces the original VM registry-login prerequisite and owns image access.
@@ -62,6 +65,6 @@ credentials and the standard Compose command keep those responsibilities local.
 Operators initiate a release on `main` when the source is ready; mainline pushes
 run their configured checks without initiating deployment. Deployment requires
 prepared VM configuration and anonymous GHCR pull access. Separate Compose
-project names isolate SQLite volumes. Prod follows successful staging command
+project names isolate database and diagnostic-log volumes. Prod follows successful staging command
 execution; `up -d` does not wait for application readiness. Restart loses
 transient authentication state while preserving application configuration.

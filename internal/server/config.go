@@ -19,6 +19,7 @@ type Config struct {
 	PublicURL         string
 	ListenAddr        string
 	DatabasePath      string
+	LogFile           string
 	InitialAdminEmail string
 	AllowLoopbackHTTP bool
 	Microsoft         Credentials
@@ -31,6 +32,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		PublicURL:         getenv("UNIAUTH_PUBLIC_URL"),
 		ListenAddr:        getenv("UNIAUTH_LISTEN_ADDR"),
 		DatabasePath:      getenv("UNIAUTH_DATABASE_PATH"),
+		LogFile:           getenv("UNIAUTH_LOG_FILE"),
 		InitialAdminEmail: getenv("UNIAUTH_INITIAL_ADMIN_EMAIL"),
 	}
 	if cfg.ListenAddr == "" {

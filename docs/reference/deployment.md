@@ -58,9 +58,10 @@ GitHub Environment protection rules can require approval for prod.
 
 The Compose template declares `container_name: uniauth`, which prod retains.
 Staging renders that line as `container_name: uniauth-staging`. Each environment
-has its own container name, Compose project, and persistent SQLite volume:
+has its own container name, Compose project, and persistent data volume for
+SQLite and rotating JSON logs:
 
-| Environment | Container name | Compose project | SQLite volume |
+| Environment | Container name | Compose project | Data volume |
 | --- | --- | --- | --- |
 | staging | `uniauth-staging` | `uniauth-staging` | `uniauth-staging_data` |
 | prod | `uniauth` | `uniauth-prod` | `uniauth-prod_data` |
@@ -118,9 +119,40 @@ linked identities, owned Apps, and credential digests across restarts. See [runt
 
 The workflow replaces only `docker-compose.yml`; `.env` remains VM-owned. Caddy
 configuration is operator-owned. The service listens on
-`127.0.0.1:UNIAUTH_HOST_PORT`, and SQLite persists in the environment's named
-volume. Service restarts invalidate pending logins, results, Console login/link
-flows, and Console sessions.
+`127.0.0.1:UNIAUTH_HOST_PORT`. SQLite and the default log files persist in the
+environment's named volume. Service restarts invalidate pending logins, results,
+Console login/link flows, and Console sessions.
+
+## Diagnostic log files
+
+Compose sets `UNIAUTH_LOG_FILE` to `/data/uniauth.log` when the VM `.env` does not
+supply the variable. Existing deployments gain persistent logs when the updated
+Compose file and application are deployed. An explicit empty value disables the
+file while retaining stderr output. A custom path must have an existing writable
+parent directory and a volume mount if it must survive container replacement.
+The image runs as UID/GID `10001:10001`; its `/data` volume is writable by that
+identity.
+
+The application appends JSON records alongside stderr and synchronously rotates
+at 10 MiB, retaining `/data/uniauth.log.1`, `.2`, and `.3` with `.1` newest.
+New files are private (`0600`). Startup fails if the configured file cannot be
+opened; write or rotation failures stop the service with a diagnostic. Configure
+one log path per process. Each staging/prod volume keeps its own log history.
+
+After reproducing a login failure, copy the active log from prod to the VM:
+
+```sh
+docker cp uniauth:/data/uniauth.log ./uniauth.log
+```
+
+Use `uniauth-staging` for staging. The three backup paths can be copied the same
+way when the relevant request spans a rotation. `docker logs uniauth` continues
+to show the same JSON records. Filter provider records by `component=provider`
+and group them with the authentication/HTTP records using `operation_id` and
+`request_id`. The [configuration reference](configuration.md#logs-and-readiness)
+defines stage timings, remaining deadlines, transport observations, and excluded
+data. These diagnostics explain real authenticated provider work; a fast
+unauthenticated Graph `401` does not establish authenticated profile performance.
 
 The [Compose release decision](../../.agents/notes/implemented/process/2026-10-13-compose-releases.md)
 records manual initiation and deployment ownership, and the

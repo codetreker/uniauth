@@ -223,8 +223,12 @@ func TestFailedBindLeavesDatabaseUntouched(t *testing.T) {
 				createHistoricalCLIDatabase(t, path)
 			}
 			values := serveEnvironment(path, listener.Addr().String(), "http://localhost:8080")
+			values["UNIAUTH_LOG_FILE"] = filepath.Join(filepath.Dir(path), "service.log")
 			err := run(t.Context(), nil, io.Discard, io.Discard, func(name string) string { return values[name] })
 			assertBindFailure(t, err)
+			if _, err := os.Stat(values["UNIAUTH_LOG_FILE"]); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("rejected bind touched log file: %v", err)
+			}
 			if !historical {
 				for _, suffix := range []string{"", "-wal", "-shm"} {
 					if _, err := os.Stat(path + suffix); !errors.Is(err, os.ErrNotExist) {

@@ -21,11 +21,18 @@ func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	if err != nil {
 		return nil, err
 	}
+	stage, observed := request.Context().Value(stageKey{}).(*diagnosticStage)
+	if observed {
+		stage.response(response)
+	}
 	if response.ContentLength > maxResponseBytes {
 		response.Body.Close()
 		return nil, errResponseTooLarge
 	}
 	response.Body = &boundedBody{body: response.Body, remaining: maxResponseBytes}
+	if observed {
+		response.Body = diagnosticBody{ReadCloser: response.Body, stage: stage}
+	}
 	return response, nil
 }
 

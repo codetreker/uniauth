@@ -229,6 +229,8 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		productRedirect(w, r, tx, "error", "provider_denied")
 		return
 	}
+	metadata := r.Context().Value(metadataKey{}).(requestMetadata)
+	ctx = providers.WithLogger(ctx, h.config.Logger.With("request_id", metadata.requestID, "operation_id", metadata.operationID, "app_id", metadata.appID, "provider", metadata.provider))
 	identity, err := provider.Exchange(ctx, providers.ExchangeRequest{Code: code, ExpectedNonce: tx.nonce, CodeVerifier: tx.verifier})
 	if err != nil || ctx.Err() != nil {
 		h.log(r, "provider_exchange", "provider_failed", errors.Join(err, ctx.Err()))
