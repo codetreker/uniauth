@@ -19,15 +19,16 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ListenAddr != ":8080" || cfg.DatabasePath != "uniauth.db" || cfg.AllowLoopbackHTTP || cfg.InitialAdminEmail != values["UNIAUTH_INITIAL_ADMIN_EMAIL"] {
+	if cfg.ListenAddr != ":8080" || cfg.DatabasePath != "uniauth.db" || cfg.LogFile != "" || cfg.AllowLoopbackHTTP || cfg.InitialAdminEmail != values["UNIAUTH_INITIAL_ADMIN_EMAIL"] {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	values["UNIAUTH_PUBLIC_URL"] = "http://localhost:8080"
 	values["UNIAUTH_ALLOW_LOOPBACK_HTTP"] = "true"
 	values["UNIAUTH_LISTEN_ADDR"] = "127.0.0.1:8080"
 	values["UNIAUTH_DATABASE_PATH"] = "data/apps.db"
+	values["UNIAUTH_LOG_FILE"] = "data/uniauth.log"
 	cfg, err = LoadConfig(getenv)
-	if err != nil || !cfg.AllowLoopbackHTTP || cfg.GitHub.ClientID != "client" || cfg.ListenAddr != "127.0.0.1:8080" || cfg.DatabasePath != "data/apps.db" {
+	if err != nil || !cfg.AllowLoopbackHTTP || cfg.GitHub.ClientID != "client" || cfg.ListenAddr != "127.0.0.1:8080" || cfg.DatabasePath != "data/apps.db" || cfg.LogFile != "data/uniauth.log" {
 		t.Fatalf("explicit config: %+v %v", cfg, err)
 	}
 }

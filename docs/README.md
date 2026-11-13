@@ -8,9 +8,10 @@ Administrator visibility is limited to minimal user summaries and App counts.
 | --- | --- |
 | [Blueprint](blueprint/README.md) | Agreed requirements, architecture, component contracts, and accepted costs. |
 | [API reference](reference/api.md) | Implemented App-aware provider discovery, product login, normalized identity retrieval, OAuth Console, accounts, owner management, minimal administrator listing, and health APIs. |
-| [Configuration reference](reference/configuration.md) | Runtime environment, provider setup, limits, deployment, and validation commands. |
+| [Configuration reference](reference/configuration.md) | Runtime environment, provider setup, diagnostic logs, limits, deployment, and validation commands. |
 | [SDK reference](reference/sdks.md) | Go and JavaScript product clients, Go provider discovery, normalized nullable identities, state responsibilities, raw JSON, and local package use. |
-| [Deployment reference](reference/deployment.md) | Docker Compose releases, GitHub settings, and VM prerequisites. |
+| [Deployment reference](reference/deployment.md) | Docker Compose releases, persistent log collection, GitHub settings, and VM prerequisites. |
+| [Authentication diagnostics decision](../.agents/notes/implemented/feature/2026-11-13-authentication-diagnostics.md) | Correlated provider timings, credential exclusion, rotating file retention, and logging failure behavior. |
 | [Authentication gateway decision](../.agents/notes/implemented/architecture/2026-10-12-authentication-gateway.md) | Ownership, identity handover alternatives, and operating consequences. |
 | [Public platform decision](../.agents/notes/implemented/architecture/2026-10-13-public-oauth-platform.md) | OAuth-only Console, stable-ID accounts and linking, one-time administrator bootstrap, owner isolation, and deliberate data reset. |
 | [Administrator password decision](../.agents/notes/implemented/simplification/2026-10-13-direct-administrator-password.md) | Historical direct-password format simplification, superseded by OAuth-only platform login. |

@@ -8,6 +8,7 @@ services:
     environment:
       UNIAUTH_LISTEN_ADDR: :8080
       UNIAUTH_DATABASE_PATH: /data/uniauth.db
+      UNIAUTH_LOG_FILE: ${UNIAUTH_LOG_FILE-/data/uniauth.log}
     ports:
       - "127.0.0.1:${UNIAUTH_HOST_PORT:?UNIAUTH_HOST_PORT is required}:8080"
     volumes:

@@ -70,11 +70,15 @@ func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Iden
 	if err != nil {
 		return Identity{}, failure("identity verification", err)
 	}
-	profile, _, _, err := fetch(ctx, p.client, p.profileURL, token.AccessToken)
+	profile, err := observe(ctx, "profile_retrieval", func(ctx context.Context) ([]byte, error) {
+		profile, _, _, err := fetch(ctx, p.client, p.profileURL, token.AccessToken)
+		if err != nil {
+			return nil, err
+		}
+		_, err = jsonObject(profile)
+		return profile, err
+	})
 	if err != nil {
-		return Identity{}, failure("profile retrieval", err)
-	}
-	if _, err := jsonObject(profile); err != nil {
 		return Identity{}, failure("profile retrieval", err)
 	}
 	var graphProfile struct {
@@ -99,16 +103,33 @@ func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Iden
 	if name == nil {
 		name = nilIfEmpty(tokenProfile.Name)
 	}
-	photo, contentType, status, err := fetchWithAccept(ctx, p.client, p.photoURL, token.AccessToken, "image/*")
+	photo, err := observe(ctx, "photo_retrieval", func(ctx context.Context) (microsoftPhoto, error) {
+		return p.photo(ctx, token.AccessToken)
+	})
+	if err != nil {
+		return Identity{}, err
+	}
+	return Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + microsoftTenant,
+		Email: email, Name: name, AvatarURL: photo.avatarURL,
+		Origin: map[string]json.RawMessage{"id_token_claims": claims, "profile": profile, "photo": photo.origin}}, nil
+}
+
+type microsoftPhoto struct {
+	avatarURL *string
+	origin    json.RawMessage
+}
+
+func (p *Microsoft) photo(ctx context.Context, accessToken string) (microsoftPhoto, error) {
+	photo, contentType, status, err := fetchWithAccept(ctx, p.client, p.photoURL, accessToken, "image/*")
 	encodedPhoto := json.RawMessage("null")
 	var avatarURL *string
 	if err != nil && status != http.StatusNotFound {
-		return Identity{}, failure("photo retrieval", err)
+		return microsoftPhoto{}, failure("photo retrieval", err)
 	}
 	if err == nil {
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil || len(mediaType) < 6 || mediaType[:6] != "image/" || len(photo) == 0 {
-			return Identity{}, failure("photo retrieval", errors.New("provider photo has invalid content"))
+			return microsoftPhoto{}, failure("photo retrieval", errors.New("provider photo has invalid content"))
 		}
 		base64Photo := base64.StdEncoding.EncodeToString(photo)
 		dataURL := "data:" + mediaType + ";base64," + base64Photo
@@ -118,10 +139,8 @@ func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Iden
 			DataBase64  string `json:"data_base64"`
 		}{ContentType: contentType, DataBase64: base64Photo})
 		if err != nil {
-			return Identity{}, failure("photo encoding", err)
+			return microsoftPhoto{}, failure("photo encoding", err)
 		}
 	}
-	return Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + microsoftTenant,
-		Email: email, Name: name, AvatarURL: avatarURL,
-		Origin: map[string]json.RawMessage{"id_token_claims": claims, "profile": profile, "photo": encodedPhoto}}, nil
+	return microsoftPhoto{avatarURL: avatarURL, origin: encodedPhoto}, nil
 }

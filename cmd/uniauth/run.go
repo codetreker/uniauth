@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 
@@ -33,19 +32,30 @@ func run(ctx context.Context, args []string, out, errOut io.Writer, getenv func(
 		if err != nil {
 			return err
 		}
-		// A failed bind must not migrate data or replace a running Console credential.
-		listener, err := net.Listen("tcp", cfg.ListenAddr)
-		if err != nil {
-			return fmt.Errorf("listen for HTTP requests: %w", err)
-		}
-		logger := slog.New(slog.NewJSONHandler(errOut, nil))
-		service, err := server.New(ctx, cfg, nil, logger)
-		if err != nil {
-			return errors.Join(fmt.Errorf("initialize service: %w", err), listener.Close())
-		}
-		logger.InfoContext(ctx, "HTTP service started", "component", "server")
-		return service.Serve(ctx, listener)
+		return serve(ctx, cfg, errOut)
 	default:
 		return errors.New("unknown command; usage: uniauth [serve|help]")
 	}
+}
+
+func serve(ctx context.Context, cfg server.Config, stderr io.Writer) (result error) {
+	// A failed bind must not migrate data or replace a running Console credential.
+	listener, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("listen for HTTP requests: %w", err)
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	output, err := newLogOutput(cfg.LogFile, stderr, cancel)
+	if err != nil {
+		return errors.Join(fmt.Errorf("initialize logging: %w", err), listener.Close())
+	}
+	defer func() { result = errors.Join(result, output.Close()) }()
+	logger := output.Logger()
+	service, err := server.New(ctx, cfg, nil, logger)
+	if err != nil {
+		return errors.Join(fmt.Errorf("initialize service: %w", err), listener.Close())
+	}
+	logger.InfoContext(ctx, "HTTP service started", "component", "server")
+	return service.Serve(ctx, listener)
 }

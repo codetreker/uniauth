@@ -447,10 +447,29 @@ changes and Secret detail updates have management operation, opaque platform act
 account, and affected App IDs for audit correlation; metadata updates use
 `secret.update`.
 
-Logs exclude identity payloads, upstream identity IDs, emails, result codes, product
-or provider state, Secrets, Secret names and descriptions, App display data,
-authorization headers, tokens, and full sensitive URLs. Reverse-proxy configuration must preserve that exclusion. Provider errors
-retain causes internally while emitting safe operation and failure categories.
+Provider diagnostics observe real token exchange, ID verification, and Microsoft
+profile/photo retrieval with correlated stage start/completion events. Monotonic
+elapsed time, stage duration, remaining deadline, and observed HTTP transport
+and body timings distinguish upstream budget consumption from network or
+response waiting. Missing observations remain absent. Existing provider and
+callback deadlines continue to control the login flow.
+
+Structured JSON goes to stderr and an optional bounded log file. Compose enables
+the file in the existing persistent data volume, retaining one 10 MiB active
+file and three backups. Startup and runtime file failures remain visible and
+stop the service. Bounded retention prevents diagnostic history from growing
+without limit. The [diagnostics decision](../../.agents/notes/implemented/feature/2026-11-13-authentication-diagnostics.md)
+owns this observation and storage policy; the
+[configuration reference](../reference/configuration.md#logs-and-readiness)
+owns field definitions and operating behavior.
+
+Logs exclude identity payloads, upstream identity IDs, emails, result codes,
+product or provider state, Secrets, Secret names and descriptions, App display
+data, authorization headers, tokens, request/response bodies, raw upstream error
+text, and full sensitive URLs. Reverse-proxy configuration must preserve that
+exclusion. Provider errors retain causes internally while emitting safe operation
+and failure categories; numeric upstream IPs and protocol names identify the
+observed connection without recording provider payloads.
 
 The authoritative go-cov policy requires total, package, and function coverage,
 critical-block coverage, and race detection without exclusions. Tests cover

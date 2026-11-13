@@ -78,6 +78,11 @@ that same tag reference. The workflow copies `deploy/docker-compose.yml` to each
 deployment directory and runs `docker compose up -d` there. The prod container
 is named `uniauth`, and the staging container is named `uniauth-staging`.
 The VM owns `.env` and Caddy configuration; public images need no registry login.
+Compose also writes JSON diagnostics to `/data/uniauth.log` in the persistent
+data volume, alongside stderr. The application rotates at 10 MiB and retains
+three backups. After reproducing a login failure, collect the active file with
+`docker cp uniauth:/data/uniauth.log ./uniauth.log`; provider stage records
+correlate with authentication records through request and operation IDs.
 See the [deployment reference](docs/reference/deployment.md) for tag allocation, GitHub
 settings, the one-time Public package setting, and VM prerequisites.
 
