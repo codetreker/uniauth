@@ -106,6 +106,23 @@ func TestRetrieveNullableProfileFields(t *testing.T) {
 	}
 }
 
+func TestRetrieveMicrosoftIdentityWithoutGraphSources(t *testing.T) {
+	const body = `{"provider":"microsoft","id":"msft:object-123@9188040d-6c67-4c5b-b112-36a304b66dad","email":null,"email_verified":null,"name":null,"avatar_url":null,"origin":{"id_token_claims":{"oid":"object-123","tid":"9188040d-6c67-4c5b-b112-36a304b66dad","unknown":false}}}`
+	c := clientFor(t, "https://auth.example", &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return response(200, "application/json", body), nil
+	})})
+	identity, err := c.Retrieve(context.Background(), "code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Provider != uniauth.Microsoft || identity.ID != "msft:object-123@9188040d-6c67-4c5b-b112-36a304b66dad" || identity.Email != nil || identity.EmailVerified != nil || identity.Name != nil || identity.AvatarURL != nil {
+		t.Fatalf("partial profile changed authenticated identity: %+v", identity)
+	}
+	if len(identity.Origin) != 1 || string(identity.Origin["id_token_claims"]) != `{"oid":"object-123","tid":"9188040d-6c67-4c5b-b112-36a304b66dad","unknown":false}` || string(identity.RawJSON) != body {
+		t.Fatal("SDK invented Graph sources or changed the retained claims")
+	}
+}
+
 func TestRetrieveRequiresCurrentIdentityEnvelope(t *testing.T) {
 	assertInvalid := func(t *testing.T, body string) {
 		t.Helper()

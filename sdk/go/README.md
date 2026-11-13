@@ -145,15 +145,15 @@ requires a fresh login; retrying cannot recover a consumed identity.
 
 Every successful identity response must include all seven gateway fields:
 
-| Go field | Type | JSON field |
-| --- | --- | --- |
-| `Provider` | `Provider` | `provider` |
-| `ID` | `string` | `id` |
-| `Email` | `*string` | `email` |
-| `EmailVerified` | `*bool` | `email_verified` |
-| `Name` | `*string` | `name` |
-| `AvatarURL` | `*string` | `avatar_url` |
-| `Origin` | `map[string]json.RawMessage` | `origin` |
+| Go field        | Type                         | JSON field       |
+| --------------- | ---------------------------- | ---------------- |
+| `Provider`      | `Provider`                   | `provider`       |
+| `ID`            | `string`                     | `id`             |
+| `Email`         | `*string`                    | `email`          |
+| `EmailVerified` | `*bool`                      | `email_verified` |
+| `Name`          | `*string`                    | `name`           |
+| `AvatarURL`     | `*string`                    | `avatar_url`     |
+| `Origin`        | `map[string]json.RawMessage` | `origin`         |
 
 `Provider` must be supported, `ID` must be nonempty, and `Origin` must be an
 object. `Email`, `EmailVerified`, `Name`, and `AvatarURL` may be JSON `null`,
@@ -173,6 +173,23 @@ survive decoding. `Identity.RawJSON` retains the complete response bytes,
 including unknown envelope fields. Provider source schemas are not validated or
 filled with fallback values. The response has no fixed size cap; Microsoft photo
 and avatar data and other complete sources may exceed 8 MiB.
+
+A Microsoft login can succeed with only `Origin["id_token_claims"]` when Graph
+enrichment is unavailable. The stable `msft:<oid>@<tid>` ID and all seven fields
+remain present; profile pointers may be nil. Optional `profile` and `photo`
+keys are omitted when their source failed or was not attempted. `photo: null`
+means a confirmed Graph photo `404`, and differs from an absent key:
+
+```go
+profile, hasProfile := identity.Origin["profile"]
+photo, hasPhoto := identity.Origin["photo"]
+photoConfirmedAbsent := hasPhoto && string(photo) == "null"
+```
+
+The SDK accepts sparse source objects without deriving profile data. Products
+choose their own persistence policy for unavailable attributes. See the
+[Microsoft enrichment contract](../../docs/reference/api.md#microsoft-optional-profile-enrichment)
+for mandatory authentication, source selection, and bounded enrichment.
 
 Use `errors.As` to inspect `*APIError` (`StatusCode`, `Code`, `Message`,
 `RequestID`) for valid JSON gateway failures, including future error codes.

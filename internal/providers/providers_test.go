@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -297,10 +298,6 @@ func TestProviderSpecificIdentityFailures(t *testing.T) {
 		{"missing oid", "microsoft", func(f *fixture) { delete(f.claims, "oid") }},
 		{"empty oid", "microsoft", func(f *fixture) { f.claims["oid"] = "" }},
 		{"numeric oid", "microsoft", func(f *fixture) { f.claims["oid"] = 123 }},
-		{"profile null", "microsoft", func(f *fixture) { f.profile = "null" }},
-		{"profile invalid", "microsoft", func(f *fixture) { f.profile = "{" }},
-		{"photo forbidden", "microsoft", func(f *fixture) { f.status["/photo"] = 403 }},
-		{"photo empty", "microsoft", func(f *fixture) { f.photo = nil }},
 		{"userinfo mismatch", "google", func(f *fixture) { f.userinfo = `{"sub":"another-user"}` }},
 		{"userinfo null", "google", func(f *fixture) { f.userinfo = "null" }},
 		{"userinfo malformed", "google", func(f *fixture) { f.userinfo = "{" }},
@@ -391,6 +388,10 @@ func TestJWKSRefreshAndExchangeBoundedByTimeout(t *testing.T) {
 	if err == nil || time.Since(started) > 150*time.Millisecond {
 		t.Fatalf("JWKS fetch not bounded: %v elapsed %s", err, time.Since(started))
 	}
+	f.server.Close()
+	if !errors.Is(err, context.DeadlineExceeded) || slices.Contains(f.requests, "/profile") || slices.Contains(f.requests, "/photo") {
+		t.Fatalf("core deadline was treated as optional enrichment: %v requests=%v", err, f.requests)
+	}
 }
 
 func TestRedirectsDoNotForwardProviderCredentials(t *testing.T) {
@@ -461,6 +462,9 @@ func TestProductionEndpointsAndDiscoveryFailure(t *testing.T) {
 	}
 	if ms.oauth.Endpoint.AuthURL != "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize" || ms.oauth.Endpoint.TokenURL != "https://login.microsoftonline.com/consumers/oauth2/v2.0/token" {
 		t.Fatalf("wrong Microsoft endpoint: %+v", ms.oauth.Endpoint)
+	}
+	if ms.enrichmentTimeout != 3*time.Second {
+		t.Fatalf("unexpected production enrichment budget: %s", ms.enrichmentTimeout)
 	}
 	gh, err := NewGitHub(f.config())
 	if err != nil {

@@ -142,6 +142,12 @@ func (p consoleProvider) Exchange(_ context.Context, request providers.ExchangeR
 	if request.Code == "failure" {
 		return providers.Identity{}, errors.New("private upstream error")
 	}
+	if p == "microsoft" {
+		switch request.Code {
+		case "profile-full", "profile-token", "profile-empty":
+			return consoleMicrosoftIdentity(request.Code), nil
+		}
+	}
 	email, name, verified := "admin@example.com", "Admin", true
 	id := request.Code
 	if id != "admin" {
@@ -153,6 +159,26 @@ func (p consoleProvider) Exchange(_ context.Context, request providers.ExchangeR
 		verification = nil
 	}
 	return providers.Identity{Provider: string(p), ID: string(p) + ":" + id, Email: &email, EmailVerified: verification, Name: &name, Origin: map[string]json.RawMessage{"profile": json.RawMessage(`{"private":"upstream"}`)}}, nil
+}
+
+func consoleMicrosoftIdentity(mode string) providers.Identity {
+	const tenant = "9188040d-6c67-4c5b-b112-36a304b66dad"
+	identity := providers.Identity{Provider: "microsoft", ID: "msft:console-object@" + tenant,
+		Origin: map[string]json.RawMessage{"id_token_claims": json.RawMessage(`{"oid":"console-object","tid":"` + tenant + `"}`)}}
+	if mode == "profile-empty" {
+		return identity
+	}
+	email, name := "token@example.test", "Token Name"
+	identity.Email, identity.Name = &email, &name
+	identity.Origin["id_token_claims"] = json.RawMessage(`{"oid":"console-object","tid":"` + tenant + `","email":"token@example.test","name":"Token Name"}`)
+	if mode == "profile-full" {
+		email, name = "graph@example.test", "Graph Name"
+		avatar := "data:image/jpeg;base64,AAECAw=="
+		identity.AvatarURL = &avatar
+		identity.Origin["profile"] = json.RawMessage(`{"mail":"graph@example.test","displayName":"Graph Name"}`)
+		identity.Origin["photo"] = json.RawMessage(`{"content_type":"image/jpeg","data_base64":"AAECAw=="}`)
+	}
+	return identity
 }
 
 type consoleFlow struct {

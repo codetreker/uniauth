@@ -227,8 +227,6 @@ func TestMalformedNormalizedFieldsPreserveCause(t *testing.T) {
 		{"google", "userinfo", "email_verified"},
 		{"google", "userinfo", "name"},
 		{"google", "userinfo", "picture"},
-		{"microsoft", "profile", "mail"},
-		{"microsoft", "profile", "displayName"},
 		{"microsoft", "claims", "email"},
 		{"microsoft", "claims", "name"},
 		{"github", "profile", "email"},

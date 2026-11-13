@@ -112,6 +112,10 @@ Providers return to `GET /auth/callback/{provider}`. UniAuth validates the
 provider state and browser cookie, consumes the transaction, performs the
 authorization-code exchange, and validates the identity. An enabled App, allowed
 provider, and callback registration are checked again before result creation.
+Microsoft code exchange and mandatory ID-token validation remain required.
+Unavailable optional Graph enrichment can still produce a successful identity
+result; caller cancellation and callback deadlines remain fatal. See
+[Microsoft enrichment](#microsoft-optional-profile-enrichment).
 
 Success returns `302` to the approved product callback:
 
@@ -211,8 +215,10 @@ Every successful response includes these seven fields:
 
 Missing, null, and empty standard string attributes become `null`. Known fields
 used by the mapping must have the expected JSON type when present and non-null;
-a type mismatch fails authentication, including in a lower-priority source
-field. Unknown source fields retain their original meaning. The API has no
+a mismatch in a mandatory source fails authentication, including in a
+lower-priority token field. An incompatible known field in Microsoft Graph
+profile data rejects that optional source as a whole, following the enrichment
+rules below. Unknown accepted source fields retain their original meaning. The API has no
 `subject` or `sources` aliases. Whitespace and JSON object ordering are not
 contractual.
 
@@ -228,7 +234,7 @@ the retained raw JSON when exact representation matters.
 
 | Provider | `email` | `email_verified` | `name` | `avatar_url` |
 | --- | --- | --- | --- | --- |
-| Microsoft | Nonempty Graph `profile.mail`, otherwise nonempty ID-token claim `email`. | `null`; the selected sources provide no verification flag. | Nonempty Graph `profile.displayName`, otherwise nonempty ID-token claim `name`. | `data:<media-type>;base64,<base64-data>` from the fetched photo; `null` on Graph photo `404`. |
+| Microsoft | Nonempty accepted Graph `profile.mail`, otherwise nonempty ID-token claim `email`. | `null`; the selected sources provide no verification flag. | Nonempty accepted Graph `profile.displayName`, otherwise nonempty ID-token claim `name`. | `data:<media-type>;base64,<base64-data>` from an accepted photo; `null` when photo enrichment is unavailable or Graph confirms absence. |
 | Google | UserInfo `email`. | UserInfo `email_verified`, preserving boolean or `null` independently of whether an email is present. | UserInfo `name`. | UserInfo `picture`. |
 | GitHub | Nonempty primary email from the complete `emails` list, otherwise nonempty public `profile.email`; `null` when neither is available. | `verified` from an email-list entry whose `email` exactly matches the selected value; `null` without a selected email, matching entry, or verification value. | Profile `name`. | Profile `avatar_url`. |
 
@@ -243,7 +249,7 @@ email-ownership, or permission policy; each product owns those decisions.
 
 | Provider | Stable `id` | `origin` |
 | --- | --- | --- |
-| Microsoft | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` | Complete validated `id_token_claims`, Graph `/me` as `profile`, and `photo`. |
+| Microsoft | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` | Complete validated `id_token_claims`, plus accepted optional Graph `/me` as `profile` and `photo`. Failed or unattempted sources are omitted. |
 | Google | `google:<sub>` | Complete validated `id_token_claims` and fetched `userinfo`, whose `sub` must match the ID token. |
 | GitHub | `github:<numeric id>` | Authenticated `/user` as `profile`, and all pages of `/user/emails` as `emails`. |
 
@@ -251,13 +257,50 @@ Source JSON retains all obtained fields, including unknown attributes, explicit
 nulls, false booleans, arrays, and nested objects. Missing source fields remain
 missing; normalization never inserts or rewrites fields inside `origin`.
 
-Microsoft `origin.photo` is `null` when Graph returns `404`. Otherwise it is an
-object with `content_type` and standard Base64 `data_base64`, preserving returned
-bytes. The corresponding `avatar_url` uses the parsed image media type and the
-same Base64 data. It requires no additional fetch; both representations count
-toward the result's memory limit. Other photo errors, invalid image content,
-profile failures, and email-fetch failures fail authentication. Google and
-GitHub image URLs are not downloaded.
+Microsoft `origin.photo` is `null` only when Graph confirms absence with `404`.
+An accepted photo is an object with `content_type` and standard Base64
+`data_base64`, preserving returned bytes. The corresponding `avatar_url` uses
+the parsed image media type and the same Base64 data. It requires no additional
+fetch; both representations count toward the result's memory limit. Unavailable
+Microsoft profile or photo enrichment follows the rules below. Google and
+GitHub source failures, including GitHub email-fetch errors, remain fatal; their
+image URLs are not downloaded.
+
+### Microsoft optional profile enrichment
+
+The Microsoft adapter requires a successful authorization-code exchange and
+complete ID-token verification, including signature, personal issuer, audience,
+time, nonce, and related claims. The personal `tid` and a nonempty `oid` remain
+mandatory; typed token `email` and `name` must be strings or `null` when present.
+Core failures terminate authentication. The existing core authentication budget
+is 20 seconds.
+
+After core authentication, Graph `/me` and photo enrichment share a separate
+3-second budget derived from the original caller context. The adapter attempts
+profile first, then photo while budget remains. A network, HTTP, JSON/schema,
+or photo-validation error makes that source unavailable and is observable in
+diagnostics. A profile with incompatible known normalization fields is rejected
+as a whole; its raw response is not published. Accepted sources survive another
+source's failure. Caller cancellation, shutdown, and the gateway's 30-second
+callback deadline still terminate the flow, including after an optional timeout.
+These fixed budgets have no new deployment or App setting.
+
+Every success still contains all seven top-level identity fields. Complete
+validated ID claims are always retained in `origin.id_token_claims`. Accepted
+Graph fields keep their existing priority over token email/name. Failed or
+unattempted `origin.profile` and `origin.photo` keys are omitted. A confirmed
+photo `404` retains `origin.photo: null`; another photo failure does not assert
+absence. `avatar_url` is `null` without an accepted photo, and token attributes
+also remain nullable when unavailable. Neither usernames nor historical profile
+values supply missing fields.
+
+Products must check optional source presence before reading it. For example,
+an identity may contain only `origin.id_token_claims`, with `email`,
+`email_verified`, `name`, and `avatar_url` all `null`. This is a successful,
+authenticated identity with unavailable personal attributes. The SDKs accept
+that result with their existing seven-field types and retain the exact raw JSON.
+The [Microsoft optional-profile decision](../../.agents/notes/implemented/architecture/2026-11-13-microsoft-optional-profile.md)
+records the rationale, alternatives, and availability costs.
 
 IDs are independent of product App Secrets. Email, display name, and login name
 are attributes, not identity keys. Microsoft requires the personal tenant and a
@@ -348,9 +391,12 @@ is reported through the callback redirect.
 The session's `user` contains `id`, nullable `email`, `name`, and `avatar_url`,
 `is_admin`, and `created_at`. Profile strings are nullable and timestamps use
 RFC 3339. A successful sign-in refreshes account email, name, and avatar from that
-identity, preserving nulls. Linking refreshes the linked identity's metadata but
-does not change the account display profile. The account ID is a generated platform ID; it is distinct from its
-linked provider IDs.
+identity, preserving nulls. A degraded Microsoft sign-in can clear a previous
+avatar and replace previous Graph email/name with token values or `null`; stored
+history is not used as an attribute fallback. Its existing account ID, authority,
+and App ownership remain unchanged. Linking refreshes the linked identity's
+metadata but does not change the account display profile. The account ID is a
+generated platform ID distinct from its linked provider IDs.
 
 ### Platform accounts and linking
 

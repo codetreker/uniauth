@@ -163,6 +163,23 @@ JSON numbers use ordinary `number` precision, so an integer such as
 `9007199254740993` may round. Treat identity data as sensitive and avoid logging
 it indiscriminately.
 
+A Microsoft identity can succeed with only `origin.id_token_claims` when Graph
+enrichment is unavailable. Its stable `msft:<oid>@<tid>` ID and all seven fields
+remain present; name, email, and avatar can be `null`. Optional `profile` and
+`photo` keys are omitted when the source failed or was not attempted. Explicit
+`photo: null` means a confirmed Graph photo `404`:
+
+```ts
+const hasProfile = Object.hasOwn(identity.origin, "profile");
+const hasPhoto = Object.hasOwn(identity.origin, "photo");
+const photoConfirmedAbsent = hasPhoto && identity.origin.photo === null;
+```
+
+The SDK accepts sparse sources without deriving replacements. Products choose
+their own persistence policy for unavailable attributes. See the
+[Microsoft enrichment contract](../../docs/reference/api.md#microsoft-optional-profile-enrichment)
+for mandatory authentication, source selection, and bounded enrichment.
+
 | Error                        | Meaning                                                                                                                                                                                        |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `TypeError`                  | Invalid SDK configuration or outbound input. Messages omit supplied values.                                                                                                                    |

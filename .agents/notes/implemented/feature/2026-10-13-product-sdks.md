@@ -58,6 +58,12 @@ are protocol errors. The clients do not map provider source fields themselves,
 add profile fallbacks, replace identity keys, or expose old wire-field aliases.
 The [normalized identity decision](../architecture/2026-10-13-normalized-identity.md)
 owns the server mapping and wire format.
+The [Microsoft optional-profile decision](../architecture/2026-11-13-microsoft-optional-profile.md)
+permits verified identities with only ID-token claims when Graph enrichment is
+unavailable. Optional `profile` and `photo` sources can be omitted; confirmed
+photo absence remains explicit `null`. Both clients already accept those sparse
+objects with the same seven-field types, preserving accepted raw data and
+nullable attributes without changing SDK mapping responsibilities.
 
 Go returns normalized scalar values using `ID`, nullable profile pointers, and
 complete `Origin` as `map[string]json.RawMessage`, with the entire response in `RawJSON`.

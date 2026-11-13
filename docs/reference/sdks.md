@@ -177,6 +177,9 @@ becomes a non-nil pointer to `false`. The SDK does not derive profile values fro
 response bytes, including unknown envelope fields. Keep those raw values when
 exact integer or decimal representation matters. Original fields, nulls, and
 false values are preserved without projection.
+Microsoft `Origin` may contain only `id_token_claims`. Optional `profile` or
+`photo` keys can be absent; `photo` is explicitly `null` only after confirmed
+Graph photo `404`. This remains a valid seven-field identity.
 
 ## JavaScript and TypeScript
 
@@ -229,6 +232,38 @@ nested data, nulls, and false booleans, but JSON numbers become JavaScript numbe
 values can lose precision in that parsed view. The complete `rawJSON` string is
 authoritative for numeric fidelity; preserve it or use an appropriate exact JSON
 parser when the product needs that representation.
+
+## Microsoft source availability
+
+Microsoft code exchange and mandatory ID-token validation establish its stable
+`msft:<oid>@<tid>` identity. Unavailable optional Graph enrichment can leave only
+`id_token_claims` in `origin`, with nullable name, email, and avatar. All seven
+standard fields remain mandatory. Both SDKs already accept this result without
+deriving replacements or requiring provider-specific source keys.
+
+Check optional source presence before reading it. In Go:
+
+```go
+profile, hasProfile := identity.Origin["profile"]
+photo, hasPhoto := identity.Origin["photo"]
+photoConfirmedAbsent := hasPhoto && string(photo) == "null"
+```
+
+In JavaScript or TypeScript:
+
+```ts
+const hasProfile = Object.hasOwn(identity.origin, "profile");
+const hasPhoto = Object.hasOwn(identity.origin, "photo");
+const photoConfirmedAbsent = hasPhoto && identity.origin.photo === null;
+```
+
+An absent photo key means unavailable or unattempted enrichment; explicit
+`photo: null` means Graph confirmed absence. Accepted source objects remain
+complete, including unknown fields, nulls, and false values. The SDK does not
+merge historical personal attributes, and products own their own persistence
+and account policy. The
+[API enrichment contract](api.md#microsoft-optional-profile-enrichment) owns
+timing, fatal authentication failures, and source selection.
 
 ## Errors and one-time transport
 

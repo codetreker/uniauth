@@ -21,20 +21,27 @@ identifier while renaming the response field to `id`. The later
 Microsoft values to `msft:<oid>@<tid>` and owns their persisted-key migration.
 Missing, null, and empty standard strings become `null`.
 Verification remains nullable: unknown, `false`, and `true` are distinct values.
-Known fields used for normalization reject incompatible non-null JSON types,
-including lower-priority fields; malformed data never becomes fabricated
-profile data.
+The original normalization policy failed authentication on incompatible known
+field types, including lower-priority sources. The later
+[Microsoft optional-profile decision](2026-11-13-microsoft-optional-profile.md)
+partially supersedes that policy for optional Graph data: an incompatible known
+profile field rejects the whole Graph source, while mandatory token fields still
+fail authentication. Accepted source data is never replaced with fabricated
+profile values.
 
-The standard fields are projections of the obtained provider sources. `origin`
+The standard fields are projections of accepted provider sources. `origin`
 retains those complete sources, including unknown fields, explicit nulls, false
 values, nested objects, all email pages, and Microsoft photo bytes. The projection
 does not mutate the sources or include authentication credentials.
 
-Microsoft uses nonempty Graph `mail`, then ID-token `email`, for email; Graph
-`displayName`, then ID-token `name`, for name. Neither `preferred_username` nor
+Microsoft uses nonempty accepted Graph `mail`, then ID-token `email`, for email;
+Graph `displayName`, then ID-token `name`, for name. Neither `preferred_username` nor
 `userPrincipalName` is substituted for email. Verification remains unknown.
 The fetched photo supplies a data URL containing its parsed image media type
-and Base64 bytes; photo `404` produces `null`. Google uses UserInfo `email`,
+and Base64 bytes; photo `404` produces `null`. The optional-profile decision owns
+failed or unattempted Graph source omission, token-only personal attributes,
+and separate bounded enrichment. It preserves these field-selection rules and
+the seven-field response. Google uses UserInfo `email`,
 `email_verified`, `name`, and `picture`, with UserInfo as the canonical profile
 source. Its verification flag is preserved independently of email presence.
 GitHub selects a nonempty primary email from its complete email list, then
@@ -89,7 +96,8 @@ migrates Console links while preserving their account ownership. External produc
 own the migration of their stored keys. Any further qualified-ID change also
 requires explicit migrations for affected Console and product identities.
 
-Microsoft photo data appears in both the standard data URL and `origin.photo`.
+Accepted Microsoft photo data appears in both the standard data URL and
+`origin.photo`.
 This gives products a directly usable avatar without changing the source photo
 or fetching it again, and increases the serialized result size. Both copies
 count toward the existing result memory limit. Capacity failures remain explicit;
