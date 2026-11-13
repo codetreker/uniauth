@@ -295,6 +295,33 @@ test("retrieval sends exact Basic JSON request and preserves the full raw identi
   assert.match(identity.rawJSON, /future_envelope/);
 });
 
+test("retrieval preserves Microsoft identity without Graph sources", async () => {
+  const expected = {
+    provider: "microsoft",
+    id: "msft:object-123@9188040d-6c67-4c5b-b112-36a304b66dad",
+    email: null,
+    email_verified: null,
+    name: null,
+    avatar_url: null,
+    origin: {
+      id_token_claims: {
+        oid: "object-123",
+        tid: "9188040d-6c67-4c5b-b112-36a304b66dad",
+        unknown: false,
+      },
+    },
+  };
+  const body = JSON.stringify(expected);
+  const client = createClient({
+    ...config,
+    fetch: async () => jsonResponse(body),
+  });
+  assert.deepEqual(await client.retrieve("once"), {
+    ...expected,
+    rawJSON: body,
+  });
+});
+
 test("all nullable fields, verification values, and wire strings are preserved", async () => {
   for (const provider of ["microsoft", "google", "github"]) {
     for (const email_verified of [null, false, true]) {

@@ -44,6 +44,7 @@ from live upstream verification.
 | R13 | Claim initial administrator authority once through a configured verified email; allow only minimal user summaries and App counts to that administrator. |
 | R14 | Reset all existing Apps and Secrets through migration 3, then persist the final platform schema without legacy ownership rules. |
 | R15 | Let confidential product backends discover current App-allowed, service-configured providers for an exact registered callback without creating login state. |
+| R16 | Authenticate fully verified personal Microsoft identities when optional Graph profile or photo enrichment is unavailable, retaining accepted sources and nullable attributes. |
 
 ## Architecture
 
@@ -168,8 +169,12 @@ a linked ID selects its existing account. Equal emails do not merge accounts.
 Authenticated users can explicitly link another provider identity; linking
 requires the initiating session to remain live through callback and final
 attachment. An identity belonging to another account cannot move. The stored
-profile is normalized Console identity data, without raw `origin` or upstream
-tokens. This persistence applies only to Console users.
+profile is the latest normalized Console identity data, without raw `origin` or
+upstream tokens. A degraded Microsoft sign-in may replace previous Graph-derived
+attributes with token values or `null`, including clearing an earlier avatar.
+Account ID, existing authority, and App ownership remain unchanged. Linking
+refreshes linked metadata without replacing the account display profile. This
+persistence applies only to Console users.
 
 `UNIAUTH_INITIAL_ADMIN_EMAIL` is a plain email address in deployment configuration,
 for example `sychenjianjun@gmail.com`. The first normalized identity with matching
@@ -277,9 +282,12 @@ owns exact requests, limits, and errors.
    OIDC nonce, browser binding, product state, and approved callback.
 3. The provider callback must match state, provider, and its unique flow cookie.
    Claiming consumes that transaction atomically. Provider exchange and source
-   collection have bounded request-context deadlines.
+   collection have bounded request-context deadlines; Microsoft optional
+   enrichment has a separate shared budget after core authentication.
 4. UniAuth validates identity claims, collects complete provider sources, and
-   maps standard identity fields. It rechecks App eligibility after upstream work
+   maps standard identity fields from accepted sources. Microsoft Graph failures
+   may leave optional sources absent after successful core authentication. The
+   service checks caller cancellation and App eligibility after upstream work
    and serializes the full result before publishing a code.
 5. The App-bound result receives a random code and a deadline exactly five minutes
    after creation. UniAuth redirects to the registered product callback with
@@ -331,6 +339,10 @@ provider list.
 The SDKs require all seven standard identity fields from the server. Missing
 fields or incompatible JSON types produce protocol errors; nullable strings,
 nullable verification, and explicit `false` are returned without substitution.
+Microsoft results may contain only `origin.id_token_claims`; unavailable
+`profile` and `photo` sources are omitted, while a confirmed photo `404` is
+`photo: null`. Those source-presence distinctions do not remove any of the seven
+standard fields or require a different SDK response type.
 The SDKs expose the server's normalized profile without deriving fields from
 `origin` or retaining old response aliases. Go exposes `ID`, nullable profile
 pointers, `Origin` as `map[string]json.RawMessage`, and the entire body as `RawJSON`.
@@ -349,15 +361,17 @@ The envelope always contains `provider`, `id`, `email`, `email_verified`, `name`
 `avatar_url`, and `origin`. The provider-qualified `id` is required and preserves
 the stable upstream identity. Optional strings are `null` when missing, null,
 or empty. Verification is `true`, `false`, or `null`; unknown verification is
-never converted to `false`. A known normalization field with an incompatible
-non-null JSON type fails authentication. Products can read common attributes
-without interpreting each provider's source layout.
+never converted to `false`. Incompatible known fields in mandatory sources fail
+authentication. An incompatible known Microsoft Graph profile field rejects that
+optional source as a whole. Products can read common attributes without
+interpreting each provider's source layout.
 
 Each adapter defines the selection of standard fields. Google uses canonical
 UserInfo fields. Microsoft selects Graph `mail`, then the ID-token `email`, and
-Graph `displayName`, then the ID-token `name`; verification remains unknown.
-Its fetched photo becomes a data URL in `avatar_url`, with `null` for photo
-`404`. GitHub selects a nonempty primary email from the complete email list,
+Graph `displayName`, then the ID-token `name`; only accepted Graph data participates
+in that selection. Verification remains unknown. Its accepted photo becomes a
+data URL in `avatar_url`, with `null` when the photo is unavailable or confirmed
+absent. GitHub selects a nonempty primary email from the complete email list,
 then public profile `email` if no usable primary email exists. GitHub email
 verification comes only from an exact matching email-list entry, while its
 name and avatar come from the profile. The [API reference](../reference/api.md)
@@ -367,14 +381,16 @@ owns the exact field mappings and absence rules.
 nulls, false values, full email lists, and nested objects. Missing source fields
 remain missing. Completeness covers obtained information under granted scopes;
 it does not fabricate absent attributes or extend access beyond those scopes.
-Provider failures stop authentication rather than producing an empty profile.
+Mandatory authentication failures stop the flow. Fully verified Microsoft
+identities can retain only their ID-token claims when optional Graph sources
+are unavailable; failed or unattempted source objects are omitted.
 The [normalization decision](../../.agents/notes/implemented/architecture/2026-10-13-normalized-identity.md)
 owns the response format, provider mapping responsibilities, and compatibility
 costs; the gateway decision continues to own authentication and handover.
 
 | Provider | Validation and `origin` sources | Stable `id` |
 | --- | --- | --- |
-| Microsoft | Personal-account `consumers` authorization and token endpoints; RS256 signature, fixed personal issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require personal `tid` and `oid`; retain ID claims, Graph `/me`, and photo bytes. | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` |
+| Microsoft | Personal-account `consumers` authorization and token endpoints; RS256 signature, fixed personal issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require personal `tid` and `oid`; retain complete validated ID claims and accepted optional Graph `/me` and photo sources. | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` |
 | Google | OIDC discovery and token validation; UserInfo `sub` must match the token. Retain complete ID claims and UserInfo. | `google:<sub>` |
 | GitHub | PKCE code exchange, authenticated `/user`, and every `/user/emails` page. Require a positive numeric profile ID. | `github:<id>` |
 
@@ -394,11 +410,27 @@ a provider session exists.
 This policy belongs to the shared Microsoft adapter and covers product login,
 Console login, and identity linking without adding configuration or protocol
 options. Its App registration supports `PersonalMicrosoftAccount`; organization
-accounts fail the fixed personal-tenant and issuer validation. Graph photo `404` is an
-explicit `null` in `origin`; successful photos include content type and standard
-Base64 bytes. The avatar data URL uses those same bytes and the parsed image
-media type, requiring no additional fetch. Other photo/profile retrieval
-failures stop authentication. Google requests `openid profile email`; GitHub
+accounts fail the fixed personal-tenant and issuer validation.
+
+Validated ID claims establish the Microsoft identity before optional profile
+enrichment. Code exchange, token verification, and typed token `email`/`name`
+validation have the existing 20-second core budget. Core failure remains fatal.
+Graph profile and photo retrieval then share a separate 3-second budget derived
+from the original caller context. The profile is attempted first; photo is
+attempted while that shared budget remains. Network, HTTP, JSON/schema, and
+image-validation failures make only the affected optional source unavailable.
+An accepted source survives failure of the other source. Caller cancellation,
+service shutdown, and the gateway's 30-second deadline still terminate the flow.
+This bounds enrichment delays when identity proof is already complete.
+
+Failed or unattempted `profile` and `photo` sources are omitted. Graph photo
+`404` is a confirmed absence represented by `photo: null`; accepted photos retain
+content type and standard Base64 bytes. The avatar data URL uses those same bytes
+and the parsed media type. No profile values are guessed or recovered from stored
+history. The
+[Microsoft optional-profile decision](../../.agents/notes/implemented/architecture/2026-11-13-microsoft-optional-profile.md)
+owns this authentication/enrichment split and its deliberate sparse-source
+contract. Google requests `openid profile email`; GitHub
 requests `read:user user:email`. Google and GitHub image URLs appear in the
 standard profile and remain source attributes without downloading the image.
 
@@ -451,8 +483,11 @@ Provider diagnostics observe real token exchange, ID verification, and Microsoft
 profile/photo retrieval with correlated stage start/completion events. Monotonic
 elapsed time, stage duration, remaining deadline, and observed HTTP transport
 and body timings distinguish upstream budget consumption from network or
-response waiting. Missing observations remain absent. Existing provider and
-callback deadlines continue to control the login flow.
+response waiting. Missing observations remain absent. Microsoft core and
+enrichment stages report their respective remaining budgets; caller and callback
+deadlines continue to control the flow. Unavailable Microsoft enrichment emits a
+sanitized `WARN` summary with `outcome=partial` and the affected source names.
+Confirmed photo absence alone emits no partial warning.
 
 Structured JSON goes to stderr and an optional bounded log file. Compose enables
 the file in the existing persistent data volume, retaining one 10 MiB active

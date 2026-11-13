@@ -154,6 +154,16 @@ defines stage timings, remaining deadlines, transport observations, and excluded
 data. These diagnostics explain real authenticated provider work; a fast
 unauthenticated Graph `401` does not establish authenticated profile performance.
 
+Fully verified Microsoft logins can succeed with unavailable Graph enrichment.
+Filter `stage=profile_enrichment` records with `outcome=partial` to find their
+`unavailable_sources`, then inspect correlated per-stage failures. Profile and
+photo share a fixed 3-second budget after the 20-second core authentication
+budget; caller cancellation and the 30-second callback deadline remain fatal.
+A photo `404` alone is confirmed absence and emits no partial warning. The
+result omits failed or unattempted source keys, retains complete accepted sources,
+and keeps every normalized field present with nullable attributes. Collection,
+rotation, and file-write failure behavior are unchanged.
+
 The [Compose release decision](../../.agents/notes/implemented/process/2026-10-13-compose-releases.md)
 records manual initiation and deployment ownership, and the
 [public GHCR decision](../../.agents/notes/implemented/process/2026-10-13-public-ghcr-images.md)

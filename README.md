@@ -119,7 +119,14 @@ with App ID and Secret. Every successful response contains `provider`, a stable
 provider-qualified `id`, standard `email`, `email_verified`, `name`, and
 `avatar_url` fields, and complete provider source objects under `origin`.
 Unavailable standard profile fields are `null`; an explicit verification value
-of `false` remains `false`. Products control account linking and email policy.
+of `false` remains `false`. Fully verified Microsoft identities can succeed when
+Graph profile or photo enrichment is unavailable. Their `origin` retains complete
+validated ID claims and any accepted Graph sources; failed or unattempted sources
+are omitted, while confirmed photo absence is `photo: null`. Microsoft enrichment
+shares a fixed 3-second budget after core authentication. Products control
+account linking and email policy. See the
+[Microsoft enrichment contract](docs/reference/api.md#microsoft-optional-profile-enrichment)
+for source-presence and failure rules.
 
 Product backends can use the [Go SDK](sdk/go/README.md) or
 [JavaScript SDK](sdk/js/README.md) to create authorization URLs, validate callback

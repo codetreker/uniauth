@@ -22,8 +22,16 @@ summarize observed DNS, connection, TLS, reuse, request writing, first byte,
 headers, and body reading. Numeric remote IPs, response status, and negotiated
 protocol remain observable without recording credential-bearing requests.
 Unobserved timings stay absent. Shared signing-key and OIDC behavior remains
-owned by its existing adapters. Diagnostics preserve authentication deadlines,
-identity values, errors, and result handover.
+owned by its existing adapters. The diagnostics delivery preserved the
+then-current authentication deadlines, identity values, error policy, and result
+handover.
+The later
+[Microsoft optional-profile decision](../architecture/2026-11-13-microsoft-optional-profile.md)
+partially supersedes Microsoft's total provider budget and mandatory Graph
+retrieval policy: core work retains its 20-second budget and Graph sources share
+a separate 3-second budget under the original caller deadline. It also owns the
+sanitized partial-enrichment warning. This note continues to own per-stage
+correlation, HTTP observations, credential exclusion, and bounded file logging.
 
 The command optionally appends the same JSON sent to stderr to
 `UNIAUTH_LOG_FILE`. Compose enables `/data/uniauth.log` in each environment's

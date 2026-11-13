@@ -42,7 +42,15 @@ rejection, new-key authentication, unchanged unrelated active keys, exact name
 and description carryover, single-winner concurrent resets, and transactional
 rollback. Controlled upstream fixtures provide token, signing-key, and profile
 responses, including invalid responses and faults. These tests preserve errors
-and observe externally visible effects. Console origin regressions cover browser
+and observe externally visible effects. Microsoft fixtures keep core verification
+and token-field errors fatal while accepting unavailable Graph enrichment under
+its separate shared budget. Assertions cover source independence, malformed
+optional data rejection, omitted sources versus confirmed photo absence, caller
+cancellation, and sanitized partial diagnostics. Console and SDK assertions
+accept the resulting sparse sources and nullable fields; Console retains its
+latest-profile snapshot without changing account identity or ownership. The
+[Microsoft optional-profile decision](../architecture/2026-11-13-microsoft-optional-profile.md)
+owns that behavior. Console origin regressions cover browser
 serialization of configured uppercase and IDNA domains, IPv6 literals, and
 default or zero-padded ports through login and CRUD requests. Foreign, null,
 noncanonical, and multiple Origin values and invalid CSRF remain rejected. Command

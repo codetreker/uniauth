@@ -74,7 +74,13 @@ that session to stay live through final attachment, and rejects an identity owne
 by another account. Successful sign-in refreshes account email, name, and avatar from that identity,
 preserving nullable attributes. Linking updates linked email, verification, and
 name without replacing the account display profile. Existing links retain their
-original link time. Tokens and raw `origin` identity data are not persisted.
+original link time. The
+[Microsoft optional-profile decision](2026-11-13-microsoft-optional-profile.md)
+permits degraded Microsoft sign-in after complete identity verification. This
+latest-snapshot policy still applies: token values or `null` can replace older
+Graph profile values, including clearing a prior avatar, while account identity,
+authority, and App ownership remain intact. Stored profile history does not fill
+missing attributes. Tokens and raw `origin` identity data are not persisted.
 External products still own their users, linking, permissions, and sessions;
 the gateway creates no external user store or central SSO session.
 

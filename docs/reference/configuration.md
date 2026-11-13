@@ -174,7 +174,7 @@ with `UNIAUTH_PUBLIC_URL`:
 
 | Provider | Callback | Requested scopes and identity sources |
 | --- | --- | --- |
-| Microsoft | `https://auth.example/auth/callback/microsoft` | `openid profile email https://graph.microsoft.com/User.Read`; validated ID claims, Graph `/me`, and photo bytes. |
+| Microsoft | `https://auth.example/auth/callback/microsoft` | `openid profile email https://graph.microsoft.com/User.Read`; mandatory validated ID claims and optional Graph `/me` and photo enrichment. |
 | Google | `https://auth.example/auth/callback/google` | `openid profile email`; validated ID claims and UserInfo. |
 | GitHub | `https://auth.example/auth/callback/github` | `read:user user:email`; authenticated user profile and all email pages. |
 
@@ -188,8 +188,23 @@ App, or SDK setting. Signature and issuer validation use the fixed
 personal-account tenant
 `9188040d-6c67-4c5b-b112-36a304b66dad`; organizational accounts are rejected.
 The validated token must contain that `tid` and a nonempty `oid`. Register the
-delegated Graph `User.Read` permission. Graph photo `404` is represented as
-`null`; other retrieval failures fail authentication.
+delegated Graph `User.Read` permission. Code exchange, token verification, stable
+identity claims, and typed token email/name are mandatory and retain the existing
+20-second core budget. Graph `/me` and photo enrichment then share a separate
+fixed 3-second budget derived from the original caller context, with profile
+attempted before photo. The photo request proceeds while budget remains even
+when profile retrieval fails. Neither budget is a new environment setting.
+
+Microsoft Graph network, HTTP, JSON/schema, and image-validation failures make
+only the affected optional source unavailable. An incompatible known profile
+field rejects that entire Graph profile; accepted sources remain intact.
+Failed or unattempted `origin.profile`/`origin.photo` keys are omitted. Only
+confirmed photo `404` produces `photo: null`; an unavailable photo leaves the
+avatar `null` without asserting confirmed absence. Accepted Graph mail and name
+retain priority over token attributes. Caller cancellation, shutdown, and the
+gateway's 30-second callback deadline remain fatal. The
+[API reference](api.md#microsoft-optional-profile-enrichment) owns source-presence
+and attribute-selection rules.
 
 Google performs OIDC discovery during startup and must have a reachable discovery
 endpoint. Microsoft and Google fetch signing keys when verification needs them.
@@ -243,7 +258,8 @@ The following limits are fixed by service composition:
 | Expired transaction/result cleanup | Every minute; claims also check expiry directly. |
 | Transactions, including in-progress claimed callbacks | 10,000 and 32 MiB of accounted state. |
 | Pending results | 10,000 and 64 MiB of accounted state. |
-| Provider HTTP and exchange deadline | 20 seconds. |
+| Provider HTTP timeout and core exchange deadline | 20 seconds. |
+| Microsoft optional Graph profile and photo enrichment | 3 seconds shared after successful core authentication, bounded by the original caller context. |
 | Callback processing deadline | 30 seconds. |
 | Each upstream response | 8 MiB; combined GitHub email response pages also limited to 8 MiB. |
 | Console session | 8 hours; at most 1,000 live sessions. |
@@ -257,8 +273,9 @@ Accounted cache bytes include retained token strings and payloads, not all Go
 allocator overhead. Count and byte limits reject new work explicitly rather than
 evicting accepted live entries. Standard fields and complete `origin` sources
 both count toward result size, including the Microsoft avatar data URL and its
-retained source photo. No truncation or partial identity package is returned
-when upstream or cache size limits are exceeded.
+retained source photo. Accepted source data is never truncated. An upstream size
+limit makes a mandatory source fail authentication or a Microsoft optional source
+unavailable. A result exceeding cache capacity is rejected as a whole.
 
 Deploy a single UniAuth instance. Authorization, provider callbacks, and result
 retrieval must reach the process holding the transient state. Multiple replicas
@@ -268,8 +285,10 @@ login; platform accounts, links, and owned App configuration remain.
 
 On SIGINT or SIGTERM, the HTTP server stops accepting requests and drains
 accepted requests within the shutdown deadline before releasing transient state
-and closing SQLite. Provider/network failures propagate through the flow as
-explicit failures. No retry store recovers an already consumed result.
+and closing SQLite. Mandatory provider failures terminate the flow; unavailable
+Microsoft Graph enrichment is recorded without discarding verified identity.
+Caller cancellation and shutdown remain fatal. No retry store recovers an
+already consumed result.
 
 ## Logs and readiness
 
@@ -307,9 +326,20 @@ started. Completion includes `duration_ms`, `outcome`, and sanitized
 deadline exists, measures the remaining shared budget at that record's event.
 ID verification duration includes waiting for the shared JWKS cache. The keyset
 fetches in a shared background context, so those requests do not inherit an
-individual login's HTTP trace. Microsoft retains its existing 20-second total
-provider budget inside the 30-second gateway callback deadline; diagnostics do
-not extend either deadline.
+individual login's HTTP trace. Microsoft core authentication has its existing
+20-second budget. Graph enrichment then reports the remaining separate shared
+3-second budget; the original caller and 30-second gateway callback deadlines
+still apply. Diagnostics do not extend those deadlines.
+
+A successful Microsoft identity with unavailable enrichment emits one
+`WARN` record with message `Microsoft profile enrichment incomplete`,
+`component=provider`, `stage=profile_enrichment`, `phase=completed`, and
+`outcome=partial`. `unavailable_sources` lists failed or unattempted sources in
+fixed `profile`, `photo` order. The record retains `elapsed_ms` and existing
+request, operation, App, and provider correlation. Per-stage failure records
+retain their safe error metadata. A confirmed photo `404` alone emits no partial
+warning; caller cancellation or shutdown terminates authentication without that
+summary. Identity fields, tokens, and response bodies remain excluded.
 
 Observed HTTP fields identify where time was spent. `dns_start_ms`, `dns_done_ms`,
 `connect_start_ms`, `connect_done_ms`, `tls_start_ms`, `tls_done_ms`,

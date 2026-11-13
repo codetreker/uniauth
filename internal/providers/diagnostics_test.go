@@ -170,14 +170,14 @@ func TestMicrosoftDiagnosticsPhotoAbsenceAndSafeStatusFailure(t *testing.T) {
 				if err != nil || finish["outcome"] != "success" || finish["error_type"] != nil {
 					t.Fatalf("normal photo absence became a failure: %v %v", finish, err)
 				}
-			} else if err == nil || finish["outcome"] != "failed" || finish["error_type"] != "http_status" {
-				t.Fatalf("photo failure was hidden: %v %v", finish, err)
+			} else if err != nil || finish["outcome"] != "failed" || finish["error_type"] != "http_status" {
+				t.Fatalf("optional photo failure lost its diagnostics or stopped authentication: %v %v", finish, err)
 			}
 		})
 	}
 }
 
-func TestMicrosoftDiagnosticsIncludeSigningKeyWaitInSharedBudget(t *testing.T) {
+func TestMicrosoftDiagnosticsSeparateSigningKeyWaitFromEnrichmentBudget(t *testing.T) {
 	f := newFixture(t)
 	f.jwksDelay = 25 * time.Millisecond
 	var logs bytes.Buffer
@@ -189,8 +189,8 @@ func TestMicrosoftDiagnosticsIncludeSigningKeyWaitInSharedBudget(t *testing.T) {
 	verification := diagnosticRecord(t, records, "identity_verification", "completed")
 	tokenStart := diagnosticRecord(t, records, "token_exchange", "started")
 	profileStart := diagnosticRecord(t, records, "profile_retrieval", "started")
-	if verification["duration_ms"].(float64) < 20 || profileStart["elapsed_ms"].(float64) < 20 || tokenStart["budget_remaining_ms"].(float64)-profileStart["budget_remaining_ms"].(float64) < 20 {
-		t.Fatalf("shared key-verification wait lost: token=%v verification=%v profile=%v", tokenStart, verification, profileStart)
+	if verification["duration_ms"].(float64) < 20 || profileStart["elapsed_ms"].(float64) < 20 || profileStart["budget_remaining_ms"].(float64) <= tokenStart["budget_remaining_ms"].(float64) || profileStart["budget_remaining_ms"].(float64) > 3000 {
+		t.Fatalf("core key-verification wait consumed the independent enrichment budget: token=%v verification=%v profile=%v", tokenStart, verification, profileStart)
 	}
 }
 

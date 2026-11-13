@@ -116,9 +116,14 @@ does not supersede gateway ownership or memory retention.
 Unknown JSON fields, explicit nulls, false booleans, complete email arrays, and
 binary Microsoft photo data retain their source meaning under `origin` alongside
 the standard profile. Tokens and other authentication credentials are excluded.
-Missing required identity keys and
-upstream retrieval failures are errors, with no identity-key fallback or empty
-profile substitution.
+Missing required identity keys remain fatal, with no identity-key fallback.
+The original retrieval policy also failed authentication on every upstream
+source error. The
+[Microsoft optional-profile decision](2026-11-13-microsoft-optional-profile.md)
+partially supersedes that policy for Graph profile and photo enrichment after
+complete Microsoft identity verification. It owns bounded optional work and
+sparse source presence; this note retains mandatory identity validation and
+one-time handover ownership.
 
 The [blueprint](../../../../docs/blueprint/README.md) owns the architectural
 requirements. [API](../../../../docs/reference/api.md) and
@@ -189,8 +194,11 @@ identity mapping, App binding, or result handover.
 
 Provider fields and consent determine the available profile data. Product email
 or permission policy cannot be inferred from authentication success. Microsoft
-photo `404` is a documented absence; other upstream errors stop authentication.
-Changing a stable ID value requires an explicit product identity migration.
+photo `404` is a documented absence. The original policy required other upstream
+retrievals to succeed; the later optional-profile decision permits unavailable
+Microsoft Graph enrichment with complete identity proof and observable errors.
+Mandatory authentication failures remain fatal. Changing a stable ID value
+requires an explicit product identity migration.
 
 The executable embeds the production Console build. Go, Node.js, and pnpm are
 build dependencies; only the resulting executable and durable SQLite files are

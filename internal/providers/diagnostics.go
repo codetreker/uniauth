@@ -30,6 +30,16 @@ func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
 	return context.WithValue(ctx, diagnosticKey{}, &diagnosticOperation{logger: logger, started: time.Now()})
 }
 
+func warnMicrosoftEnrichment(ctx context.Context, unavailable []string) {
+	logger := slog.Default()
+	fields := []any{"component", "provider", "stage", "profile_enrichment", "phase", "completed", "outcome", "partial", "unavailable_sources", unavailable}
+	if operation, ok := ctx.Value(diagnosticKey{}).(*diagnosticOperation); ok {
+		logger = operation.logger
+		fields = append(fields, "elapsed_ms", time.Since(operation.started).Milliseconds())
+	}
+	logger.WarnContext(ctx, "Microsoft profile enrichment incomplete", fields...)
+}
+
 type diagnosticStage struct {
 	operation *diagnosticOperation
 	name      string

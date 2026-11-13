@@ -2,11 +2,9 @@ package providers
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"mime"
-	"net/http"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -14,11 +12,13 @@ import (
 
 const microsoftTenant = "9188040d-6c67-4c5b-b112-36a304b66dad"
 const microsoftIssuer = "https://login.microsoftonline.com/" + microsoftTenant + "/v2.0"
+const microsoftEnrichmentTimeout = 3 * time.Second
 
 type Microsoft struct {
 	oidcProvider
-	profileURL string
-	photoURL   string
+	profileURL        string
+	photoURL          string
+	enrichmentTimeout time.Duration
 }
 
 func NewMicrosoft(ctx context.Context, config Config) (*Microsoft, error) {
@@ -42,7 +42,7 @@ func newMicrosoft(ctx context.Context, config Config, issuer, jwksURL string, en
 			client:   client,
 			verifier: oidc.NewVerifier(issuer, keySet, &oidc.Config{ClientID: config.ClientID, SupportedSigningAlgs: []string{oidc.RS256}}),
 		},
-		profileURL: profileURL, photoURL: photoURL,
+		profileURL: profileURL, photoURL: photoURL, enrichmentTimeout: microsoftEnrichmentTimeout,
 	}, nil
 }
 
@@ -52,95 +52,55 @@ func (p *Microsoft) AuthorizationURL(request AuthorizationRequest) (string, erro
 }
 
 func (p *Microsoft) Exchange(ctx context.Context, request ExchangeRequest) (Identity, error) {
+	token, identity, err := p.authenticate(ctx, request)
+	if err != nil {
+		return Identity{}, err
+	}
+	enrichmentCtx, cancel := context.WithTimeout(ctx, p.enrichmentTimeout)
+	defer cancel()
+	identity, unavailable := p.enrich(enrichmentCtx, token.AccessToken, identity)
+	if len(unavailable) != 0 && ctx.Err() == nil {
+		warnMicrosoftEnrichment(ctx, unavailable)
+	}
+	if err := ctx.Err(); err != nil {
+		return Identity{}, failure("exchange", err)
+	}
+	return identity, nil
+}
+
+func (p *Microsoft) authenticate(ctx context.Context, request ExchangeRequest) (*oauth2.Token, Identity, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.client.Timeout)
 	defer cancel()
 	token, _, claims, err := p.exchange(ctx, request)
 	if err != nil {
-		return Identity{}, err
+		if contextErr := ctx.Err(); contextErr != nil {
+			err = errors.Join(err, contextErr)
+		}
+		return nil, Identity{}, err
 	}
 	fields, err := jsonObject(claims)
 	if err != nil {
-		return Identity{}, failure("identity verification", err)
+		return nil, Identity{}, failure("identity verification", err)
 	}
 	tenant, err := nonemptyString(fields["tid"])
 	if err != nil || tenant != microsoftTenant {
-		return Identity{}, failure("identity verification", errors.New("personal Microsoft tenant is required"))
+		return nil, Identity{}, failure("identity verification", errors.New("personal Microsoft tenant is required"))
 	}
 	objectID, err := nonemptyString(fields["oid"])
 	if err != nil {
-		return Identity{}, failure("identity verification", err)
-	}
-	profile, err := observe(ctx, "profile_retrieval", func(ctx context.Context) ([]byte, error) {
-		profile, _, _, err := fetch(ctx, p.client, p.profileURL, token.AccessToken)
-		if err != nil {
-			return nil, err
-		}
-		_, err = jsonObject(profile)
-		return profile, err
-	})
-	if err != nil {
-		return Identity{}, failure("profile retrieval", err)
-	}
-	var graphProfile struct {
-		Mail        *string `json:"mail"`
-		DisplayName *string `json:"displayName"`
-	}
-	if err := json.Unmarshal(profile, &graphProfile); err != nil {
-		return Identity{}, failure("identity normalization", err)
+		return nil, Identity{}, failure("identity verification", err)
 	}
 	var tokenProfile struct {
 		Email *string `json:"email"`
 		Name  *string `json:"name"`
 	}
 	if err := json.Unmarshal(claims, &tokenProfile); err != nil {
-		return Identity{}, failure("identity normalization", err)
+		return nil, Identity{}, failure("identity normalization", err)
 	}
-	email := nilIfEmpty(graphProfile.Mail)
-	if email == nil {
-		email = nilIfEmpty(tokenProfile.Email)
+	if err := ctx.Err(); err != nil {
+		return nil, Identity{}, failure("identity verification", err)
 	}
-	name := nilIfEmpty(graphProfile.DisplayName)
-	if name == nil {
-		name = nilIfEmpty(tokenProfile.Name)
-	}
-	photo, err := observe(ctx, "photo_retrieval", func(ctx context.Context) (microsoftPhoto, error) {
-		return p.photo(ctx, token.AccessToken)
-	})
-	if err != nil {
-		return Identity{}, err
-	}
-	return Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + microsoftTenant,
-		Email: email, Name: name, AvatarURL: photo.avatarURL,
-		Origin: map[string]json.RawMessage{"id_token_claims": claims, "profile": profile, "photo": photo.origin}}, nil
-}
-
-type microsoftPhoto struct {
-	avatarURL *string
-	origin    json.RawMessage
-}
-
-func (p *Microsoft) photo(ctx context.Context, accessToken string) (microsoftPhoto, error) {
-	photo, contentType, status, err := fetchWithAccept(ctx, p.client, p.photoURL, accessToken, "image/*")
-	encodedPhoto := json.RawMessage("null")
-	var avatarURL *string
-	if err != nil && status != http.StatusNotFound {
-		return microsoftPhoto{}, failure("photo retrieval", err)
-	}
-	if err == nil {
-		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err != nil || len(mediaType) < 6 || mediaType[:6] != "image/" || len(photo) == 0 {
-			return microsoftPhoto{}, failure("photo retrieval", errors.New("provider photo has invalid content"))
-		}
-		base64Photo := base64.StdEncoding.EncodeToString(photo)
-		dataURL := "data:" + mediaType + ";base64," + base64Photo
-		avatarURL = &dataURL
-		encodedPhoto, err = json.Marshal(struct {
-			ContentType string `json:"content_type"`
-			DataBase64  string `json:"data_base64"`
-		}{ContentType: contentType, DataBase64: base64Photo})
-		if err != nil {
-			return microsoftPhoto{}, failure("photo encoding", err)
-		}
-	}
-	return microsoftPhoto{avatarURL: avatarURL, origin: encodedPhoto}, nil
+	return token, Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + microsoftTenant,
+		Email: nilIfEmpty(tokenProfile.Email), Name: nilIfEmpty(tokenProfile.Name),
+		Origin: map[string]json.RawMessage{"id_token_claims": claims}}, nil
 }
