@@ -74,6 +74,10 @@ type gateway struct {
 }
 
 func newGateway(t *testing.T) *gateway {
+	return newGatewayWithProvider(t, &controlledProvider{requests: make(map[string]providers.AuthorizationRequest)})
+}
+
+func newGatewayWithProvider(t *testing.T, provider providers.Provider) *gateway {
 	t.Helper()
 	if err := os.MkdirAll("../../.tmp", 0o755); err != nil {
 		t.Fatal(err)
@@ -106,7 +110,7 @@ func newGateway(t *testing.T) *gateway {
 	g := &gateway{store: store, ownerID: owner.ID}
 	g.clock.Store(time.Now().UnixNano())
 	for i, destination := range []*apps.CreatedApp{&g.app, &g.other} {
-		*destination, err = store.Create(t.Context(), owner.ID, apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{"google"}}, InitialSecret: &apps.SecretInput{Name: "SDK fixture"}})
+		*destination, err = store.Create(t.Context(), owner.ID, apps.CreateAppInput{AppInput: apps.AppInput{Name: fmt.Sprintf("Product %d", i), Enabled: true, RedirectURIs: []string{productRedirect}, Providers: []string{provider.Name()}}, InitialSecret: &apps.SecretInput{Name: "SDK fixture"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +122,7 @@ func newGateway(t *testing.T) *gateway {
 		TransactionTTL: 10 * time.Minute, CallbackTimeout: time.Second, CleanupInterval: time.Hour,
 		MaxTransactions: 32, MaxTransactionBytes: 1 << 20, MaxResults: 32, MaxResultBytes: 1 << 20,
 		Now: func() time.Time { return time.Unix(0, g.clock.Load()) }, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}, store, map[string]providers.Provider{"google": &controlledProvider{requests: make(map[string]providers.AuthorizationRequest)}})
+	}, store, map[string]providers.Provider{provider.Name(): provider})
 	if err != nil {
 		g.server.Close()
 		t.Fatal(err)
@@ -144,9 +148,13 @@ func (g *gateway) client(t *testing.T, app apps.CreatedApp) *uniauth.Client {
 }
 
 func (g *gateway) login(t *testing.T, client *uniauth.Client) string {
+	return g.loginProvider(t, client, uniauth.Google, "")
+}
+
+func (g *gateway) loginProvider(t *testing.T, client *uniauth.Client, provider uniauth.Provider, tenant string) string {
 	t.Helper()
 	state := uniauth.GenerateState()
-	authorization, err := client.AuthorizationURL(uniauth.AuthorizationRequest{Provider: uniauth.Google, RedirectURI: productRedirect, State: state})
+	authorization, err := client.AuthorizationURL(uniauth.AuthorizationRequest{Provider: provider, RedirectURI: productRedirect, State: state})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +178,11 @@ func (g *gateway) login(t *testing.T, client *uniauth.Client) string {
 		t.Fatal("authorization did not create a separate browser-bound upstream flow")
 	}
 	upstreamState := upstream.Query().Get("state")
-	callback, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.server.URL+"/auth/callback/google?"+url.Values{"state": {upstreamState}, "code": {upstreamState}}.Encode(), nil)
+	code := upstreamState
+	if tenant != "" {
+		code = tenant + ":" + upstream.Query().Get("nonce")
+	}
+	callback, err := http.NewRequestWithContext(t.Context(), http.MethodGet, g.server.URL+"/auth/callback/"+string(provider)+"?"+url.Values{"state": {upstreamState}, "code": {code}}.Encode(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +207,7 @@ func (g *gateway) login(t *testing.T, client *uniauth.Client) string {
 	if _, err := uniauth.ParseCallback(product.Query(), "incorrect-state"); err == nil {
 		t.Fatal("callback accepted a mismatched product state")
 	}
-	code, err := uniauth.ParseCallback(product.Query(), state)
+	code, err = uniauth.ParseCallback(product.Query(), state)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -77,7 +77,11 @@ func newFixture(t *testing.T) *fixture {
 			if f.jwksKey != nil {
 				key = f.jwksKey
 			}
-			json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"}}})
+			raw, _ := json.Marshal(jose.JSONWebKey{Key: &key.PublicKey, KeyID: "fixture", Algorithm: "RS256", Use: "sig"})
+			var jwk map[string]any
+			_ = json.Unmarshal(raw, &jwk)
+			jwk["issuer"] = microsoftIssuerTemplate
+			json.NewEncoder(w).Encode(map[string]any{"keys": []any{jwk}})
 		case "/token":
 			if err := r.ParseForm(); err != nil {
 				t.Error(err)
@@ -154,7 +158,8 @@ func (f *fixture) provider(t *testing.T, name string) Provider {
 	var err error
 	switch name {
 	case "microsoft":
-		p, err = newMicrosoft(context.Background(), f.config(), f.issuer, f.server.URL+"/jwks", endpoint, f.server.URL+"/profile", f.server.URL+"/photo")
+		f.claims["iss"] = microsoftIssuerPrefix + microsoftTenant + "/v2.0"
+		p, err = newMicrosoft(context.Background(), f.config(), f.server.URL+"/jwks", endpoint, f.server.URL+"/profile", f.server.URL+"/photo")
 	case "google":
 		p, err = newGoogle(context.Background(), f.config(), f.issuer)
 	case "github":
@@ -260,6 +265,7 @@ func TestOIDCRejectsUntrustedClaims(t *testing.T) {
 		{"empty subject", func(f *fixture) { f.claims["sub"] = "" }},
 		{"wrong subject type", func(f *fixture) { f.claims["sub"] = 123 }},
 		{"expired", func(f *fixture) { f.claims["exp"] = time.Now().Add(-time.Hour).Unix() }},
+		{"not before", func(f *fixture) { f.claims["nbf"] = time.Now().Add(time.Hour).Unix() }},
 		{"missing expiry", func(f *fixture) { delete(f.claims, "exp") }},
 		{"missing issued-at", func(f *fixture) { delete(f.claims, "iat") }},
 		{"future issued-at", func(f *fixture) { f.claims["iat"] = time.Now().Add(time.Hour).Unix() }},
@@ -377,9 +383,10 @@ func TestInvalidProviderRequestsAndConfiguration(t *testing.T) {
 func TestJWKSRefreshAndExchangeBoundedByTimeout(t *testing.T) {
 	f := newFixture(t)
 	f.jwksDelay = 200 * time.Millisecond
+	f.claims["iss"] = microsoftIssuerPrefix + microsoftTenant + "/v2.0"
 	c := f.config()
 	c.HTTPClient.Timeout = 30 * time.Millisecond
-	p, err := newMicrosoft(context.Background(), c, f.issuer, f.server.URL+"/jwks", oauth2.Endpoint{TokenURL: f.server.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}, f.server.URL+"/profile", f.server.URL+"/photo")
+	p, err := newMicrosoft(context.Background(), c, f.server.URL+"/jwks", oauth2.Endpoint{TokenURL: f.server.URL + "/token", AuthStyle: oauth2.AuthStyleInParams}, f.server.URL+"/profile", f.server.URL+"/photo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +467,7 @@ func TestProductionEndpointsAndDiscoveryFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ms.oauth.Endpoint.AuthURL != "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize" || ms.oauth.Endpoint.TokenURL != "https://login.microsoftonline.com/consumers/oauth2/v2.0/token" {
+	if ms.oauth.Endpoint.AuthURL != "https://login.microsoftonline.com/common/oauth2/v2.0/authorize" || ms.oauth.Endpoint.TokenURL != "https://login.microsoftonline.com/common/oauth2/v2.0/token" {
 		t.Fatalf("wrong Microsoft endpoint: %+v", ms.oauth.Endpoint)
 	}
 	if ms.enrichmentTimeout != 3*time.Second {

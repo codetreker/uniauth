@@ -6,12 +6,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
 const microsoftTenant = "9188040d-6c67-4c5b-b112-36a304b66dad"
-const microsoftIssuer = "https://login.microsoftonline.com/" + microsoftTenant + "/v2.0"
 const microsoftEnrichmentTimeout = 3 * time.Second
 
 type Microsoft struct {
@@ -22,25 +20,25 @@ type Microsoft struct {
 }
 
 func NewMicrosoft(ctx context.Context, config Config) (*Microsoft, error) {
-	return newMicrosoft(ctx, config, microsoftIssuer, "https://login.microsoftonline.com/consumers/discovery/v2.0/keys", oauth2.Endpoint{
-		AuthURL:   "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
-		TokenURL:  "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+	return newMicrosoft(ctx, config, "https://login.microsoftonline.com/common/discovery/v2.0/keys", oauth2.Endpoint{
+		AuthURL:   "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+		TokenURL:  "https://login.microsoftonline.com/common/oauth2/v2.0/token",
 		AuthStyle: oauth2.AuthStyleInParams,
 	}, "https://graph.microsoft.com/v1.0/me", "https://graph.microsoft.com/v1.0/me/photo/$value")
 }
 
-func newMicrosoft(ctx context.Context, config Config, issuer, jwksURL string, endpoint oauth2.Endpoint, profileURL, photoURL string) (*Microsoft, error) {
+func newMicrosoft(_ context.Context, config Config, jwksURL string, endpoint oauth2.Endpoint, profileURL, photoURL string) (*Microsoft, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
 	client := boundedClient(config.HTTPClient)
-	keySet := oidc.NewRemoteKeySet(oidc.ClientContext(ctx, client), jwksURL)
+	keySet := &microsoftKeySet{client: client, url: jwksURL}
 	return &Microsoft{
 		oidcProvider: oidcProvider{
 			oauth: oauth2.Config{ClientID: config.ClientID, ClientSecret: config.ClientSecret, RedirectURL: config.RedirectURL,
 				Endpoint: endpoint, Scopes: []string{"openid", "profile", "email", "https://graph.microsoft.com/User.Read"}},
 			client:   client,
-			verifier: oidc.NewVerifier(issuer, keySet, &oidc.Config{ClientID: config.ClientID, SupportedSigningAlgs: []string{oidc.RS256}}),
+			verifier: &microsoftVerifier{keys: keySet, clientID: config.ClientID},
 		},
 		profileURL: profileURL, photoURL: photoURL, enrichmentTimeout: microsoftEnrichmentTimeout,
 	}, nil
@@ -83,8 +81,8 @@ func (p *Microsoft) authenticate(ctx context.Context, request ExchangeRequest) (
 		return nil, Identity{}, failure("identity verification", err)
 	}
 	tenant, err := nonemptyString(fields["tid"])
-	if err != nil || tenant != microsoftTenant {
-		return nil, Identity{}, failure("identity verification", errors.New("personal Microsoft tenant is required"))
+	if err != nil || !microsoftTenantPattern.MatchString(tenant) {
+		return nil, Identity{}, failure("identity verification", errors.New("valid Microsoft tenant is required"))
 	}
 	objectID, err := nonemptyString(fields["oid"])
 	if err != nil {
@@ -100,7 +98,7 @@ func (p *Microsoft) authenticate(ctx context.Context, request ExchangeRequest) (
 	if err := ctx.Err(); err != nil {
 		return nil, Identity{}, failure("identity verification", err)
 	}
-	return token, Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + microsoftTenant,
+	return token, Identity{Provider: p.Name(), ID: "msft:" + objectID + "@" + tenant,
 		Email: nilIfEmpty(tokenProfile.Email), Name: nilIfEmpty(tokenProfile.Name),
 		Origin: map[string]json.RawMessage{"id_token_claims": claims}}, nil
 }

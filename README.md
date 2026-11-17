@@ -1,8 +1,8 @@
 # UniAuth
 
 UniAuth is a Go authentication gateway for product backends. It supports personal
-Microsoft accounts, Google, and GitHub, with a public Console for application
-registration and Secret management. Anyone can sign in through a configured OAuth
+and global-public-cloud work or school Microsoft accounts, Google, and GitHub,
+with a public Console for application registration and Secret management. Anyone can sign in through a configured OAuth
 provider and manage their own Apps. Products own their users, account linking,
 permissions, and login sessions.
 

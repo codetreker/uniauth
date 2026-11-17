@@ -6,8 +6,9 @@
 
 ## Purpose and ownership
 
-UniAuth authenticates external accounts through personal Microsoft, Google, and
-GitHub accounts and hands complete identity information to product backends.
+UniAuth authenticates external accounts through personal and global-public-cloud
+work or school Microsoft accounts, Google, and GitHub and hands complete identity
+information to product backends.
 It owns upstream authentication, App registration, credentials, and short-lived
 flow state. External products own users, linking, permissions, and sessions.
 The gateway stores no external product users or central SSO session.
@@ -30,7 +31,7 @@ from live upstream verification.
 | ID | Required behavior |
 | --- | --- |
 | R1 | Implement the service and management API in Go. |
-| R2 | Support personal Microsoft accounts, Google, and GitHub. |
+| R2 | Support personal and global-public-cloud work or school Microsoft accounts, Google, and GitHub. |
 | R3 | Provide a Console to register Apps and generate, name, describe, edit, rotate, reset, and revoke Secrets. |
 | R4 | Return a standard identity profile and every obtained provider identity field under `origin`, within configured and granted scopes. |
 | R5 | Retain complete identity results only in process memory for five minutes from creation. |
@@ -44,7 +45,7 @@ from live upstream verification.
 | R13 | Claim initial administrator authority once through a configured verified email; allow only minimal user summaries and App counts to that administrator. |
 | R14 | Reset all existing Apps and Secrets through migration 3, then persist the final platform schema without legacy ownership rules. |
 | R15 | Let confidential product backends discover current App-allowed, service-configured providers for an exact registered callback without creating login state. |
-| R16 | Authenticate fully verified personal Microsoft identities when optional Graph profile or photo enrichment is unavailable, retaining accepted sources and nullable attributes. |
+| R16 | Authenticate fully verified Microsoft identities when optional Graph profile or photo enrichment is unavailable, retaining accepted sources and nullable attributes. |
 
 ## Architecture
 
@@ -52,7 +53,7 @@ from live upstream verification.
 flowchart LR
     Browser[Browser] --> Product[Product backend]
     Product -->|App, provider, callback, product state| Gateway[Go gateway]
-    Gateway --> Microsoft[Microsoft personal accounts]
+    Gateway --> Microsoft[Microsoft personal and organizational accounts]
     Gateway --> Google[Google]
     Gateway --> GitHub[GitHub]
     Gateway -->|Identity, five-minute expiry| Cache[Process memory]
@@ -390,12 +391,14 @@ costs; the gateway decision continues to own authentication and handover.
 
 | Provider | Validation and `origin` sources | Stable `id` |
 | --- | --- | --- |
-| Microsoft | Personal-account `consumers` authorization and token endpoints; RS256 signature, fixed personal issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require personal `tid` and `oid`; retain complete validated ID claims and accepted optional Graph `/me` and photo sources. | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` |
+| Microsoft | Public-cloud `common` authorization and token endpoints; issuer-scoped RS256 signature, tenant issuer, audience, expiry, issued-at, nonce, authorized party, and access-token hash when present. Require GUID `tid` and nonempty `oid`; retain complete validated ID claims and accepted optional Graph `/me` and photo sources. | `msft:<oid>@<tid>` |
 | Google | OIDC discovery and token validation; UserInfo `sub` must match the token. Retain complete ID claims and UserInfo. | `google:<sub>` |
 | GitHub | PKCE code exchange, authenticated `/user`, and every `/user/emails` page. Require a positive numeric profile ID. | `github:<id>` |
 
 Microsoft IDs use `msft:<oid>@<tid>` while the provider remains `microsoft`.
-The tenant remains the fixed personal-account tenant. Embedded migration 4
+The personal-account tenant remains `9188040d-6c67-4c5b-b112-36a304b66dad`,
+so personal IDs remain unchanged; identities issued by different tenants remain
+distinct, even with equal object IDs or email addresses. Embedded migration 4
 rewrites existing Console link keys in place, preserving account IDs, linked
 profiles, administrator authority, and App ownership. Key collisions abort the
 migration and startup; accounts and links are never merged or discarded. External
@@ -409,8 +412,17 @@ chooser with remembered accounts and an option to use another account, even when
 a provider session exists.
 This policy belongs to the shared Microsoft adapter and covers product login,
 Console login, and identity linking without adding configuration or protocol
-options. Its App registration supports `PersonalMicrosoftAccount`; organization
-accounts fail the fixed personal-tenant and issuer validation.
+options. The deployment registration supports `AzureADandPersonalMicrosoftAccount`;
+organizational policies and consent still govern access. National clouds are not
+supported. The account chooser does not enumerate guest memberships or guarantee
+a particular guest directory.
+
+The Microsoft key set fetches only the fixed public-cloud common JWKS endpoint.
+It verifies the exact tenant-specific v2 token issuer and the issuer associated
+with each signing key, then validates the signature. A lazy shared key snapshot
+coalesces refreshes without a per-tenant cache. The
+[Microsoft multitenant decision](../../.agents/notes/implemented/architecture/2026-11-17-microsoft-public-cloud-tenants.md)
+owns verification, refresh, and compatibility rationale.
 
 Validated ID claims establish the Microsoft identity before optional profile
 enrichment. Code exchange, token verification, and typed token `email`/`name`
@@ -514,14 +526,14 @@ shutdown. Frontend and browser checks cover real Console management and
 production-component mockup interactions.
 
 Automated fixtures do not prove provider registrations or interactive consent.
-Fresh personal Microsoft, Google, and GitHub login verification belongs to
-post-deployment validation with actual credentials. See the
+Fresh personal and organizational Microsoft, Google, and GitHub login
+verification belongs to post-deployment validation with actual credentials. See the
 [implementation receipt](../tasks/2026-10-12-authentication-gateway.md) for observed
 results rather than assuming checks passed.
 
 ## References
 
-- [Microsoft personal-account authority and OIDC flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)
+- [Microsoft authority and OIDC flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)
 - [Microsoft authorization prompt behavior](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code)
 - [Microsoft application audience](https://learn.microsoft.com/en-us/entra/identity-platform/reference-app-manifest)
 - [Microsoft ID-token claims](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)

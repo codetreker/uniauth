@@ -55,7 +55,7 @@ check: frontend
 	cd e2e/browser && GOWORK=off go vet ./...
 	cd web/console && pnpm check && pnpm format:check
 	cd sdk/js && pnpm check && pnpm format:check
-	cd sdk/js && pnpm exec prettier --check ../../e2e/sdk/integration.mjs
+	cd sdk/js && pnpm exec prettier --check ../../e2e/sdk/integration*.mjs
 
 browser: build
 	pnpm test:browser

@@ -12,12 +12,14 @@ would create another account and separate a person from existing ownership.
 
 ## Decision
 
-The Microsoft adapter emits `msft:<oid>@<tid>`. It continues to report
-`provider: "microsoft"` and requires the validated personal-account tenant
-`9188040d-6c67-4c5b-b112-36a304b66dad`, its issuer, and a nonempty `oid`. The prefix
-change and object-before-tenant ordering alter identity-key representation only;
-they do not broaden supported Microsoft accounts or change provider selection,
-profile normalization, or original source data.
+The Microsoft adapter emits `msft:<oid>@<tid>` and reports
+`provider: "microsoft"`. At this decision, it required the personal-account
+tenant `9188040d-6c67-4c5b-b112-36a304b66dad`, its issuer, and a nonempty `oid`.
+The prefix and ordering change did not itself broaden supported accounts or
+change provider selection, profile normalization, or original source data. The
+later [multitenant decision](2026-11-17-microsoft-public-cloud-tenants.md)
+accepts verified public-cloud organizational tenants while retaining this key
+format and exact personal IDs.
 
 Embedded SQLite migration 4 replaces the historical
 `microsoft:9188040d-6c67-4c5b-b112-36a304b66dad:<oid>` keys with their new values
@@ -74,5 +76,5 @@ This is a public stable-key change, so external product deployments need their
 own coordinated data migration or explicitly supported normalization. A Console
 key collision prevents service startup until the stored conflict is resolved.
 Migration and provider tests cover preserved ownership, exact emitted identity,
-transaction rollback, and unchanged tenant rejection; automated fixtures do not
+transaction rollback, and the then-current tenant rejection; automated fixtures do not
 establish live upstream consent or deployment credentials.

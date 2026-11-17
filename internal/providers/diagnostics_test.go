@@ -88,8 +88,8 @@ func TestMicrosoftDiagnosticsCorrelateWithoutIdentityOrCredentials(t *testing.T)
 		t.Fatalf("missing profile transport details: %v", profile)
 	}
 	verified := diagnosticRecord(t, records, "identity_verification", "completed")
-	if verified["status"] != nil || verified["connection_reused"] != nil || verified["duration_ms"] == nil || verified["outcome"] != "success" {
-		t.Fatalf("verification fabricated HTTP observations: %v", verified)
+	if verified["status"] != float64(200) || verified["body_complete_ms"] == nil || verified["duration_ms"] == nil || verified["outcome"] != "success" {
+		t.Fatalf("verification missing JWKS HTTP observations: %v", verified)
 	}
 	for _, secret := range []string{"access-secret", "refresh-secret", "client-secret", "valid-code", "expected-nonce", "user-123", "object-123", "someone", f.server.URL} {
 		if strings.Contains(logs.String(), secret) {

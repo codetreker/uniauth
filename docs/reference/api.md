@@ -249,7 +249,7 @@ email-ownership, or permission policy; each product owns those decisions.
 
 | Provider | Stable `id` | `origin` |
 | --- | --- | --- |
-| Microsoft | `msft:<oid>@9188040d-6c67-4c5b-b112-36a304b66dad` | Complete validated `id_token_claims`, plus accepted optional Graph `/me` as `profile` and `photo`. Failed or unattempted sources are omitted. |
+| Microsoft | `msft:<oid>@<tid>` | Complete validated `id_token_claims`, plus accepted optional Graph `/me` as `profile` and `photo`. Failed or unattempted sources are omitted. |
 | Google | `google:<sub>` | Complete validated `id_token_claims` and fetched `userinfo`, whose `sub` must match the ID token. |
 | GitHub | `github:<numeric id>` | Authenticated `/user` as `profile`, and all pages of `/user/emails` as `emails`. |
 
@@ -269,9 +269,10 @@ image URLs are not downloaded.
 ### Microsoft optional profile enrichment
 
 The Microsoft adapter requires a successful authorization-code exchange and
-complete ID-token verification, including signature, personal issuer, audience,
-time, nonce, and related claims. The personal `tid` and a nonempty `oid` remain
-mandatory; typed token `email` and `name` must be strings or `null` when present.
+complete ID-token verification, including issuer-scoped signature, public-cloud
+tenant issuer, audience, time, nonce, and related claims. A GUID `tid` and a
+nonempty `oid` remain mandatory; typed token `email` and `name` must be strings
+or `null` when present.
 Core failures terminate authentication. The existing core authentication budget
 is 20 seconds.
 
@@ -303,15 +304,18 @@ The [Microsoft optional-profile decision](../../.agents/notes/implemented/archit
 records the rationale, alternatives, and availability costs.
 
 IDs are independent of product App Secrets. Email, display name, and login name
-are attributes, not identity keys. Microsoft requires the personal tenant and a
-validated `oid`; there is no fallback identifier. OAuth credentials, raw signed
+are attributes, not identity keys. Microsoft requires a verified tenant and
+`oid`; there is no fallback identifier. OAuth credentials, raw signed
 ID tokens, upstream authorization codes, and access or refresh tokens are
 excluded from the identity package. The Microsoft `provider` value remains
 `microsoft`; `msft` is the identity-key prefix, not a provider name.
 
-Microsoft IDs use `msft:<oid>@<tid>`, where `tid` is the validated fixed personal
-tenant shown above. Upgrades from `microsoft:<tid>:<oid>` migrate Console identity
-links transactionally without changing their platform account or ownership.
+Microsoft IDs use `msft:<oid>@<tid>`, where `tid` is the verified issuing
+tenant. The personal tenant remains `9188040d-6c67-4c5b-b112-36a304b66dad`,
+so existing personal IDs remain unchanged. Different tenants produce distinct
+identities even when `oid` or email matches. Upgrades from
+`microsoft:<tid>:<oid>` migrate Console identity links transactionally without
+changing their platform account or ownership.
 Conflicting old and new keys fail startup without merging or deleting identities.
 External products own their stored identity mappings and must migrate those keys
 or explicitly normalize both wire forms before accepting the new output. UniAuth

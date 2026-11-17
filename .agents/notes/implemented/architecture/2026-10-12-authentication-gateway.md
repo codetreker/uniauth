@@ -72,17 +72,18 @@ Saved and Done, including when an unrelated request reports session expiry.
 
 Each login has separate product and provider state, browser binding, PKCE, and
 OIDC nonce where applicable. The gateway validates the provider identity and
-collects complete source JSON under the granted scopes. Microsoft supports only
-personal accounts and uses the personal tenant plus `oid`; Google uses `sub`;
+collects complete source JSON under the granted scopes. Microsoft uses the
+verified issuing tenant plus `oid`; Google uses `sub`;
 GitHub uses its authenticated numeric user ID. Qualified IDs keep provider
 identities distinct. Each product controls cross-provider account linking.
 
 Microsoft authorization always sends `prompt=select_account` to request its
 account chooser with remembered accounts and an option to use another account.
 The shared adapter applies this policy to product login, Console login, and
-identity linking. This preserves the personal-account `consumers` authority,
-transaction state, PKCE, and OIDC nonce; it adds no configuration or protocol
-option. [Microsoft's authorization documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code)
+identity linking. The later [multitenant decision](2026-11-17-microsoft-public-cloud-tenants.md)
+replaces the personal-account authority with public-cloud `common` endpoints.
+Transaction state, PKCE, and OIDC nonce remain unchanged; account selection adds
+no configuration or protocol option. [Microsoft's authorization documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#request-an-authorization-code)
 defines the chooser behavior and distinguishes it from forced credential entry.
 
 The original handover envelope exposed `provider`, `subject`, and `sources`,

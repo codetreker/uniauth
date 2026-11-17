@@ -236,8 +236,11 @@ parser when the product needs that representation.
 ## Microsoft source availability
 
 Microsoft code exchange and mandatory ID-token validation establish its stable
-`msft:<oid>@<tid>` identity. Unavailable optional Graph enrichment can leave only
-`id_token_claims` in `origin`, with nullable name, email, and avatar. All seven
+`msft:<oid>@<tid>` identity for personal and global-public-cloud organizational
+accounts. The issuing tenant is part of the ID; equal object IDs or email
+addresses in different tenants remain distinct identities. Current SDK
+contracts need no tenant configuration or API change. Unavailable optional Graph
+enrichment can leave only `id_token_claims` in `origin`, with nullable name, email, and avatar. All seven
 standard fields remain mandatory. Both SDKs already accept this result without
 deriving replacements or requiring provider-specific source keys.
 
