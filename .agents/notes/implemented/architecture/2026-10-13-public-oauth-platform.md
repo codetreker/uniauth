@@ -70,7 +70,12 @@ during navigation and cancellation.
 SQLite persists platform accounts and linked normalized profiles for Console
 users only. Stable provider-qualified identity IDs identify accounts; emails are
 attributes and never merge accounts. A signed-in account may explicitly link an
-additional identity. Linking retains the initiating account and session, requires
+additional identity. The Console allows repeated Microsoft linking for personal
+and organizational identities, displaying each full stable ID and nullable
+profile without inferring organization names. The
+[Microsoft public-cloud decision](2026-11-17-microsoft-public-cloud-tenants.md)
+owns tenant identity verification. Google and GitHub retain their existing linked
+provider controls. Linking retains the initiating account and session, requires
 that session to stay live through final attachment, and rejects an identity owned
 by another account. Successful sign-in refreshes account email, name, and avatar from that identity,
 preserving nullable attributes. Linking updates linked email, verification, and

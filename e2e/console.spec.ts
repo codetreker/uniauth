@@ -653,7 +653,7 @@ test("OAuth account manages applications and one-time credentials against the se
     page.locator(".provider-card").getByText("Configured", { exact: true }),
   ).toHaveCount(3);
   await expect(
-    page.getByText("Personal Microsoft accounts", { exact: true }),
+    page.getByText("Personal, work, or school accounts", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: /^Applications/ }).click();
   await page.getByRole("button", { name: "New application" }).click();
@@ -1478,4 +1478,139 @@ test("OAuth handover requires its initiating browser and cannot be replayed or c
       (identity: { provider: string }) => identity.provider === "microsoft",
     ),
   ).toBe(false);
+});
+
+test("multiple Microsoft identities retain one Console account and owned Apps", async ({
+  browser,
+}) => {
+  const owner = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const foreign = await browser.newContext();
+  try {
+    const foreignPage = await foreign.newPage();
+    await foreignPage.goto("/console/");
+    await signIn(foreignPage, "Microsoft", "D2 foreign");
+    const foreignUser = (
+      await (await foreign.request.get("/console/api/session")).json()
+    ).user;
+    const foreignLinks = (
+      await (await foreign.request.get("/console/api/identities")).json()
+    ).identities;
+
+    const page = await owner.newPage();
+    await page.goto("/console/");
+    await signIn(page, "Microsoft", "D2 personal");
+    const account = (
+      await (await owner.request.get("/console/api/session")).json()
+    ).user;
+    await createApplication(page, "D2 owned product");
+    await page.getByRole("button", { name: "My account", exact: true }).click();
+    const link = page.getByRole("button", {
+      name: "Link another Microsoft account",
+      exact: true,
+    });
+    await expect(link).toBeEnabled();
+    for (
+      let i = 0;
+      i < 30 &&
+      !(await link.evaluate((button) => button === document.activeElement));
+      i++
+    )
+      await page.keyboard.press("Tab");
+    await expect(link).toBeFocused();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    let firstOrganizationLink: string | undefined;
+    for (const persona of [
+      "D2 organization one",
+      "D2 organization two",
+      "D2 organization one",
+    ]) {
+      if (
+        persona === "D2 organization one" &&
+        firstOrganizationLink === undefined
+      )
+        await page.keyboard.press("Enter");
+      else await link.click();
+      await page.getByRole("button", { name: persona, exact: true }).click();
+      await page
+        .getByRole("button", { name: "My account", exact: true })
+        .click();
+      const currentLinks = (
+        await (await owner.request.get("/console/api/identities")).json()
+      ).identities;
+      const organization = currentLinks.find((item: { id: string }) =>
+        item.id.endsWith("@22222222-2222-2222-2222-222222222222"),
+      );
+      if (firstOrganizationLink === undefined)
+        firstOrganizationLink = organization.linked_at;
+      else expect(organization.linked_at).toBe(firstOrganizationLink);
+    }
+    const links = (
+      await (await owner.request.get("/console/api/identities")).json()
+    ).identities;
+    expect(links).toHaveLength(3);
+    expect(new Set(links.map((item: { id: string }) => item.id)).size).toBe(3);
+    for (const item of links)
+      await expect(page.getByText(item.id, { exact: true })).toBeVisible();
+    expect(
+      links.find((item: { email: string | null }) => item.email === null),
+    ).toBeDefined();
+    await link.click();
+    await page.getByRole("button", { name: "D2 foreign", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "belongs to another account",
+    );
+    expect(
+      (await (await owner.request.get("/console/api/session")).json()).user.id,
+    ).toBe(account.id);
+    expect(
+      (await (await owner.request.get("/console/api/identities")).json())
+        .identities,
+    ).toEqual(links);
+    expect(
+      (await (await foreign.request.get("/console/api/session")).json()).user
+        .id,
+    ).toBe(foreignUser.id);
+    expect(
+      (await (await foreign.request.get("/console/api/identities")).json())
+        .identities,
+    ).toEqual(foreignLinks);
+    for (const persona of [
+      "D2 personal",
+      "D2 organization one",
+      "D2 organization two",
+    ]) {
+      await page.getByRole("button", { name: "Sign out", exact: true }).click();
+      await signIn(page, "Microsoft", persona);
+      const current = (
+        await (await owner.request.get("/console/api/session")).json()
+      ).user;
+      expect(current.id).toBe(account.id);
+      expect(current.is_admin).toBe(account.is_admin);
+      await expect(
+        page.getByRole("button", {
+          name: "Manage D2 owned product",
+          exact: true,
+        }),
+      ).toBeVisible();
+    }
+  } finally {
+    await Promise.all([owner.close(), foreign.close()]);
+  }
+});
+
+test("account without Microsoft offers the initial link action", async ({
+  page,
+}) => {
+  await page.goto("/console/");
+  await signIn(page, "Google", "D2 personal");
+  await page.getByRole("button", { name: "My account", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Link Microsoft account", exact: true }),
+  ).toBeEnabled();
 });

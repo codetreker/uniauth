@@ -1130,7 +1130,7 @@ export const Console = ({
                         <h2>{providerNames[provider.id]}</h2>
                         <p>
                           {provider.id === "microsoft"
-                            ? "Personal Microsoft accounts"
+                            ? "Personal, work, or school accounts"
                             : provider.id === "google"
                               ? "Google accounts"
                               : "GitHub accounts"}

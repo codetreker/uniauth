@@ -301,7 +301,7 @@ test("platform preview exposes final OAuth, account and limited administrator sc
     page.getByRole("button", { name: "Google linked", exact: true }),
   ).toBeDisabled();
   await page.getByRole("button", { name: "Link GitHub", exact: true }).click();
-  await expect(page.locator(".identity-row")).toHaveCount(2);
+  await expect(page.locator(".identity-row")).toHaveCount(3);
   await expect(
     page.getByRole("button", { name: "GitHub linked", exact: true }),
   ).toBeDisabled();
@@ -382,4 +382,44 @@ test("platform preview exposes final OAuth, account and limited administrator sc
   }));
   expect(dimensions.document).toBeLessThanOrEqual(dimensions.viewport);
   expect(failures).toEqual([]);
+});
+
+test("preview links exact Microsoft identities and recovers from simulated outcomes", async ({
+  page,
+}) => {
+  await page.goto("/console/mockup.html");
+  await page.getByRole("button", { name: "My account", exact: true }).click();
+  const link = page.getByRole("button", {
+    name: "Link another Microsoft account",
+    exact: true,
+  });
+  await expect(link).toBeEnabled();
+  const chooser = page.getByLabel("Preview Microsoft identity");
+  for (const choice of [
+    "organization-one",
+    "organization-two",
+    "organization-one",
+  ]) {
+    await chooser.selectOption(choice);
+    await link.click();
+    await expect(link).toBeEnabled();
+  }
+  await expect(page.locator(".identity-row")).toHaveCount(4);
+  await expect(page.locator(".identity-row")).toContainText([
+    "Google",
+    "Microsoft",
+    "Microsoft",
+    "Microsoft",
+  ]);
+  for (const [choice, message] of [
+    ["conflict", "belongs to another account"],
+    ["cancel", "cancelled"],
+    ["failure", "Authentication failed"],
+  ]) {
+    await chooser.selectOption(choice);
+    await link.click();
+    await expect(page.getByRole("alert")).toContainText(message);
+    await expect(link).toBeEnabled();
+    await expect(page.locator(".identity-row")).toHaveCount(4);
+  }
 });

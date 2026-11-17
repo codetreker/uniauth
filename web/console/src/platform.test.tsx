@@ -112,6 +112,12 @@ it("shows every configured OAuth method and completes only the chosen provider w
   expect(document.querySelector('input[type="password"]')).toBeNull();
   fireEvent.click(microsoft);
   await screen.findByRole("button", { name: "Sign out" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Identity providers" }),
+  );
+  expect(
+    await screen.findByText("Personal, work, or school accounts"),
+  ).toBeDefined();
   expect(api.login).toHaveBeenCalledWith("microsoft");
   expect(navigation).toHaveBeenCalledWith("https://oauth.example.test/login");
 });
@@ -395,10 +401,10 @@ it("shows explicit nullable account fields and stable linked identity IDs", asyn
   expect(
     (
       screen.getByRole("button", {
-        name: "Microsoft linked",
+        name: "Link another Microsoft account",
       }) as HTMLButtonElement
     ).disabled,
-  ).toBe(true);
+  ).toBe(false);
   expect(screen.queryByRole("button", { name: "Users" })).toBeNull();
   expect(api.listUsers).not.toHaveBeenCalled();
 });
@@ -668,4 +674,84 @@ it("preserves an identity-conflict callback notice through authenticated session
       "This identity belongs to another account and cannot be linked.",
     ),
   ).toBeNull();
+});
+
+it("offers the initial Microsoft link and keeps other linked providers disabled", async () => {
+  const api = fixture({
+    listIdentities: vi
+      .fn()
+      .mockResolvedValue([{ ...identity, provider: "google", id: "google:1" }]),
+  });
+  render(<Console api={api} />);
+  fireEvent.click(await screen.findByRole("button", { name: "My account" }));
+  expect(
+    (
+      (await screen.findByRole("button", {
+        name: "Link Microsoft account",
+      })) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
+  expect(
+    (screen.getByRole("button", { name: "Google linked" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+});
+
+it("retries identity loading and omits unavailable Microsoft linking", async () => {
+  const pending = Promise.withResolvers<LinkedIdentity[]>();
+  const api = fixture({
+    listIdentities: vi
+      .fn()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue([identity]),
+    listProviders: vi.fn().mockResolvedValue([
+      { id: "microsoft", available: false },
+      { id: "google", available: true },
+    ]),
+  });
+  render(<Console api={api} />);
+  fireEvent.click(await screen.findByRole("button", { name: "My account" }));
+  await screen.findByText("Loading linked identities…");
+  expect(screen.queryByRole("button", { name: /Link.*Microsoft/ })).toBeNull();
+  await act(async () =>
+    pending.reject(new Error("Identity list unavailable.")),
+  );
+  await screen.findByText("Identity list unavailable.");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry linked identities" }),
+  );
+  await screen.findByText(identity.id);
+  expect(screen.queryByRole("button", { name: /Link.*Microsoft/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "Link Google" })).toBeDefined();
+});
+
+it("holds repeat Microsoft linking while an authorization starts and recovers after failure", async () => {
+  const pending = Promise.withResolvers<{ authorization_url: string }>();
+  const api = fixture({
+    linkIdentity: vi.fn().mockReturnValueOnce(pending.promise),
+  });
+  render(<Console api={api} onAuthorization={completeAuthorization} />);
+  fireEvent.click(await screen.findByRole("button", { name: "My account" }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Link another Microsoft account",
+    }),
+  );
+  expect(
+    (screen.getByRole("button", { name: "Connecting…" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  expect(
+    (screen.getByRole("button", { name: "Link Google" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  await act(async () => pending.reject(new Error("Microsoft unavailable.")));
+  await screen.findByText("Microsoft unavailable.");
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Link another Microsoft account",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
 });

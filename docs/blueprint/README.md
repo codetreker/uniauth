@@ -167,7 +167,9 @@ the same service. External products keep the existing HTTP protocol.
 
 A new provider-qualified stable ID creates a platform account. Signing in through
 a linked ID selects its existing account. Equal emails do not merge accounts.
-Authenticated users can explicitly link another provider identity; linking
+Authenticated users can explicitly link another provider identity, including multiple
+Microsoft personal, work, or school identities. The account view keeps each stable
+ID and its nullable profile visible; it does not infer organization names. Linking
 requires the initiating session to remain live through callback and final
 attachment. An identity belonging to another account cannot move. The stored
 profile is the latest normalized Console identity data, without raw `origin` or

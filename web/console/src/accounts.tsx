@@ -195,15 +195,23 @@ export const AccountView = ({
                     <button
                       key={id}
                       className="button secondary"
-                      disabled={blocked || connecting !== undefined || linked}
+                      disabled={
+                        blocked ||
+                        connecting !== undefined ||
+                        (linked && id !== "microsoft")
+                      }
                       onClick={() => void link(id)}
                     >
                       <ProviderMark provider={id} />
                       {connecting === id
                         ? "Connecting…"
-                        : linked
-                          ? `${providerNames[id]} linked`
-                          : `Link ${providerNames[id]}`}
+                        : id === "microsoft"
+                          ? linked
+                            ? "Link another Microsoft account"
+                            : "Link Microsoft account"
+                          : linked
+                            ? `${providerNames[id]} linked`
+                            : `Link ${providerNames[id]}`}
                     </button>
                   );
                 })}

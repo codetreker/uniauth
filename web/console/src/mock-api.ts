@@ -13,7 +13,15 @@ import type {
 } from "./api";
 
 export type PreviewPersona = "administrator" | "developer" | "new-account";
+export type PreviewMicrosoftChoice =
+  | "personal"
+  | "organization-one"
+  | "organization-two"
+  | "conflict"
+  | "cancel"
+  | "failure";
 export type MockConsoleAPI = ConsoleAPI & {
+  setMicrosoftChoice: (choice: PreviewMicrosoftChoice) => void;
   completeAuthorization: (url: string) => Promise<Session>;
 };
 export const createMockAPI = (
@@ -48,6 +56,36 @@ export const createMockAPI = (
     },
   };
   const user = profiles[persona];
+  let microsoftChoice: PreviewMicrosoftChoice = "personal";
+  const microsoftIdentities: Record<
+    "personal" | "organization-one" | "organization-two",
+    LinkedIdentity
+  > = {
+    personal: {
+      provider: "microsoft",
+      id: "msft:11111111-1111-1111-1111-111111111111@9188040d-6c67-4c5b-b112-36a304b66dad",
+      name: user.name,
+      email: user.email,
+      email_verified: null,
+      linked_at: user.created_at,
+    },
+    "organization-one": {
+      provider: "microsoft",
+      id: "msft:11111111-1111-1111-1111-111111111111@22222222-2222-2222-2222-222222222222",
+      name: "Work account",
+      email: user.email,
+      email_verified: null,
+      linked_at: user.created_at,
+    },
+    "organization-two": {
+      provider: "microsoft",
+      id: "msft:33333333-3333-3333-3333-333333333333@44444444-4444-4444-4444-444444444444",
+      name: null,
+      email: null,
+      email_verified: null,
+      linked_at: user.created_at,
+    },
+  };
   const identities: LinkedIdentity[] = [
     {
       provider:
@@ -63,6 +101,9 @@ export const createMockAPI = (
       linked_at: user.created_at,
     },
   ];
+  if (persona === "administrator")
+    identities.push(microsoftIdentities.personal);
+  if (persona === "new-account") identities[0] = microsoftIdentities.personal;
   const currentSession = (): Session => ({
     csrf_token: "preview-session",
     user: structuredClone(user),
@@ -213,6 +254,9 @@ export const createMockAPI = (
     return issued;
   };
   return {
+    setMicrosoftChoice: (choice) => {
+      microsoftChoice = choice;
+    },
     session: async () => {
       await wait();
       authorize();
@@ -234,13 +278,45 @@ export const createMockAPI = (
         throw new Error("Invalid preview provider.");
       if (authorization.searchParams.get("action") === "link") {
         authorize();
-        if (!identities.some((identity) => identity.provider === provider))
+        if (provider === "microsoft") {
+          if (microsoftChoice === "conflict")
+            throw new APIError(
+              409,
+              "identity_conflict",
+              "This identity belongs to another account and cannot be linked.",
+            );
+          if (microsoftChoice === "cancel")
+            throw new Error("Sign-in was cancelled.");
+          if (microsoftChoice === "failure")
+            throw new Error("Authentication failed. Please try again.");
+          const selected = microsoftIdentities[microsoftChoice];
+          const existing = identities.find(
+            (identity) =>
+              identity.provider === provider && identity.id === selected.id,
+          );
+          if (existing === undefined)
+            identities.push({
+              ...selected,
+              linked_at: new Date().toISOString(),
+            });
+          else
+            Object.assign(existing, {
+              ...selected,
+              linked_at: existing.linked_at,
+            });
+        } else if (
+          !identities.some(
+            (identity) =>
+              identity.provider === provider &&
+              identity.id === `provider-stable-${persona}-${provider}`,
+          )
+        )
           identities.push({
             provider,
             id: `provider-stable-${persona}-${provider}`,
             name: user.name,
             email: user.email,
-            email_verified: provider === "microsoft" ? null : true,
+            email_verified: true,
             linked_at: new Date().toISOString(),
           });
       } else authenticated = true;
