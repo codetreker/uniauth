@@ -24,7 +24,7 @@ later initialization failure or permit separate instances to share one database.
 | `UNIAUTH_DATABASE_PATH` | `uniauth.db` | SQLite database path; parent directory must exist. |
 | `UNIAUTH_LOG_FILE` | Empty; Compose defaults to `/data/uniauth.log` | Optional rotating JSON log file alongside stderr; parent directory must exist. |
 | `UNIAUTH_ALLOW_LOOPBACK_HTTP` | `false` | Set exactly `true` to allow HTTP for the loopback public origin. |
-| `UNIAUTH_MICROSOFT_CLIENT_ID` | Optional pair | Personal-account Microsoft application Client ID. |
+| `UNIAUTH_MICROSOFT_CLIENT_ID` | Optional pair | Microsoft application Client ID for personal and organizational accounts. |
 | `UNIAUTH_MICROSOFT_CLIENT_SECRET` | Optional pair | Microsoft application Client Secret. |
 | `UNIAUTH_GOOGLE_CLIENT_ID` | Optional pair | Google OAuth client ID. |
 | `UNIAUTH_GOOGLE_CLIENT_SECRET` | Optional pair | Google OAuth client Secret. |
@@ -94,9 +94,9 @@ is lost, create another Secret; the reset value cannot be recovered or replayed.
 
 ## Platform login and administrator bootstrap
 
-The Console supports OAuth only through all configured personal Microsoft,
-Google, and GitHub providers. Password login and its configuration variables are
-removed. In the existing deployment `.env`, specify the initial administrator
+The Console supports OAuth only through configured Microsoft, Google, and GitHub
+providers, including supported personal and organizational Microsoft identities.
+Password login and its configuration variables are removed. In the existing deployment `.env`, specify the initial administrator
 email and provider credential pairs:
 
 ```dotenv
@@ -178,18 +178,20 @@ with `UNIAUTH_PUBLIC_URL`:
 | Google | `https://auth.example/auth/callback/google` | `openid profile email`; validated ID claims and UserInfo. |
 | GitHub | `https://auth.example/auth/callback/github` | `read:user user:email`; authenticated user profile and all email pages. |
 
-Microsoft registration must support personal Microsoft accounts only
-(`PersonalMicrosoftAccount`). Authorization and token exchange use `consumers`
-endpoints. Every Microsoft authorization request includes `prompt=select_account`
-to request the account chooser, including remembered accounts and an option to
-use another account. This fixed provider policy covers product login, Console
-login, and identity linking through the shared gateway. It has no deployment,
-App, or SDK setting. Signature and issuer validation use the fixed
-personal-account tenant
-`9188040d-6c67-4c5b-b112-36a304b66dad`; organizational accounts are rejected.
-The validated token must contain that `tid` and a nonempty `oid`. Register the
-delegated Graph `User.Read` permission. Code exchange, token verification, stable
-identity claims, and typed token email/name are mandatory and retain the existing
+Microsoft registration must support accounts in any organizational directory
+and personal Microsoft accounts (`AzureADandPersonalMicrosoftAccount`). Register
+the delegated Graph `User.Read` permission. Organizational consent, administrator
+approval, and access policies may be required by each tenant; UniAuth does not
+manage tenant consent. National clouds are not supported. Authorization and token
+exchange use fixed public-cloud `common` endpoints. Every authorization request
+includes `prompt=select_account` to request the account chooser, including
+remembered accounts and an option to use another account. The chooser does not
+guarantee a particular guest directory. This policy covers product login, Console
+login, and identity linking; it has no App or SDK setting. The verified token must
+contain a GUID `tid`, matching public-cloud v2 issuer, and nonempty `oid`.
+The personal tenant remains `9188040d-6c67-4c5b-b112-36a304b66dad`. Code exchange,
+token verification, stable identity claims, and typed token email/name are
+mandatory and retain the existing
 20-second core budget. Graph `/me` and photo enrichment then share a separate
 fixed 3-second budget derived from the original caller context, with profile
 attempted before photo. The photo request proceeds while budget remains even
@@ -208,6 +210,8 @@ and attribute-selection rules.
 
 Google performs OIDC discovery during startup and must have a reachable discovery
 endpoint. Microsoft and Google fetch signing keys when verification needs them.
+Microsoft uses the fixed common JWKS endpoint and issuer-scoped signing keys; token claims
+and headers do not select a network destination.
 Products do not register their callback URLs with the upstream providers;
 product callbacks are registered in the UniAuth Console.
 

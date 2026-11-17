@@ -13,8 +13,9 @@ same gateway that products integrate.
 
 ## Decision
 
-The Console is an OAuth-only UniAuth App using every configured personal
-Microsoft, Google, and GitHub provider. Anyone can sign in and create Apps owned
+The Console is an OAuth-only UniAuth App using every configured Microsoft,
+Google, and GitHub provider. The [Microsoft multitenant decision](2026-11-17-microsoft-public-cloud-tenants.md)
+extends the shared adapter to supported organizational identities. Anyone can sign in and create Apps owned
 by their platform account. Startup requires at least one configured provider.
 The `serve` command validates configuration and reserves the configured TCP
 listener before service initialization opens or migrates SQLite, updates pending

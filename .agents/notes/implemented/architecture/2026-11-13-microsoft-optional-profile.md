@@ -13,9 +13,11 @@ source failures when personal information is incomplete.
 ## Decision
 
 Microsoft authentication requires authorization-code exchange and complete
-ID-token verification: signature, personal issuer and tenant, audience, time,
-nonce, authorized party, and access-token hash when present. A nonempty `oid`
-and the fixed personal `tid` produce the unchanged `msft:<oid>@<tid>` key.
+ID-token verification: signature, issuer and tenant, audience, time, nonce,
+authorized party, and access-token hash when present. A nonempty `oid` and
+verified `tid` produce the `msft:<oid>@<tid>` key. The later
+[multitenant decision](2026-11-17-microsoft-public-cloud-tenants.md) extends
+verification to public-cloud organizational tenants while preserving personal IDs.
 Token email/name retain strict nullable-string validation, including when Graph
 would supply a higher-priority value. The existing 20-second core budget and
 mandatory failure behavior remain in force.
@@ -82,7 +84,7 @@ those sources when available.
 
 ## Consequences
 
-Verified personal Microsoft identities can complete sign-in with only ID-token
+Verified Microsoft identities can complete sign-in with only ID-token
 claims and nullable personal attributes. Consumers that assumed Graph source
 keys were always present must check their presence. Explicit `photo: null`
 continues to distinguish confirmed absence from unavailable or unattempted

@@ -11,10 +11,14 @@ import (
 	"golang.org/x/oauth2"
 )
 
+type tokenVerifier interface {
+	Verify(context.Context, string) (*oidc.IDToken, error)
+}
+
 type oidcProvider struct {
 	oauth    oauth2.Config
 	client   *http.Client
-	verifier *oidc.IDTokenVerifier
+	verifier tokenVerifier
 }
 
 func (p *oidcProvider) authorization(request AuthorizationRequest, options ...oauth2.AuthCodeOption) (string, error) {

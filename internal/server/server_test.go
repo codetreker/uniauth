@@ -481,8 +481,8 @@ func TestRegistryCancellationAndMicrosoftConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	location, err := registry["microsoft"].AuthorizationURL(providers.AuthorizationRequest{State: "upstream-state", Nonce: "nonce", CodeVerifier: strings.Repeat("v", 43)})
-	if err != nil || !strings.HasPrefix(location, "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize") {
-		t.Fatalf("Microsoft personal endpoint: %s %v", location, err)
+	if err != nil || !strings.HasPrefix(location, "https://login.microsoftonline.com/common/oauth2/v2.0/authorize") {
+		t.Fatalf("Microsoft common endpoint: %s %v", location, err)
 	}
 	parsed, _ := url.Parse(location)
 	if parsed.Query().Get("redirect_uri") != "http://localhost:8080/auth/callback/microsoft" {
