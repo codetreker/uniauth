@@ -39,7 +39,8 @@ mkdir -p data
 
 Open `/console/` and choose any configured provider. Accounts are identified by
 stable provider IDs; matching email addresses never merge accounts. After signing
-in, explicitly link additional login identities from the account controls.
+in, explicitly link additional login identities from the account controls,
+including multiple personal, work, or school Microsoft identities.
 
 The first Google or GitHub identity with a verified email matching
 `UNIAUTH_INITIAL_ADMIN_EMAIL` claims administrator authority. Microsoft can sign
@@ -165,7 +166,8 @@ release; this delivery does not publish a Go tag or JavaScript package.
 
 The mockup uses production components and styles with representative accounts,
 owned Apps, named active and revoked Secrets, and multiline descriptions. Its
-OAuth choices and account controls operate on local fixtures; state resets on
+OAuth choices and account controls operate on local fixtures, including Microsoft
+identity, duplicate, conflict, cancellation, and failure scenarios; state resets on
 reload and fixtures are excluded from the production build. Browser tests may use an
 existing Chromium executable through `PLAYWRIGHT_CHROMIUM_EXECUTABLE`; temporary
 browser installs belong under `.tmp/`.

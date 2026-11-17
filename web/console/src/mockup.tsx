@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Console } from "./Console";
 import { createMockAPI } from "./mock-api";
-import type { PreviewPersona } from "./mock-api";
+import type { PreviewMicrosoftChoice, PreviewPersona } from "./mock-api";
 import "./styles.css";
 
 const Mockup = () => {
@@ -36,6 +36,30 @@ const Mockup = () => {
             onChange={(event) => setSignedOut(event.target.checked)}
           />
           Start signed out
+        </label>
+        <label>
+          Microsoft identity
+          <select
+            key={`${persona}:${signedOut}`}
+            aria-label="Preview Microsoft identity"
+            defaultValue="personal"
+            onChange={(event) =>
+              api.setMicrosoftChoice(
+                event.target.value as PreviewMicrosoftChoice,
+              )
+            }
+          >
+            <option value="personal">Personal</option>
+            <option value="organization-one">
+              Organization one (same email)
+            </option>
+            <option value="organization-two">
+              Organization two (missing profile)
+            </option>
+            <option value="conflict">Owned by another account</option>
+            <option value="cancel">Cancel</option>
+            <option value="failure">Authentication failure</option>
+          </select>
         </label>
         <span>Interactive · Browser-only data</span>
       </div>

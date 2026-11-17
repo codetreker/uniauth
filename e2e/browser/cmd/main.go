@@ -68,21 +68,37 @@ func (p *fixtureProvider) Exchange(_ context.Context, request providers.Exchange
 		name, email = "Bob Developer", "bob@example.com"
 	case "no-email":
 		name = "Microsoft Developer"
-	case "same-email":
+	case "same-email", "d2-org-one":
 		name = "Separate Developer"
+	case "d2-org-two":
+		name = "Organization Developer"
 	}
 	verified := true
 	identity := providers.Identity{Provider: p.name, ID: p.name + ":" + code.persona, Name: &name, Email: &email, EmailVerified: &verified, Origin: map[string]json.RawMessage{"fixture": json.RawMessage(`{"source":"browser-provider"}`)}}
 	if p.name == "microsoft" {
+		tenants := map[string]string{
+			"d2-personal": "9188040d-6c67-4c5b-b112-36a304b66dad",
+			"d2-org-one":  "22222222-2222-2222-2222-222222222222",
+			"d2-org-two":  "33333333-3333-3333-3333-333333333333",
+			"d2-foreign":  "44444444-4444-4444-4444-444444444444",
+		}
+		if tenant, ok := tenants[code.persona]; ok {
+			identity.ID = "msft:11111111-1111-1111-1111-111111111111@" + tenant
+		} else {
+			identity.ID = "msft:" + code.persona + "@9188040d-6c67-4c5b-b112-36a304b66dad"
+		}
 		identity.EmailVerified = nil
 	}
-	if code.persona == "no-email" {
+	if code.persona == "no-email" || code.persona == "d2-org-two" {
+		if code.persona == "d2-org-two" {
+			identity.Name = nil
+		}
 		identity.Email, identity.EmailVerified = nil, nil
 	}
 	return identity, nil
 }
 
-var chooser = template.Must(template.New("provider").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Browser OAuth provider</title></head><body><h1>Fixture identity for {{.Provider}}</h1><form method="post"><input type="hidden" name="ticket" value="{{.Ticket}}"><button name="persona" value="admin">Administrator</button><button name="persona" value="user-a">User A</button><button name="persona" value="user-b">User B</button><button name="persona" value="no-email">Identity without email</button><button name="persona" value="same-email">Separate identity with same email</button><button name="persona" value="cancel">Cancel provider login</button></form></body></html>`))
+var chooser = template.Must(template.New("provider").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Browser OAuth provider</title></head><body><h1>Fixture identity for {{.Provider}}</h1><form method="post"><input type="hidden" name="ticket" value="{{.Ticket}}"><button name="persona" value="admin">Administrator</button><button name="persona" value="user-a">User A</button><button name="persona" value="user-b">User B</button><button name="persona" value="no-email">Identity without email</button><button name="persona" value="same-email">Separate identity with same email</button><button name="persona" value="d2-personal">D2 personal</button><button name="persona" value="d2-org-one">D2 organization one</button><button name="persona" value="d2-org-two">D2 organization two</button><button name="persona" value="d2-foreign">D2 foreign</button><button name="persona" value="cancel">Cancel provider login</button></form></body></html>`))
 
 func (p *fixtureProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -112,7 +128,7 @@ func (p *fixtureProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	persona := r.PostForm.Get("persona")
 	switch persona {
-	case "admin", "user-a", "user-b", "no-email", "same-email", "cancel":
+	case "admin", "user-a", "user-b", "no-email", "same-email", "d2-personal", "d2-org-one", "d2-org-two", "d2-foreign", "cancel":
 	default:
 		p.mu.Unlock()
 		http.Error(w, "Unknown fixture identity", http.StatusBadRequest)

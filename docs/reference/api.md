@@ -406,7 +406,10 @@ generated platform ID distinct from its linked provider IDs.
 
 A previously unseen stable provider-qualified identity ID creates a Console
 account. A known linked ID signs in to its existing account. Matching emails never
-merge accounts or move identities.
+merge accounts or move identities. The Console allows repeated Microsoft linking
+so personal and organizational identities can belong to the same account. Each
+identity is displayed separately by its full stable ID; Google and GitHub retain
+their existing linked-provider controls.
 
 | Method and path | Body | Success |
 | --- | --- | --- |
